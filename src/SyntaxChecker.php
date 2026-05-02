@@ -215,7 +215,9 @@ final class SyntaxChecker
             'excludes' => [],
         ];
 
-        for ($index = 0; $index < count($args); $index++) {
+        $argCount = count($args);
+
+        for ($index = 0; $index < $argCount; $index++) {
             $arg = $args[$index];
 
             if ($arg === '--help' || $arg === '-h') {

@@ -142,7 +142,9 @@ final readonly class CliOptions
      */
     private function valuedOption(array $args, string $name): ?string
     {
-        for ($index = 0; $index < count($args); $index++) {
+        $argCount = count($args);
+
+        for ($index = 0; $index < $argCount; $index++) {
             $value = $this->optionValue($args[$index], $name);
 
             if ($value !== null) {

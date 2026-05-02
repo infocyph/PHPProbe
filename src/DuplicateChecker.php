@@ -155,7 +155,9 @@ final class DuplicateChecker
         $configuredPaths = $options['paths'];
         $options['paths'] = [];
 
-        for ($index = 0; $index < count($args); $index++) {
+        $argCount = count($args);
+
+        for ($index = 0; $index < $argCount; $index++) {
             $arg = $args[$index];
 
             if ($this->cli->skipConfig($args, $index, $arg) || $this->cli->skipPreset($args, $index, $arg)) {
@@ -354,4 +356,3 @@ final class DuplicateChecker
         fwrite(STDERR, sprintf('%.2f%% duplicated lines.', $result['duplicate_percentage']) . PHP_EOL);
     }
 }
-

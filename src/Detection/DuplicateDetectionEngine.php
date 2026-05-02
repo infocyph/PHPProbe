@@ -134,8 +134,10 @@ final class DuplicateDetectionEngine
      */
     private function collectTokenWindowClones(array &$cloneMap, array $streams, array $blocks, array $occurrences, array $options): void
     {
-        for ($leftIndex = 0; $leftIndex < count($occurrences) - 1; $leftIndex++) {
-            for ($rightIndex = $leftIndex + 1; $rightIndex < count($occurrences); $rightIndex++) {
+        $occurrenceCount = count($occurrences);
+
+        for ($leftIndex = 0; $leftIndex < $occurrenceCount - 1; $leftIndex++) {
+            for ($rightIndex = $leftIndex + 1; $rightIndex < $occurrenceCount; $rightIndex++) {
                 $this->collectTokenCloneCandidate($cloneMap, $streams, $blocks, $occurrences[$leftIndex], $occurrences[$rightIndex], $options);
             }
         }
@@ -266,9 +268,10 @@ final class DuplicateDetectionEngine
     private function nearMissPairs(array $blocks, array $options, DuplicateCloneReducer $reducer): array
     {
         $clones = [];
+        $blockCount = count($blocks);
 
-        for ($left = 0; $left < count($blocks) - 1; $left++) {
-            for ($right = $left + 1; $right < count($blocks); $right++) {
+        for ($left = 0; $left < $blockCount - 1; $left++) {
+            for ($right = $left + 1; $right < $blockCount; $right++) {
                 $clone = $this->nearMissClone($blocks[$left], $blocks[$right], $options, $reducer);
 
                 if ($clone !== null) {
@@ -379,7 +382,9 @@ final class DuplicateDetectionEngine
 
         foreach ($blocks as $fileBlocks) {
             foreach ($fileBlocks as $block) {
-                for ($index = 0; $index <= count($block['statement_hashes']) - $minStatements; $index++) {
+                $statementWindowLimit = count($block['statement_hashes']) - $minStatements;
+
+                for ($index = 0; $index <= $statementWindowLimit; $index++) {
                     $hash = hash('sha256', implode("\0", array_slice($block['statement_hashes'], $index, $minStatements)));
                     $windows[$hash][] = ['block' => $block['id'], 'hash' => $hash];
                 }
@@ -471,7 +476,9 @@ final class DuplicateDetectionEngine
         $windows = [];
 
         foreach ($streams as $file => $tokens) {
-            for ($index = 0; $index <= count($tokens) - $minTokens; $index++) {
+            $tokenWindowLimit = count($tokens) - $minTokens;
+
+            for ($index = 0; $index <= $tokenWindowLimit; $index++) {
                 $windows[$this->tokenValueHash($tokens, $index, $minTokens)][] = ['file' => $file, 'index' => $index];
             }
         }

@@ -150,8 +150,9 @@ final class ApiSnapshotChecker
         $options['paths'] = [];
 
         $index = 0;
+        $argCount = count($args);
 
-        while ($index < count($args)) {
+        while ($index < $argCount) {
             $arg = $args[$index];
 
             if (!$this->cli->skipConfig($args, $index, $arg)
@@ -293,4 +294,3 @@ final class ApiSnapshotChecker
         }
     }
 }
-

@@ -15,14 +15,10 @@ final class ArrayShape
             return [];
         }
 
-        $result = [];
-
-        foreach ($value as $key => $item) {
-            if (is_string($key)) {
-                $result[$key] = $item;
-            }
-        }
-
-        return $result;
+        return array_filter(
+            $value,
+            static fn(int|string $key): bool => is_string($key),
+            ARRAY_FILTER_USE_KEY,
+        );
     }
 }
