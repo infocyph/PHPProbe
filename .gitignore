@@ -1,0 +1,12 @@
+/vendor/
+/.phpunit.cache/
+/.pest.cache/
+/coverage/
+/build/
+/dist/
+/tmp/
+/var/
+.DS_Store
+Thumbs.db
+/.idea/
+

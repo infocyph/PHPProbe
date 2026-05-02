@@ -1,0 +1,56 @@
+{
+  "syntax": {
+    "paths": [],
+    "exclude": [
+      "tests",
+      "vendor",
+      "node_modules",
+      ".git",
+      ".idea",
+      ".vscode",
+      "coverage",
+      ".phpunit.cache",
+      ".psalm-cache",
+      "build",
+      "dist",
+      "tmp",
+      ".tmp",
+      "storage",
+      "bootstrap/cache",
+      "var/cache"
+    ]
+  },
+  "duplicates": {
+    "paths": [],
+    "exclude": [
+      "tests",
+      "vendor",
+      "node_modules",
+      ".git",
+      ".idea",
+      ".vscode",
+      "coverage",
+      ".phpunit.cache",
+      ".psalm-cache",
+      "build",
+      "dist",
+      "tmp",
+      ".tmp",
+      "storage",
+      "bootstrap/cache",
+      "var/cache",
+      "storage/framework/views"
+    ],
+    "mode": "gate",
+    "normalize": true,
+    "fuzzy": true,
+    "near_miss": false,
+    "min_lines": 6,
+    "min_tokens": 100,
+    "min_statements": 5,
+    "min_similarity": 0.9,
+    "baseline": "",
+    "write_baseline": "",
+    "json": false
+  }
+}

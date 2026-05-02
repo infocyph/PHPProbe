@@ -1,0 +1,420 @@
+# PHPProbe
+
+Standalone PHP checker for syntax validation and duplicate-code detection.
+
+PHPProbe is the checker runtime. It can be used directly as `phpprobe`, required by tool-combiner packages such as PHPForge, or called from PHP code through the two public gateway classes.
+
+## Requirements
+
+- PHP `>=8.2`
+- `nikic/php-parser` `>=5.0 <6.0`
+
+Install it as a Composer tool dependency:
+
+```bash
+composer require --dev infocyph/phpprobe
+```
+
+The package ships a Composer binary:
+
+```bash
+php vendor/bin/phpprobe
+```
+
+## Commands
+
+```bash
+php vendor/bin/phpprobe syntax [options] [paths...]
+php vendor/bin/phpprobe duplicates [options] [paths...]
+php vendor/bin/phpprobe presets
+php vendor/bin/phpprobe preset <name>
+```
+
+Unknown commands print the top-level usage and exit `0`. There is no separate `--version` command.
+
+## Quick Start
+
+```bash
+php vendor/bin/phpprobe syntax
+php vendor/bin/phpprobe duplicates
+php vendor/bin/phpprobe duplicates --json
+php vendor/bin/phpprobe duplicates --preset=strict --json src
+php vendor/bin/phpprobe presets
+php vendor/bin/phpprobe preset phpstorm
+```
+
+## Public API
+
+The package-facing checker gateways live directly under `src/`:
+
+- `Infocyph\PHPProbe\SyntaxChecker`
+- `Infocyph\PHPProbe\DuplicateChecker`
+
+Both expose:
+
+```php
+public function run(array $args): int
+```
+
+`$args` is the same argument list that follows the CLI subcommand. For example:
+
+```php
+use Infocyph\PHPProbe\DuplicateChecker;
+use Infocyph\PHPProbe\SyntaxChecker;
+
+$syntaxCode = (new SyntaxChecker())->run(['--config=phpprobe.json', 'src']);
+$duplicateCode = (new DuplicateChecker())->run(['--preset=strict', '--json', 'src']);
+```
+
+Everything else is internal implementation detail, grouped by role:
+
+| Namespace | Purpose |
+| --- | --- |
+| `Console` | CLI dispatch for `bin/phpprobe`. |
+| `Config` | Config lookup, preset lookup, JSON parsing, and config merging. |
+| `Detection` | Duplicate-code token indexing, AST block indexing, scoring, grouping, and pruning. |
+| `Filesystem` | Git-aware PHP file discovery and path exclusion. |
+| `Process` | Small `proc_open` runner wrappers. |
+| `Util` | Narrow shared helpers. |
+
+## Config Lookup
+
+The default config filename is `phpprobe.json`.
+
+When a checker needs a config file and `--config` was not passed, PHPProbe resolves it in this order:
+
+1. `phpprobe.json` in the current project root, meaning the current working directory.
+2. `vendor/infocyph/phpprobe/resources/phpprobe.json` under the current project root.
+3. `resources/phpprobe.json` only when the current project itself is `infocyph/phpprobe`.
+
+If no config can be found, PHPProbe throws a runtime config error.
+
+Preset files are bundled resources. They are resolved from:
+
+1. `vendor/infocyph/phpprobe/resources/presets/<name>.json`.
+2. `resources/presets/<name>.json` only while developing `infocyph/phpprobe` itself.
+
+Project-root preset files are not looked up automatically.
+
+When `--config=FILE` is passed explicitly and that file is missing, unreadable, empty, or invalid JSON, PHPProbe treats it as an empty config and continues with internal defaults plus any CLI options.
+
+## Config Format
+
+The bundled `resources/phpprobe.json` is intentionally small:
+
+```json
+{
+  "preset": "phpstorm"
+}
+```
+
+A full project config may override any part of the selected preset:
+
+```json
+{
+  "preset": "phpstorm",
+  "syntax": {
+    "paths": ["src"],
+    "exclude": ["src/generated"]
+  },
+  "duplicates": {
+    "paths": ["src"],
+    "exclude": ["src/generated"],
+    "mode": "audit",
+    "normalize": true,
+    "fuzzy": true,
+    "near_miss": true,
+    "min_lines": 5,
+    "min_tokens": 90,
+    "min_statements": 4,
+    "min_similarity": 0.85,
+    "baseline": "",
+    "write_baseline": "",
+    "json": false
+  }
+}
+```
+
+Config keys accept snake case, kebab case, and camel case. For example, `min_tokens`, `min-tokens`, and `minTokens` are equivalent. Excludes can be configured as either `exclude` or `exclude_paths`.
+
+Internal duplicate defaults, before the bundled `phpstorm` config is applied, are `mode=gate`, `normalize=true`, `fuzzy=false`, `near_miss=false`, `min_lines=5`, `min_tokens=70`, `min_statements=4`, `min_similarity=0.85`, no baseline, no JSON output, and no configured paths or excludes.
+
+Config merge order is:
+
+1. Internal checker defaults.
+2. Config-file `preset`, when present.
+3. Explicit values in the config file.
+4. CLI `--preset=NAME`, when present.
+5. Explicit CLI flags and CLI paths.
+
+Local config values override the config-file preset. CLI `--preset` is a run-level override and can override config-file values. Explicit CLI flags still win after that.
+
+## Presets
+
+Preset templates live in `resources/presets/` and are loaded by `Infocyph\PHPProbe\Config\PresetRepository`.
+
+Available presets:
+
+| Preset | Duplicate policy |
+| --- | --- |
+| `phpstorm` | PhpStorm-aligned default. `audit` mode, normalized tokens, fuzzy identifiers, near-miss matching, `min_lines=5`, `min_tokens=90`, `min_statements=4`, `min_similarity=0.85`. |
+| `standard` | Quieter CI gate. `gate` mode, normalized tokens, fuzzy identifiers, no near-miss matching, `min_lines=6`, `min_tokens=100`, `min_statements=5`, `min_similarity=0.9`. |
+| `strict` | Sensitive audit. `audit` mode, normalized tokens, fuzzy identifiers, near-miss matching, `min_lines=4`, `min_tokens=70`, `min_statements=3`, `min_similarity=0.8`. |
+
+All presets include the same default syntax and duplicate excludes:
+
+```text
+tests, vendor, node_modules, .git, .idea, .vscode, coverage,
+.phpunit.cache, .psalm-cache, build, dist, tmp, .tmp, storage,
+bootstrap/cache, var/cache
+```
+
+Duplicate presets also exclude `storage/framework/views`.
+
+Preset commands:
+
+```bash
+php vendor/bin/phpprobe presets
+php vendor/bin/phpprobe preset phpstorm
+```
+
+`presets` prints one preset name per line. `preset <name>` prints the bundled JSON template. Unknown preset names print an error and exit `2`.
+
+## Syntax Checker
+
+The syntax checker discovers PHP files, then runs PHP's native lint command against each file:
+
+```bash
+php -d display_errors=1 -l <file>
+```
+
+Command:
+
+```bash
+php vendor/bin/phpprobe syntax [options] [paths...]
+```
+
+Options:
+
+| Option | Form | Meaning |
+| --- | --- | --- |
+| `--config` | `--config=FILE` or `--config FILE` | Read checker settings from a specific config file. |
+| `--preset` | `--preset=NAME` or `--preset NAME` | Apply `phpstorm`, `standard`, or `strict` as a run-level preset. |
+| `--exclude` | `--exclude=PATH` or `--exclude PATH` | Exclude a path. Repeatable. |
+| `--help`, `-h` | flag | Print syntax checker help and exit `0`. |
+
+Path behavior:
+
+- CLI paths override `syntax.paths` from config.
+- If CLI paths are empty, `syntax.paths` is used.
+- If both are empty, discovery starts from `.`.
+- Config excludes and CLI excludes are merged.
+
+Output and exits:
+
+| Condition | Stream | Exit |
+| --- | --- | --- |
+| No PHP files found | `stdout`: `No PHP files found.` | `0` |
+| All files pass | `stdout`: `Syntax OK: N PHP files checked.` | `0` |
+| One or more files fail | `stderr`: failing file list plus lint output | `1` |
+| Unknown preset | `stderr`: preset error | `2` |
+
+## Duplicate Checker
+
+The duplicate checker combines token fingerprints, AST block structure, statement windows, near-miss similarity, grouping, pruning, ranking, and optional baseline suppression.
+
+Command:
+
+```bash
+php vendor/bin/phpprobe duplicates [options] [paths...]
+```
+
+Options:
+
+| Option | Form | Meaning |
+| --- | --- | --- |
+| `--config` | `--config=FILE` or `--config FILE` | Read checker settings from a specific config file. |
+| `--preset` | `--preset=NAME` or `--preset NAME` | Apply `phpstorm`, `standard`, or `strict` as a run-level preset. |
+| `--exclude` | `--exclude=PATH` or `--exclude PATH` | Exclude a path. Repeatable. |
+| `--mode` | `--mode=gate` or `--mode=audit` | `gate` runs token matching; `audit` also enables statement matching and near-miss matching. |
+| `--min-lines` | `--min-lines=N` | Minimum duplicated line span. Values below `1` become `1`. |
+| `--min-tokens` | `--min-tokens=N` | Token fingerprint window size. Values below `1` become `1`. |
+| `--min-statements` | `--min-statements=N` | Statement window size for audit matching. Values below `1` become `1`. |
+| `--min-similarity` | `--min-similarity=N` | Near-miss threshold. Accepts `0.0..1.0` or `0..100`; values above `1` are treated as percentages. |
+| `--near-miss` | flag | Enable bounded statement/shape similarity matching. |
+| `--exact` | flag | Disable variable/literal normalization and disable fuzzy matching. |
+| `--fuzzy` | flag | Normalize identifiers/calls as `ID` for renamed-code scans. |
+| `--no-fuzzy` | flag | Disable fuzzy identifier/call normalization. |
+| `--baseline` | `--baseline=FILE` | Suppress clone groups whose fingerprints are already in a baseline file. |
+| `--write-baseline` | `--write-baseline`, `--write-baseline=FILE` | Write current clone fingerprints to a baseline and exit `0`. Bare flag writes `.phpprobe-duplicates-baseline.json`. |
+| `--json` | flag | Emit machine-readable JSON to `stdout`. |
+| `--help`, `-h` | flag | Print duplicate checker help and exit `0`. |
+
+Exact accepted forms matter: numeric options, `--mode`, `--baseline`, and valued `--write-baseline=FILE` are parsed in equals form. `--config`, `--preset`, and `--exclude` also accept split form. `--write-baseline` may also be passed as a bare flag.
+
+Path behavior:
+
+- CLI paths override `duplicates.paths` from config.
+- If CLI paths are empty, `duplicates.paths` is used.
+- If both are empty, discovery starts from `.`.
+- Config excludes and CLI excludes are merged.
+
+Mode behavior:
+
+- `gate`: token-window duplicate detection only, unless `--near-miss` is explicitly passed.
+- `audit`: token-window matching plus statement-window matching, and near-miss matching is enabled automatically.
+
+Output and exits:
+
+| Condition | Stream | Exit |
+| --- | --- | --- |
+| No clone groups after baseline suppression | `stdout`: `No new duplicated code found (...)` | `0` |
+| Clone groups found | `stderr`: text report | `1` |
+| `--json` with no clones | `stdout`: JSON result | `0` |
+| `--json` with clones | `stdout`: JSON result | `1` |
+| `--write-baseline` | `stdout`: baseline message or JSON result | `0` |
+| Unknown preset | `stderr`: preset error | `2` |
+
+## Duplicate Detection Details
+
+File discovery:
+
+- PHPProbe first tries `git ls-files -z --cached --others --exclude-standard`.
+- It filters discovered PHP files with `git check-ignore -z --stdin --no-index`.
+- If Git discovery is unavailable, it recursively scans the selected paths.
+- Recursive fallback skips common infrastructure directories such as `.git`, `.idea`, `.phpunit.cache`, `.psalm-cache`, `.vscode`, `coverage`, `node_modules`, and `vendor`.
+
+Token normalization:
+
+- Whitespace, comments, doc comments, PHP open tags, and close tags are ignored.
+- With `normalize=true`, variables become `VAR`, numbers become `NUM`, strings become `STR`.
+- With `fuzzy=true`, identifiers and names become `ID`.
+- With `--exact`, token values include token names and original text.
+
+Token clones:
+
+- PHPProbe hashes every normalized token window of `min_tokens` tokens.
+- Matching windows are candidate clones.
+- Candidates are extended token-by-token to find the full matching region.
+- Overlapping windows in the same file are ignored.
+- Clone regions below `min_lines` are ignored.
+
+AST and statement matching:
+
+- PHPProbe uses `nikic/php-parser` to index structural blocks.
+- Indexed blocks include functions, methods, closures, arrow functions, loops, branches, match arms, and try/catch/finally blocks.
+- Statement hashes are built from AST shape.
+- In `audit` mode, matching statement windows of `min_statements` statements are reported as statement clones.
+
+Near-miss matching:
+
+- Near-miss matching compares blocks with the same block type.
+- Similarity is weighted as `72%` statement-hash similarity and `28%` AST-shape similarity.
+- Similarity is based on longest-common-subsequence ratio.
+- Matches below `min_similarity` are ignored.
+
+Grouping, pruning, and scoring:
+
+- Duplicate pairs are grouped into clone families.
+- Contained/weaker clones are pruned.
+- Results are ranked by score, line span, and similarity.
+- Scoring rewards larger clones, more occurrences, higher similarity, structural completeness, and near-miss signal; small trivial clones are penalized.
+
+## JSON Result Shape
+
+`--json` emits:
+
+```json
+{
+  "files": 2,
+  "total_lines": 100,
+  "duplicated_lines": 20,
+  "duplicate_percentage": 20.0,
+  "known_clones": 0,
+  "new_clones": 1,
+  "clones": [
+    {
+      "fingerprint": "...",
+      "source": "tokens",
+      "score": 120.5,
+      "similarity": 1.0,
+      "tokens": 90,
+      "lines": 10,
+      "statements": 0,
+      "block_type": "function",
+      "occurrences": [
+        {
+          "file": "src/Example.php",
+          "start_line": 10,
+          "end_line": 20,
+          "lines": 11,
+          "context": "function"
+        }
+      ]
+    }
+  ]
+}
+```
+
+Clone `source` is one of:
+
+- `tokens`
+- `statements`
+- `near_miss`
+
+`known_clones` is populated when a baseline is read. `new_clones` is the number of clone groups remaining after baseline suppression.
+
+## Baselines
+
+Write a baseline:
+
+```bash
+php vendor/bin/phpprobe duplicates --write-baseline
+php vendor/bin/phpprobe duplicates --write-baseline=.phpprobe-duplicates-baseline.json
+```
+
+Use a baseline:
+
+```bash
+php vendor/bin/phpprobe duplicates --baseline=.phpprobe-duplicates-baseline.json
+```
+
+Baseline files contain:
+
+```json
+{
+  "version": 1,
+  "generated_at": "2026-05-02T00:00:00+00:00",
+  "clones": [
+    {
+      "fingerprint": "...",
+      "source": "tokens",
+      "score": 100.0
+    }
+  ]
+}
+```
+
+When a baseline file is missing or unreadable, PHPProbe treats it as empty.
+
+## Development
+
+Composer scripts:
+
+| Script | Command |
+| --- | --- |
+| `composer test` | `vendor/bin/pest -c pest.xml` |
+| `composer lint` | `php bin/phpprobe syntax src tests` |
+| `composer duplicates` | `php bin/phpprobe duplicates --preset=standard --config=resources/phpprobe.json src tests` |
+
+Useful local checks:
+
+```bash
+composer validate --strict
+composer test
+composer lint
+composer duplicates
+git diff --check
+```
+
+The repository does not need a committed `composer.lock`; it is a library-style tool package, so dev dependencies can resolve for the active PHP version.
