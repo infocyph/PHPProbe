@@ -4,14 +4,21 @@ declare(strict_types=1);
 
 namespace Infocyph\PHPProbe;
 
+use Infocyph\PHPProbe\Config\CliOptions;
 use Infocyph\PHPProbe\Config\Paths;
 use Infocyph\PHPProbe\Config\PhpProbeConfig;
-use Infocyph\PHPProbe\Config\PresetRepository;
 use Infocyph\PHPProbe\Detection\DuplicateDetectionEngine;
 use Infocyph\PHPProbe\Filesystem\PhpFileFinder;
 
 final class DuplicateChecker
 {
+    private CliOptions $cli;
+
+    public function __construct()
+    {
+        $this->cli = new CliOptions();
+    }
+
     /**
      * @param list<string> $args
      */
@@ -41,45 +48,8 @@ final class DuplicateChecker
 
         $this->writeResult($result, $options);
 
-        if ($options['writeBaseline'] !== '') {
-            return 0;
-        }
-
-        return $result['clones'] === [] ? 0 : 1;
+        return $options['writeBaseline'] !== '' || $result['clones'] === [] ? 0 : 1;
     }
-
-    /**
-     * @param list<string> $args
-     */
-    private function configPath(array $args, string $default): string
-    {
-        for ($index = 0; $index < count($args); $index++) {
-            $config = $this->optionValue($args[$index], '--config');
-
-            if ($config !== null) {
-                return $config;
-            }
-
-            if ($args[$index] === '--config' && isset($args[$index + 1])) {
-                return $args[$index + 1];
-            }
-        }
-
-        return $default;
-    }
-
-    private function configWithPreset(PhpProbeConfig $config, string $cliPreset): PhpProbeConfig
-    {
-        $repository = new PresetRepository();
-        $configPreset = $config->preset();
-
-        if (is_string($configPreset) && $configPreset !== '') {
-            $config = $repository->config($configPreset)->merge($config);
-        }
-
-        return $cliPreset !== '' ? $config->merge($repository->config($cliPreset)) : $config;
-    }
-
 
     /**
      * @return array{help:bool,json:bool,config:string,mode:string,normalize:bool,fuzzy:bool,nearMiss:bool,minLines:int,minTokens:int,minStatements:int,minSimilarity:float,baseline:string,writeBaseline:string,paths:list<string>,excludes:list<string>}
@@ -171,15 +141,6 @@ final class DuplicateChecker
         return $options;
     }
 
-    private function optionValue(string $arg, string $name): ?string
-    {
-        if (!str_starts_with($arg, $name . '=')) {
-            return null;
-        }
-
-        return substr($arg, strlen($name) + 1);
-    }
-
     /**
      * @param list<string> $args
      * @return array{help:bool,json:bool,config:string,mode:string,normalize:bool,fuzzy:bool,nearMiss:bool,minLines:int,minTokens:int,minStatements:int,minSimilarity:float,baseline:string,writeBaseline:string,paths:list<string>,excludes:list<string>}
@@ -187,44 +148,21 @@ final class DuplicateChecker
     private function parseArgs(array $args): array
     {
         $options = $this->defaultOptions();
-        $options['config'] = $this->configPath($args, $options['config']);
+        $options['config'] = $this->cli->configPath($args, $options['config']);
         $config = PhpProbeConfig::fromFile($options['config']);
-        $options = $this->configWithPreset($config, $this->presetName($args))->applyDuplicateOptions($options);
+        $options = $this->cli->mergeConfigWithPreset($config, $this->cli->presetName($args))->applyDuplicateOptions($options);
         $options = $this->normalizeMode($options);
-
-        return $this->parseCliOptions($args, $options, $options['paths']);
-    }
-
-    /**
-     * @param list<string> $args
-     * @param array{help:bool,json:bool,config:string,mode:string,normalize:bool,fuzzy:bool,nearMiss:bool,minLines:int,minTokens:int,minStatements:int,minSimilarity:float,baseline:string,writeBaseline:string,paths:list<string>,excludes:list<string>} $options
-     * @param list<string> $configuredPaths
-     * @return array{help:bool,json:bool,config:string,mode:string,normalize:bool,fuzzy:bool,nearMiss:bool,minLines:int,minTokens:int,minStatements:int,minSimilarity:float,baseline:string,writeBaseline:string,paths:list<string>,excludes:list<string>}
-     */
-    private function parseCliOptions(array $args, array $options, array $configuredPaths): array
-    {
+        $configuredPaths = $options['paths'];
         $options['paths'] = [];
 
         for ($index = 0; $index < count($args); $index++) {
             $arg = $args[$index];
-            $value = $this->optionValue($arg, '--mode');
 
-            if ($value !== null) {
-                $options['mode'] = in_array($value, ['gate', 'audit'], true) ? $value : 'gate';
-                $options['nearMiss'] = $options['mode'] === 'audit';
-
+            if ($this->cli->skipConfig($args, $index, $arg) || $this->cli->skipPreset($args, $index, $arg)) {
                 continue;
             }
 
-            if ($this->skipConfigOption($args, $index, $arg) || $this->skipPresetOption($args, $index, $arg)) {
-                continue;
-            }
-
-            if ($this->parseExcludeOption($args, $index, $options, $arg)) {
-                continue;
-            }
-
-            if ($this->parseFlag($options, $arg) || $this->parseNumericOption($options, $arg) || $this->parseFileOption($options, $arg)) {
+            if ($this->parseCliOption($args, $index, $options, $arg)) {
                 continue;
             }
 
@@ -242,60 +180,21 @@ final class DuplicateChecker
      * @param list<string> $args
      * @param array{help:bool,json:bool,config:string,mode:string,normalize:bool,fuzzy:bool,nearMiss:bool,minLines:int,minTokens:int,minStatements:int,minSimilarity:float,baseline:string,writeBaseline:string,paths:list<string>,excludes:list<string>} $options
      */
-    private function parseExcludeOption(array $args, int &$index, array &$options, string $arg): bool
+    private function parseCliOption(array $args, int &$index, array &$options, string $arg): bool
     {
-        $exclude = $this->optionValue($arg, '--exclude');
+        $mode = $this->cli->optionValue($arg, '--mode');
 
-        if ($exclude !== null) {
-            if ($exclude !== '') {
-                $options['excludes'][] = $exclude;
-            }
-
-            $options['excludes'] = array_values(array_unique($options['excludes']));
+        if ($mode !== null) {
+            $options['mode'] = in_array($mode, ['gate', 'audit'], true) ? $mode : 'gate';
+            $options['nearMiss'] = $options['mode'] === 'audit';
 
             return true;
         }
 
-        if ($arg !== '--exclude') {
-            return false;
-        }
-
-        if (isset($args[$index + 1]) && $args[$index + 1] !== '') {
-            $options['excludes'][] = $args[++$index];
-            $options['excludes'] = array_values(array_unique($options['excludes']));
-        }
-
-        return true;
-    }
-
-    /**
-     * @param array{help:bool,json:bool,config:string,mode:string,normalize:bool,fuzzy:bool,nearMiss:bool,minLines:int,minTokens:int,minStatements:int,minSimilarity:float,baseline:string,writeBaseline:string,paths:list<string>,excludes:list<string>} $options
-     */
-    private function parseFileOption(array &$options, string $arg): bool
-    {
-        $baseline = $this->optionValue($arg, '--baseline');
-
-        if ($baseline !== null) {
-            $options['baseline'] = $baseline;
-
-            return true;
-        }
-
-        $writeBaseline = $this->optionValue($arg, '--write-baseline');
-
-        if ($writeBaseline !== null) {
-            $options['writeBaseline'] = $writeBaseline !== '' ? $writeBaseline : '.phpprobe-duplicates-baseline.json';
-
-            return true;
-        }
-
-        if ($arg === '--write-baseline') {
-            $options['writeBaseline'] = '.phpprobe-duplicates-baseline.json';
-
-            return true;
-        }
-
-        return false;
+        return $this->cli->parseExclude($args, $index, $options, $arg)
+            || $this->parseFlag($options, $arg)
+            || $this->parseNumericOption($options, $arg)
+            || $this->cli->parseSnapshotFileOptions($options, $arg, '.phpprobe-duplicates-baseline.json');
     }
 
     /**
@@ -339,7 +238,7 @@ final class DuplicateChecker
     private function parseNumericOption(array &$options, string $arg): bool
     {
         foreach (['--min-lines' => 'minLines', '--min-tokens' => 'minTokens', '--min-statements' => 'minStatements'] as $name => $key) {
-            $value = $this->optionValue($arg, $name);
+            $value = $this->cli->optionValue($arg, $name);
 
             if ($value !== null) {
                 $options[$key] = max(1, (int) $value);
@@ -348,7 +247,7 @@ final class DuplicateChecker
             }
         }
 
-        $similarity = $this->optionValue($arg, '--min-similarity');
+        $similarity = $this->cli->optionValue($arg, '--min-similarity');
 
         if ($similarity === null) {
             return false;
@@ -356,64 +255,6 @@ final class DuplicateChecker
 
         $value = (float) $similarity;
         $options['minSimilarity'] = $value > 1.0 ? min(100.0, $value) / 100.0 : max(0.0, min(1.0, $value));
-
-        return true;
-    }
-
-    /**
-     * @param list<string> $args
-     */
-    private function presetName(array $args): string
-    {
-        for ($index = 0; $index < count($args); $index++) {
-            $preset = $this->optionValue($args[$index], '--preset');
-
-            if ($preset !== null) {
-                return $preset;
-            }
-
-            if ($args[$index] === '--preset' && isset($args[$index + 1])) {
-                return $args[$index + 1];
-            }
-        }
-
-        return '';
-    }
-    /**
-     * @param list<string> $args
-     */
-    private function skipConfigOption(array $args, int &$index, string $arg): bool
-    {
-        if ($this->optionValue($arg, '--config') !== null) {
-            return true;
-        }
-
-        if ($arg !== '--config') {
-            return false;
-        }
-
-        if (isset($args[$index + 1])) {
-            $index++;
-        }
-
-        return true;
-    }
-    /**
-     * @param list<string> $args
-     */
-    private function skipPresetOption(array $args, int &$index, string $arg): bool
-    {
-        if ($this->optionValue($arg, '--preset') !== null) {
-            return true;
-        }
-
-        if ($arg !== '--preset') {
-            return false;
-        }
-
-        if (isset($args[$index + 1])) {
-            $index++;
-        }
 
         return true;
     }

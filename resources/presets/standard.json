@@ -52,5 +52,30 @@
     "baseline": "",
     "write_baseline": "",
     "json": false
+  },
+  "api": {
+    "paths": [],
+    "exclude": [
+      "tests",
+      "vendor",
+      "node_modules",
+      ".git",
+      ".idea",
+      ".vscode",
+      "coverage",
+      ".phpunit.cache",
+      ".psalm-cache",
+      "build",
+      "dist",
+      "tmp",
+      ".tmp",
+      "storage",
+      "bootstrap/cache",
+      "var/cache"
+    ],
+    "include_protected": true,
+    "baseline": "",
+    "write_baseline": "",
+    "json": false
   }
 }

@@ -1,8 +1,8 @@
 # PHPProbe
 
-Standalone PHP checker for syntax validation and duplicate-code detection.
+Standalone PHP checker for syntax validation, duplicate-code detection, and public API snapshot checks.
 
-PHPProbe is the checker runtime. It can be used directly as `phpprobe`, required by tool-combiner packages such as PHPForge, or called from PHP code through the two public gateway classes.
+PHPProbe is the checker runtime. It can be used directly as `phpprobe`, required by tool-combiner packages such as PHPForge, or called from PHP code through the public gateway classes.
 
 ## Requirements
 
@@ -26,6 +26,7 @@ php vendor/bin/phpprobe
 ```bash
 php vendor/bin/phpprobe syntax [options] [paths...]
 php vendor/bin/phpprobe duplicates [options] [paths...]
+php vendor/bin/phpprobe api [options] [paths...]
 php vendor/bin/phpprobe presets
 php vendor/bin/phpprobe preset <name>
 ```
@@ -39,6 +40,8 @@ php vendor/bin/phpprobe syntax
 php vendor/bin/phpprobe duplicates
 php vendor/bin/phpprobe duplicates --json
 php vendor/bin/phpprobe duplicates --preset=strict --json src
+php vendor/bin/phpprobe api --write-baseline=.phpprobe-api-baseline.json src
+php vendor/bin/phpprobe api --baseline=.phpprobe-api-baseline.json src
 php vendor/bin/phpprobe presets
 php vendor/bin/phpprobe preset phpstorm
 ```
@@ -49,8 +52,9 @@ The package-facing checker gateways live directly under `src/`:
 
 - `Infocyph\PHPProbe\SyntaxChecker`
 - `Infocyph\PHPProbe\DuplicateChecker`
+- `Infocyph\PHPProbe\ApiSnapshotChecker`
 
-Both expose:
+All expose:
 
 ```php
 public function run(array $args): int
@@ -59,19 +63,22 @@ public function run(array $args): int
 `$args` is the same argument list that follows the CLI subcommand. For example:
 
 ```php
+use Infocyph\PHPProbe\ApiSnapshotChecker;
 use Infocyph\PHPProbe\DuplicateChecker;
 use Infocyph\PHPProbe\SyntaxChecker;
 
 $syntaxCode = (new SyntaxChecker())->run(['--config=phpprobe.json', 'src']);
 $duplicateCode = (new DuplicateChecker())->run(['--preset=strict', '--json', 'src']);
+$apiCode = (new ApiSnapshotChecker())->run(['--baseline=.phpprobe-api-baseline.json', 'src']);
 ```
 
 Everything else is internal implementation detail, grouped by role:
 
 | Namespace | Purpose |
 | --- | --- |
+| `Api` | Public API snapshot extraction from parser ASTs. |
 | `Console` | CLI dispatch for `bin/phpprobe`. |
-| `Config` | Config lookup, preset lookup, JSON parsing, and config merging. |
+| `Config` | Config lookup, preset lookup, JSON parsing, config merging, and shared CLI option handling. |
 | `Detection` | Duplicate-code token indexing, AST block indexing, scoring, grouping, and pruning. |
 | `Filesystem` | Git-aware PHP file discovery and path exclusion. |
 | `Process` | Small `proc_open` runner wrappers. |
@@ -131,6 +138,14 @@ A full project config may override any part of the selected preset:
     "baseline": "",
     "write_baseline": "",
     "json": false
+  },
+  "api": {
+    "paths": ["src"],
+    "exclude": ["src/generated"],
+    "include_protected": true,
+    "baseline": "",
+    "write_baseline": "",
+    "json": false
   }
 }
 ```
@@ -138,6 +153,8 @@ A full project config may override any part of the selected preset:
 Config keys accept snake case, kebab case, and camel case. For example, `min_tokens`, `min-tokens`, and `minTokens` are equivalent. Excludes can be configured as either `exclude` or `exclude_paths`.
 
 Internal duplicate defaults, before the bundled `phpstorm` config is applied, are `mode=gate`, `normalize=true`, `fuzzy=false`, `near_miss=false`, `min_lines=5`, `min_tokens=70`, `min_statements=4`, `min_similarity=0.85`, no baseline, no JSON output, and no configured paths or excludes.
+
+Internal API defaults are `include_protected=true`, no baseline, no JSON output, and no configured paths or excludes.
 
 Config merge order is:
 
@@ -155,13 +172,13 @@ Preset templates live in `resources/presets/` and are loaded by `Infocyph\PHPPro
 
 Available presets:
 
-| Preset | Duplicate policy |
-| --- | --- |
-| `phpstorm` | PhpStorm-aligned default. `audit` mode, normalized tokens, fuzzy identifiers, near-miss matching, `min_lines=5`, `min_tokens=90`, `min_statements=4`, `min_similarity=0.85`. |
-| `standard` | Quieter CI gate. `gate` mode, normalized tokens, fuzzy identifiers, no near-miss matching, `min_lines=6`, `min_tokens=100`, `min_statements=5`, `min_similarity=0.9`. |
-| `strict` | Sensitive audit. `audit` mode, normalized tokens, fuzzy identifiers, near-miss matching, `min_lines=4`, `min_tokens=70`, `min_statements=3`, `min_similarity=0.8`. |
+| Preset | Duplicate policy | API policy |
+| --- | --- | --- |
+| `phpstorm` | PhpStorm-aligned default. `audit` mode, normalized tokens, fuzzy identifiers, near-miss matching, `min_lines=5`, `min_tokens=90`, `min_statements=4`, `min_similarity=0.85`. | Includes protected members. |
+| `standard` | Quieter CI gate. `gate` mode, normalized tokens, fuzzy identifiers, no near-miss matching, `min_lines=6`, `min_tokens=100`, `min_statements=5`, `min_similarity=0.9`. | Includes protected members. |
+| `strict` | Sensitive audit. `audit` mode, normalized tokens, fuzzy identifiers, near-miss matching, `min_lines=4`, `min_tokens=70`, `min_statements=3`, `min_similarity=0.8`. | Includes protected members. |
 
-All presets include the same default syntax and duplicate excludes:
+All presets include the same default syntax, duplicate, and API excludes:
 
 ```text
 tests, vendor, node_modules, .git, .idea, .vscode, coverage,
@@ -217,6 +234,57 @@ Output and exits:
 | No PHP files found | `stdout`: `No PHP files found.` | `0` |
 | All files pass | `stdout`: `Syntax OK: N PHP files checked.` | `0` |
 | One or more files fail | `stderr`: failing file list plus lint output | `1` |
+| Unknown preset | `stderr`: preset error | `2` |
+
+## Public API Snapshot Checker
+
+The API checker parses PHP files with `nikic/php-parser`, extracts the package-visible surface, and can compare it with a saved snapshot. It is intended for library BC drift checks, not type analysis.
+
+Command:
+
+```bash
+php vendor/bin/phpprobe api [options] [paths...]
+```
+
+Options:
+
+| Option | Form | Meaning |
+| --- | --- | --- |
+| `--config` | `--config=FILE` or `--config FILE` | Read checker settings from a specific config file. |
+| `--preset` | `--preset=NAME` or `--preset NAME` | Apply `phpstorm`, `standard`, or `strict` as a run-level preset. |
+| `--exclude` | `--exclude=PATH` or `--exclude PATH` | Exclude a path. Repeatable. |
+| `--public-only` | flag | Ignore protected class members. |
+| `--include-protected` | flag | Include protected members. This is the default. |
+| `--baseline` | `--baseline=FILE` | Compare the current API against a snapshot file. |
+| `--write-baseline` | `--write-baseline`, `--write-baseline=FILE` | Write the current API snapshot and exit `0`. Bare flag writes `.phpprobe-api-baseline.json`. |
+| `--json` | flag | Emit machine-readable JSON to `stdout`. |
+| `--help`, `-h` | flag | Print API checker help and exit `0`. |
+
+Path behavior:
+
+- CLI paths override `api.paths` from config.
+- If CLI paths are empty, `api.paths` is used.
+- If both are empty, discovery starts from `.`.
+- Config excludes and CLI excludes are merged.
+
+Snapshot contents:
+
+- named classes, interfaces, traits, and enums
+- top-level namespaced functions
+- top-level namespaced constants
+- public members always
+- protected members unless `--public-only` is used
+- class modifiers, inheritance, implemented interfaces, method signatures, property signatures, constants, enum cases, function signatures, and stable fingerprints
+
+Output and exits:
+
+| Condition | Stream | Exit |
+| --- | --- | --- |
+| No baseline passed | `stdout`: `Public API snapshot OK: N symbol(s) scanned.` | `0` |
+| Baseline matches | `stdout`: `Public API unchanged: N symbol(s) scanned.` | `0` |
+| Baseline differs | `stderr`: added/removed/changed symbol list | `1` |
+| `--json` | `stdout`: JSON result | `0` or `1`, depending on drift |
+| `--write-baseline` | `stdout`: baseline message or JSON result | `0` |
 | Unknown preset | `stderr`: preset error | `2` |
 
 ## Duplicate Checker
@@ -320,9 +388,9 @@ Grouping, pruning, and scoring:
 - Results are ranked by score, line span, and similarity.
 - Scoring rewards larger clones, more occurrences, higher similarity, structural completeness, and near-miss signal; small trivial clones are penalized.
 
-## JSON Result Shape
+## Duplicate JSON Result Shape
 
-`--json` emits:
+`phpprobe duplicates --json` emits:
 
 ```json
 {
@@ -362,7 +430,45 @@ Clone `source` is one of:
 - `statements`
 - `near_miss`
 
-`known_clones` is populated when a baseline is read. `new_clones` is the number of clone groups remaining after baseline suppression.
+`known_clones` is populated when a duplicate baseline is read. `new_clones` is the number of clone groups remaining after baseline suppression.
+
+## API JSON Result Shape
+
+`phpprobe api --json` emits:
+
+```json
+{
+  "snapshot": {
+    "version": 1,
+    "generated_at": "2026-05-02T00:00:00+00:00",
+    "symbols": [
+      {
+        "id": "class App\\Service",
+        "kind": "class",
+        "name": "App\\Service",
+        "file": "src/Service.php",
+        "line": 5,
+        "modifiers": ["final"],
+        "extends": "",
+        "implements": [],
+        "members": [],
+        "fingerprint": "..."
+      }
+    ]
+  },
+  "baseline": {
+    "version": 1,
+    "generated_at": "",
+    "symbols": []
+  },
+  "changed": false,
+  "changes": {
+    "added": [],
+    "removed": [],
+    "changed": []
+  }
+}
+```
 
 ## Baselines
 
@@ -371,15 +477,18 @@ Write a baseline:
 ```bash
 php vendor/bin/phpprobe duplicates --write-baseline
 php vendor/bin/phpprobe duplicates --write-baseline=.phpprobe-duplicates-baseline.json
+php vendor/bin/phpprobe api --write-baseline
+php vendor/bin/phpprobe api --write-baseline=.phpprobe-api-baseline.json
 ```
 
 Use a baseline:
 
 ```bash
 php vendor/bin/phpprobe duplicates --baseline=.phpprobe-duplicates-baseline.json
+php vendor/bin/phpprobe api --baseline=.phpprobe-api-baseline.json
 ```
 
-Baseline files contain:
+Duplicate baseline files contain:
 
 ```json
 {
@@ -395,7 +504,7 @@ Baseline files contain:
 }
 ```
 
-When a baseline file is missing or unreadable, PHPProbe treats it as empty.
+API baseline files use the same top-level `version`, `generated_at`, and `symbols` shape emitted under the `snapshot` JSON key. When a baseline file is missing or unreadable, PHPProbe treats it as empty.
 
 ## Development
 
@@ -406,6 +515,7 @@ Composer scripts:
 | `composer test` | `vendor/bin/pest -c pest.xml` |
 | `composer lint` | `php bin/phpprobe syntax src tests` |
 | `composer duplicates` | `php bin/phpprobe duplicates --preset=standard --config=resources/phpprobe.json src tests` |
+| `composer api` | `php bin/phpprobe api --config=resources/phpprobe.json src tests` |
 
 Useful local checks:
 
@@ -414,6 +524,7 @@ composer validate --strict
 composer test
 composer lint
 composer duplicates
+composer api
 git diff --check
 ```
 

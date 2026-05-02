@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Infocyph\PHPProbe\Console;
 
+use Infocyph\PHPProbe\ApiSnapshotChecker;
 use Infocyph\PHPProbe\Config\PresetRepository;
 use Infocyph\PHPProbe\DuplicateChecker;
 use Infocyph\PHPProbe\SyntaxChecker;
@@ -20,6 +21,7 @@ final class Cli
         return match ($command) {
             'syntax' => (new SyntaxChecker())->run(array_slice($argv, 2)),
             'duplicates' => (new DuplicateChecker())->run(array_slice($argv, 2)),
+            'api' => (new ApiSnapshotChecker())->run(array_slice($argv, 2)),
             'presets' => $this->presets(),
             'preset' => $this->preset((string) ($argv[2] ?? '')),
             default => $this->help(),
@@ -54,7 +56,7 @@ final class Cli
 
     private function help(): int
     {
-        fwrite(STDOUT, 'Usage: phpprobe syntax [options] [paths...] | duplicates [options] [paths...] | presets | preset <name>' . PHP_EOL);
+        fwrite(STDOUT, 'Usage: phpprobe syntax|duplicates|api [options] [paths...] | presets | preset <name>' . PHP_EOL);
 
         return 0;
     }

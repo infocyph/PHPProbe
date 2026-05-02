@@ -24,13 +24,16 @@ if (!class_exists(Cli::class)) {
     require __DIR__ . '/../src/Process/ProcRunner.php';
     require __DIR__ . '/../src/Config/Paths.php';
     require __DIR__ . '/../src/Config/PhpProbeConfig.php';
+    require __DIR__ . '/../src/Config/CliOptions.php';
     require __DIR__ . '/../src/Config/PresetRepository.php';
     require __DIR__ . '/../src/Filesystem/PhpFileFinder.php';
+    require __DIR__ . '/../src/Api/ApiSnapshotIndex.php';
     require __DIR__ . '/../src/Detection/DuplicateAstBlockIndex.php';
     require __DIR__ . '/../src/Detection/DuplicateCloneReducer.php';
     require __DIR__ . '/../src/Detection/DuplicateCodeIndex.php';
     require __DIR__ . '/../src/Detection/DuplicateDetectionEngine.php';
     require __DIR__ . '/../src/DuplicateChecker.php';
+    require __DIR__ . '/../src/ApiSnapshotChecker.php';
     require __DIR__ . '/../src/SyntaxChecker.php';
     require __DIR__ . '/../src/Console/Cli.php';
 }

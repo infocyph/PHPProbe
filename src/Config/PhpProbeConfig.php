@@ -96,6 +96,47 @@ final readonly class PhpProbeConfig
         return $options;
     }
 
+    /**
+     * @param array{help:bool,json:bool,config:string,preset:string,includeProtected:bool,baseline:string,writeBaseline:string,paths:list<string>,excludes:list<string>} $options
+     * @return array{help:bool,json:bool,config:string,preset:string,includeProtected:bool,baseline:string,writeBaseline:string,paths:list<string>,excludes:list<string>}
+     */
+    public function applyApiOptions(array $options): array
+    {
+        $section = $this->section('api');
+
+        $json = $this->boolValue($section, 'json');
+        $includeProtected = $this->boolValue($section, 'include_protected');
+        $baseline = $this->stringValue($section, 'baseline');
+        $writeBaseline = $this->stringValue($section, 'write_baseline');
+        $paths = $this->stringList($this->value($section, 'paths'));
+        $excludes = $this->excludePaths($section);
+
+        if ($json !== null) {
+            $options['json'] = $json;
+        }
+
+        if ($includeProtected !== null) {
+            $options['includeProtected'] = $includeProtected;
+        }
+
+        if ($baseline !== null) {
+            $options['baseline'] = $baseline;
+        }
+
+        if ($writeBaseline !== null) {
+            $options['writeBaseline'] = $writeBaseline;
+        }
+
+        if ($paths !== []) {
+            $options['paths'] = $paths;
+        }
+
+        if ($excludes !== []) {
+            $options['excludes'] = $excludes;
+        }
+
+        return $options;
+    }
     public function merge(self $override): self
     {
         return new self($this->mergeArrays($this->config, $override->config));
