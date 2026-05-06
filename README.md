@@ -589,7 +589,7 @@ php vendor/bin/phpprobe duplicates --baseline=.phpprobe-duplicates-baseline.json
 php vendor/bin/phpprobe api --baseline=.phpprobe-api-baseline.json
 ```
 
-This repository uses `resources/.phpprobe-duplicates-baseline.json` in `composer duplicates` so CI fails only on newly introduced clone groups.
+This repository does not use a duplicate baseline in CI; duplicate findings are expected to be resolved directly.
 
 Duplicate baseline files contain:
 
@@ -649,7 +649,7 @@ Composer scripts:
 | --- | --- |
 | `composer test` | `vendor/bin/pest -c pest.xml` |
 | `composer lint` | `php bin/phpprobe syntax src tests` |
-| `composer duplicates` | `php bin/phpprobe duplicates --preset=ci --config=resources/phpprobe.json --baseline=resources/.phpprobe-duplicates-baseline.json src tests` |
+| `composer duplicates` | `php bin/phpprobe duplicates --preset=standard --config=resources/phpprobe.json src tests` |
 | `composer api` | `php bin/phpprobe api --config=resources/phpprobe.json src tests` |
 | `composer comments` | `php bin/phpprobe comments --config=resources/phpprobe.json src tests` |
 

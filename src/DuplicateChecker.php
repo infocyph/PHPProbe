@@ -10,56 +10,60 @@ use Infocyph\PHPProbe\Config\PhpProbeConfig;
 use Infocyph\PHPProbe\Console\Ansi;
 use Infocyph\PHPProbe\Detection\DuplicateCloneReducer;
 use Infocyph\PHPProbe\Detection\DuplicateDetectionEngine;
-use Infocyph\PHPProbe\Filesystem\PhpFileFinder;
+use Infocyph\PHPProbe\Util\BaselineJson;
+use Infocyph\PHPProbe\Util\CheckerRuntime;
 use Infocyph\PHPProbe\Util\Sarif;
 use Infocyph\PHPProbe\Util\SummaryJson;
 
 final class DuplicateChecker
 {
-    private CliOptions $cli;
-
-    public function __construct()
-    {
-        $this->cli = new CliOptions();
-    }
-
     /**
      * @param list<string> $args
      */
     public function run(array $args): int
     {
-        try {
+        return CheckerRuntime::guarded(function () use ($args): int {
             $options = $this->parseArgs($args);
+
             if ($options['help']) {
                 return $this->help();
             }
 
-            $files = (new PhpFileFinder())->find(
-                $options['paths'],
-                $options['excludes'],
-                ['changedOnly' => $options['changedOnly'], 'changedBase' => $options['changedBase']],
-            );
-            $result = $this->analyzeWithCache($files, $options);
+            return $this->finishRun($this->buildResult($options), $options);
+        });
+    }
 
-            if ($options['baseline'] !== '') {
-                $result = $this->withoutBaselineClones($result, $options['baseline']);
-            }
+    /**
+     * @param array<string, mixed> $options
+     * @param array{files:int,total_lines:int,duplicated_lines:int,duplicate_percentage:float,known_clones:int,new_clones:int,cache_hit:bool,clones:list<array{fingerprint:string,source:string,score:float,similarity:float,tokens:int,lines:int,statements:int,block_type:string,occurrences:list<array{file:string,start_line:int,end_line:int,lines:int,context:string}>}>} $result
+     */
+    private function finishRun(array $result, array $options): int
+    {
+        $failed = $this->shouldFail($result, $options);
+        $exitCode = $options['writeBaseline'] === '' && $failed ? 1 : 0;
+        $this->writeResult($result, $options, $failed);
+        $this->writeSummaryJson($result, $options, $exitCode);
 
-            if ($options['writeBaseline'] !== '') {
-                $this->writeBaseline($result, $options['writeBaseline']);
-            }
+        return $exitCode;
+    }
 
-            $failed = $this->shouldFail($result, $options);
-            $exitCode = $options['writeBaseline'] !== '' ? 0 : ($failed ? 1 : 0);
-            $this->writeResult($result, $options, $failed);
-            $this->writeSummaryJson($result, $options, $exitCode);
+    /**
+     * @param array<string, mixed> $options
+     * @return array{files:int,total_lines:int,duplicated_lines:int,duplicate_percentage:float,known_clones:int,new_clones:int,cache_hit:bool,clones:list<array{fingerprint:string,source:string,score:float,similarity:float,tokens:int,lines:int,statements:int,block_type:string,occurrences:list<array{file:string,start_line:int,end_line:int,lines:int,context:string}>}>}
+     */
+    private function buildResult(array $options): array
+    {
+        $result = $this->analyzeWithCache(CheckerRuntime::phpFiles($options), $options);
 
-            return $exitCode;
-        } catch (\InvalidArgumentException|\RuntimeException $exception) {
-            fwrite(STDERR, $exception->getMessage() . PHP_EOL);
-
-            return 2;
+        if ($options['baseline'] !== '') {
+            $result = $this->withoutBaselineClones($result, $options['baseline']);
         }
+
+        if ($options['writeBaseline'] !== '') {
+            $this->writeBaseline($result, $options['writeBaseline']);
+        }
+
+        return $result;
     }
 
     /**
@@ -132,32 +136,7 @@ final class DuplicateChecker
      */
     private function knownFingerprints(string $baselinePath): array
     {
-        if (!is_file($baselinePath)) {
-            throw new \RuntimeException(sprintf('Duplicate baseline file not found: %s', $baselinePath));
-        }
-
-        if (!is_readable($baselinePath)) {
-            throw new \RuntimeException(sprintf('Duplicate baseline file is not readable: %s', $baselinePath));
-        }
-
-        $contents = file_get_contents($baselinePath);
-
-        if (!is_string($contents)) {
-            throw new \RuntimeException(sprintf('Failed to read duplicate baseline file: %s', $baselinePath));
-        }
-
-        try {
-            $decoded = json_decode($contents, true, 512, JSON_THROW_ON_ERROR);
-        } catch (\JsonException $exception) {
-            throw new \RuntimeException(
-                sprintf('Invalid duplicate baseline JSON at %s: %s', $baselinePath, $exception->getMessage()),
-                previous: $exception,
-            );
-        }
-
-        if (!is_array($decoded)) {
-            throw new \RuntimeException(sprintf('Duplicate baseline payload must be a JSON object: %s', $baselinePath));
-        }
+        $decoded = BaselineJson::readObject($baselinePath, 'Duplicate');
 
         $clones = $decoded['clones'] ?? null;
 
@@ -197,17 +176,18 @@ final class DuplicateChecker
      */
     private function parseArgs(array $args): array
     {
+        $cli = new CliOptions();
         $options = $this->defaultOptions();
-        $options['config'] = $this->cli->configPath($args, $options['config']);
+        $options['config'] = $cli->configPath($args, $options['config']);
         $config = PhpProbeConfig::fromFile($options['config']);
-        $options = $this->cli->mergeConfigWithPreset($config, $this->cli->presetName($args))->applyDuplicateOptions($options);
+        $options = $cli->mergeConfigWithPreset($config, $cli->presetName($args))->applyDuplicateOptions($options);
         $options = $this->normalizeMode($options);
         $configuredPaths = $options['paths'];
-        $this->cli->collectPaths(
+        $cli->collectPaths(
             $args,
             $options,
             $configuredPaths,
-            fn(string $arg, int &$index, array &$items): bool => $this->parseCliOption($args, $index, $items, $arg),
+            fn(string $arg, int &$index, array &$items): bool => $this->parseCliOption($args, $index, $items, $arg, $cli),
             'Unknown option for duplicates command: %s',
         );
 
@@ -218,9 +198,9 @@ final class DuplicateChecker
      * @param list<string> $args
      * @param array<string, mixed> $options
      */
-    private function parseCliOption(array $args, int &$index, array &$options, string $arg): bool
+    private function parseCliOption(array $args, int &$index, array &$options, string $arg, CliOptions $cli): bool
     {
-        $mode = $this->cli->optionValue($arg, '--mode');
+        $mode = $cli->optionValue($arg, '--mode');
 
         if ($mode !== null) {
             $options['mode'] = in_array($mode, ['gate', 'audit'], true) ? $mode : 'gate';
@@ -229,7 +209,7 @@ final class DuplicateChecker
             return true;
         }
 
-        $errorDuplicatePercentage = $this->cli->optionValue($arg, '--error-duplicate-percentage');
+        $errorDuplicatePercentage = $cli->optionValue($arg, '--error-duplicate-percentage');
 
         if ($errorDuplicatePercentage !== null) {
             $options['errorDuplicatePercentage'] = max(0.0, min(100.0, (float) $errorDuplicatePercentage));
@@ -237,7 +217,7 @@ final class DuplicateChecker
             return true;
         }
 
-        $cacheFile = $this->cli->optionValue($arg, '--cache-file');
+        $cacheFile = $cli->optionValue($arg, '--cache-file');
 
         if ($cacheFile !== null) {
             $options['cacheFile'] = trim($cacheFile);
@@ -251,14 +231,14 @@ final class DuplicateChecker
             return true;
         }
 
-        return $this->cli->parseExclude($args, $index, $options, $arg)
+        return $cli->parseExclude($args, $index, $options, $arg)
             || $this->parseFlag($options, $arg)
-            || $this->parseNumericOption($options, $arg)
-            || $this->cli->parseOutputFormat($options, $arg)
-            || $this->cli->parseFailOn($options, $arg)
-            || $this->cli->parseSummaryJson($options, $arg)
-            || $this->cli->parseChangedOptions($options, $arg)
-            || $this->cli->parseSnapshotFileOptions($options, $arg, '.phpprobe-duplicates-baseline.json');
+            || $this->parseNumericOption($options, $arg, $cli)
+            || $cli->parseOutputFormat($options, $arg)
+            || $cli->parseFailOn($options, $arg)
+            || $cli->parseSummaryJson($options, $arg)
+            || $cli->parseChangedOptions($options, $arg)
+            || $cli->parseSnapshotFileOptions($options, $arg, '.phpprobe-duplicates-baseline.json');
     }
 
     /**
@@ -298,10 +278,10 @@ final class DuplicateChecker
     /**
      * @param array<string, mixed> $options
      */
-    private function parseNumericOption(array &$options, string $arg): bool
+    private function parseNumericOption(array &$options, string $arg, CliOptions $cli): bool
     {
         foreach (['--min-lines' => 'minLines', '--min-tokens' => 'minTokens', '--min-statements' => 'minStatements'] as $name => $key) {
-            $value = $this->cli->optionValue($arg, $name);
+            $value = $cli->optionValue($arg, $name);
 
             if ($value !== null) {
                 $options[$key] = max(1, (int) $value);
@@ -310,7 +290,7 @@ final class DuplicateChecker
             }
         }
 
-        $similarity = $this->cli->optionValue($arg, '--min-similarity');
+        $similarity = $cli->optionValue($arg, '--min-similarity');
 
         if ($similarity === null) {
             return false;
@@ -452,27 +432,17 @@ final class DuplicateChecker
      */
     private function writeBaseline(array $result, string $path): void
     {
-        try {
-            $payload = [
-                'version' => 1,
-                'generated_at' => gmdate('c'),
-                'clones' => array_map(static fn(array $clone): array => [
-                    'fingerprint' => $clone['fingerprint'],
-                    'source' => $clone['source'],
-                    'score' => $clone['score'],
-                ], $result['clones']),
-            ];
-            $encoded = json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR) . PHP_EOL;
-        } catch (\JsonException $exception) {
-            throw new \RuntimeException(
-                sprintf('Could not encode duplicate baseline JSON for %s: %s', $path, $exception->getMessage()),
-                previous: $exception,
-            );
-        }
+        $payload = [
+            'version' => 1,
+            'generated_at' => gmdate('c'),
+            'clones' => array_map(static fn(array $clone): array => [
+                'fingerprint' => $clone['fingerprint'],
+                'source' => $clone['source'],
+                'score' => $clone['score'],
+            ], $result['clones']),
+        ];
 
-        if (file_put_contents($path, $encoded) === false) {
-            throw new \RuntimeException(sprintf('Failed to write duplicate baseline file: %s', $path));
-        }
+        BaselineJson::writeObject($path, $payload, 'duplicate');
     }
 
     /**
@@ -498,12 +468,25 @@ final class DuplicateChecker
      */
     private function writeResult(array $result, array $options, bool $failed): void
     {
-        match ($options['format']) {
-            'json' => $this->writeJson($result),
-            'markdown' => $this->writeMarkdown($result, $options, $failed),
-            'sarif' => $this->writeSarif($result),
-            default => $this->writeText($result, $options, $failed),
-        };
+        if ($options['format'] === 'json') {
+            $this->writeJson($result);
+
+            return;
+        }
+
+        if ($options['format'] === 'markdown') {
+            $this->writeMarkdown($result, $options, $failed);
+
+            return;
+        }
+
+        if ($options['format'] === 'sarif') {
+            $this->writeSarif($result);
+
+            return;
+        }
+
+        $this->writeText($result, $options, $failed);
     }
 
     /**

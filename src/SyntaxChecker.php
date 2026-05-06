@@ -8,53 +8,54 @@ use Infocyph\PHPProbe\Config\CliOptions;
 use Infocyph\PHPProbe\Config\Paths;
 use Infocyph\PHPProbe\Config\PhpProbeConfig;
 use Infocyph\PHPProbe\Console\Ansi;
-use Infocyph\PHPProbe\Filesystem\PhpFileFinder;
 use Infocyph\PHPProbe\Process\ProcessResult;
 use Infocyph\PHPProbe\Process\ProcRunner;
+use Infocyph\PHPProbe\Util\CheckerRuntime;
 use Infocyph\PHPProbe\Util\Sarif;
 use Infocyph\PHPProbe\Util\SummaryJson;
 
 final class SyntaxChecker
 {
-    private CliOptions $cli;
-
-    public function __construct()
-    {
-        $this->cli = new CliOptions();
-    }
-
     /**
      * @param list<string> $args
      */
     public function run(array $args): int
     {
-        try {
-            $options = $this->parseArgs($args);
-        } catch (\InvalidArgumentException|\RuntimeException $exception) {
-            fwrite(STDERR, $exception->getMessage() . PHP_EOL);
+        return CheckerRuntime::guarded(function () use ($args): int {
+            return $this->runWithOptions($this->parseArgs($args));
+        });
+    }
 
-            return 2;
-        }
-
+    /**
+     * @param array{help:bool,format:string,summaryJson:string,changedOnly:bool,changedBase:string,parallel:int,config:string,paths:list<string>,excludes:list<string>} $options
+     */
+    private function runWithOptions(array $options): int
+    {
         if ($options['help']) {
             return $this->help();
         }
 
-        $files = (new PhpFileFinder())->find(
-            $options['paths'],
-            $options['excludes'],
-            ['changedOnly' => $options['changedOnly'], 'changedBase' => $options['changedBase']],
-        );
-        $result = $files === []
-            ? ['files_checked' => 0, 'failures' => []]
-            : $this->lintFiles($files, $options['parallel']);
-        $failed = $result['failures'] !== [];
-        $exitCode = $failed ? 1 : 0;
+        [$result, $failed, $exitCode] = $this->lintOutcome($options);
 
         $this->writeResult($result, $options, $failed);
         $this->writeSummaryJson($result, $options, $exitCode);
 
         return $exitCode;
+    }
+
+    /**
+     * @param array{help:bool,format:string,summaryJson:string,changedOnly:bool,changedBase:string,parallel:int,config:string,paths:list<string>,excludes:list<string>} $options
+     * @return array{0:array{files_checked:int,failures:list<array{file:string,message:string}>},1:bool,2:int}
+     */
+    private function lintOutcome(array $options): array
+    {
+        $files = CheckerRuntime::phpFiles($options);
+        $result = $files === []
+            ? ['files_checked' => 0, 'failures' => []]
+            : $this->lintFiles($files, $options['parallel']);
+        $failed = $result['failures'] !== [];
+
+        return [$result, $failed, $failed ? 1 : 0];
     }
 
     private function help(): int
@@ -364,6 +365,7 @@ final class SyntaxChecker
      */
     private function parseArgs(array $args): array
     {
+        $cli = new CliOptions();
         $options = [
             'help' => false,
             'format' => 'text',
@@ -375,15 +377,15 @@ final class SyntaxChecker
             'paths' => [],
             'excludes' => [],
         ];
-        $options['config'] = $this->cli->configPath($args, $options['config']);
-        $config = $this->cli->mergeConfigWithPreset(PhpProbeConfig::fromFile($options['config']), $this->cli->presetName($args));
+        $options['config'] = $cli->configPath($args, $options['config']);
+        $config = $cli->mergeConfigWithPreset(PhpProbeConfig::fromFile($options['config']), $cli->presetName($args));
         $options = $config->applySyntaxOptions($options);
         $configuredPaths = $options['paths'];
-        $this->cli->collectPaths(
+        $cli->collectPaths(
             $args,
             $options,
             $configuredPaths,
-            fn(string $arg, int &$index, array &$items): bool => $this->parseCliOption($args, $index, $items, $arg),
+            fn(string $arg, int &$index, array &$items): bool => $this->parseCliOption($args, $index, $items, $arg, $cli),
             'Unknown option for syntax command: %s',
         );
 
@@ -396,31 +398,13 @@ final class SyntaxChecker
      * @param list<string> $args
      * @param array{help:bool,format:string,summaryJson:string,changedOnly:bool,changedBase:string,parallel:int,config:string,paths:list<string>,excludes:list<string>} $options
      */
-    private function parseCliOption(array $args, int &$index, array &$options, string $arg): bool
+    private function parseCliOption(array $args, int &$index, array &$options, string $arg, CliOptions $cli): bool
     {
-        if ($this->cli->parseExclude($args, $index, $options, $arg)) {
+        if ($cli->parseCommonCheckerOptions($args, $index, $options, $arg, false)) {
             return true;
         }
 
-        if ($arg === '--help' || $arg === '-h') {
-            $options['help'] = true;
-
-            return true;
-        }
-
-        if ($this->cli->parseOutputFormat($options, $arg)) {
-            return true;
-        }
-
-        if ($this->cli->parseSummaryJson($options, $arg)) {
-            return true;
-        }
-
-        if ($this->cli->parseChangedOptions($options, $arg)) {
-            return true;
-        }
-
-        $parallel = $this->cli->optionValue($arg, '--parallel');
+        $parallel = $cli->optionValue($arg, '--parallel');
 
         if ($parallel !== null) {
             $options['parallel'] = max(1, (int) $parallel);

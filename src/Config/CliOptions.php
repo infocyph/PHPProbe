@@ -122,15 +122,7 @@ final readonly class CliOptions
             return true;
         }
 
-        $changedBase = $this->optionValue($arg, '--changed-base');
-
-        if ($changedBase === null) {
-            return false;
-        }
-
-        $options['changedBase'] = trim($changedBase);
-
-        return true;
+        return $this->parseTrimmedOption($options, $arg, '--changed-base', 'changedBase');
     }
 
     /**
@@ -171,15 +163,7 @@ final readonly class CliOptions
      */
     public function parseSummaryJson(array &$options, string $arg): bool
     {
-        $summaryJson = $this->optionValue($arg, '--summary-json');
-
-        if ($summaryJson === null) {
-            return false;
-        }
-
-        $options['summaryJson'] = trim($summaryJson);
-
-        return true;
+        return $this->parseTrimmedOption($options, $arg, '--summary-json', 'summaryJson');
     }
 
     /**
@@ -228,6 +212,42 @@ final readonly class CliOptions
         $options['failOn'] = $normalized;
 
         return true;
+    }
+
+    /**
+     * @param list<string> $args
+     * @param array<string, mixed> $options
+     */
+    public function parseCommonCheckerOptions(
+        array $args,
+        int &$index,
+        array &$options,
+        string $arg,
+        bool $includeFailOn,
+    ): bool {
+        if ($this->parseExclude($args, $index, $options, $arg)) {
+            return true;
+        }
+
+        if ($arg === '--help' || $arg === '-h') {
+            $options['help'] = true;
+
+            return true;
+        }
+
+        if ($this->parseOutputFormat($options, $arg)) {
+            return true;
+        }
+
+        if ($includeFailOn && $this->parseFailOn($options, $arg)) {
+            return true;
+        }
+
+        if ($this->parseSummaryJson($options, $arg)) {
+            return true;
+        }
+
+        return $this->parseChangedOptions($options, $arg);
     }
 
     /**
@@ -323,5 +343,21 @@ final readonly class CliOptions
         }
 
         return null;
+    }
+
+    /**
+     * @param array<string, mixed> $options
+     */
+    private function parseTrimmedOption(array &$options, string $arg, string $name, string $targetKey): bool
+    {
+        $value = $this->optionValue($arg, $name);
+
+        if ($value === null) {
+            return false;
+        }
+
+        $options[$targetKey] = trim($value);
+
+        return true;
     }
 }

@@ -10,7 +10,7 @@ use Infocyph\PHPProbe\Config\CliOptions;
 use Infocyph\PHPProbe\Config\Paths;
 use Infocyph\PHPProbe\Config\PhpProbeConfig;
 use Infocyph\PHPProbe\Console\Ansi;
-use Infocyph\PHPProbe\Filesystem\PhpFileFinder;
+use Infocyph\PHPProbe\Util\CheckerRuntime;
 use Infocyph\PHPProbe\Util\Sarif;
 use Infocyph\PHPProbe\Util\SummaryJson;
 
@@ -28,18 +28,14 @@ final class CommentChecker
      */
     public function run(array $args): int
     {
-        try {
+        return CheckerRuntime::guarded(function () use ($args): int {
             $options = $this->parseArgs($args);
 
             if ($options['help']) {
                 return $this->help();
             }
 
-            $files = (new PhpFileFinder())->find(
-                $options['paths'],
-                $options['excludes'],
-                ['changedOnly' => $options['changedOnly'], 'changedBase' => $options['changedBase']],
-            );
+            $files = CheckerRuntime::phpFiles($options);
             $result = (new CommentScanner())->scan($files, $options);
             $failed = $this->shouldFail($result['findings'], $options['failOn']);
             $exitCode = $failed ? 1 : 0;
@@ -48,11 +44,7 @@ final class CommentChecker
             $this->writeSummaryJson($result, $options, $exitCode);
 
             return $exitCode;
-        } catch (\InvalidArgumentException|\RuntimeException $exception) {
-            fwrite(STDERR, $exception->getMessage() . PHP_EOL);
-
-            return 2;
-        }
+        });
     }
 
     /**
@@ -195,35 +187,13 @@ final class CommentChecker
      */
     private function parseCliOption(array $args, int &$index, array &$options, string $arg): bool
     {
-        if ($this->cli->parseExclude($args, $index, $options, $arg)) {
-            return true;
-        }
-
-        if ($arg === '--help' || $arg === '-h') {
-            $options['help'] = true;
-
-            return true;
-        }
-
         if ($arg === '--strict') {
             $options['strict'] = true;
 
             return true;
         }
 
-        if ($this->cli->parseOutputFormat($options, $arg)) {
-            return true;
-        }
-
-        if ($this->cli->parseFailOn($options, $arg)) {
-            return true;
-        }
-
-        if ($this->cli->parseSummaryJson($options, $arg)) {
-            return true;
-        }
-
-        if ($this->cli->parseChangedOptions($options, $arg)) {
+        if ($this->cli->parseCommonCheckerOptions($args, $index, $options, $arg, true)) {
             return true;
         }
 
