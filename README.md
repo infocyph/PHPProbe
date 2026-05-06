@@ -1,5 +1,12 @@
 # PHPProbe
 
+[![Security & Standards](https://github.com/infocyph/PHPProbe/actions/workflows/ci.yml/badge.svg)](https://github.com/infocyph/PHPProbe/actions/workflows/ci.yml)
+![Packagist Downloads](https://img.shields.io/packagist/dt/infocyph/PHPProbe?color=green\&link=https%3A%2F%2Fpackagist.org%2Fpackages%2Finfocyph%2FPHPProbe)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
+![Packagist Version](https://img.shields.io/packagist/v/infocyph/PHPProbe)
+![Packagist PHP Version](https://img.shields.io/packagist/dependency-v/infocyph/PHPProbe/php)
+![GitHub Code Size](https://img.shields.io/github/languages/code-size/infocyph/PHPProbe)
+
 Standalone PHP checker for syntax validation, duplicate-code detection, public API snapshot checks and comment policy checks.
 
 PHPProbe is the checker runtime. It can be used directly as `phpprobe`, required by tool-combiner packages such as PHPForge, or called from PHP code through the public gateway classes.
