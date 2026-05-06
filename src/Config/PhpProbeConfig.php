@@ -52,83 +52,26 @@ final readonly class PhpProbeConfig
      */
     public function applyDuplicateOptions(array $options): array
     {
-        $section = $this->section('duplicates');
-
-        $mode = $this->stringValue($section, 'mode');
-        $json = $this->boolValue($section, 'json');
-        $format = $this->stringValue($section, 'format');
-        $normalize = $this->boolValue($section, 'normalize');
-        $fuzzy = $this->boolValue($section, 'fuzzy');
-        $nearMiss = $this->boolValue($section, 'near_miss');
-        $minLines = $this->intValue($section, 'min_lines');
-        $minTokens = $this->intValue($section, 'min_tokens');
-        $minStatements = $this->intValue($section, 'min_statements');
-        $minSimilarity = $this->floatValue($section, 'min_similarity');
-        $baseline = $this->stringValue($section, 'baseline');
-        $writeBaseline = $this->stringValue($section, 'write_baseline');
-        $failOn = $this->stringValue($section, 'fail_on');
-        $summaryJson = $this->stringValue($section, 'summary_json');
-        $changedOnly = $this->boolValue($section, 'changed_only');
-        $changedBase = $this->stringValue($section, 'changed_base');
-        $cacheEnabled = $this->boolValue(ArrayShape::stringKeyed($this->value($section, 'cache')), 'enabled');
-        $cacheFile = $this->stringValue(ArrayShape::stringKeyed($this->value($section, 'cache')), 'file');
-
-        $paths = $this->stringList($this->value($section, 'paths'));
-        $excludes = $this->excludePaths($section);
+        $bundle = $this->sectionBundle('duplicates', true);
+        $values = $this->duplicateSectionValues($bundle['section']);
+        [$mode, $normalize, $fuzzy, $nearMiss, $baseline, $writeBaseline] = $values['scalars'];
+        [$minLines, $minTokens, $minStatements] = $values['thresholds'];
+        [$minSimilarity, $cacheEnabled, $cacheFile, $ignoreFingerprints] = $values['optional'];
 
         $this->applyDuplicateScalarOptions(
             $options,
             $mode,
-            $json,
             $normalize,
             $fuzzy,
             $nearMiss,
             $baseline,
             $writeBaseline,
+            $bundle['controls']['json'],
         );
         $this->applyDuplicateThresholdOptions($options, $minLines, $minTokens, $minStatements);
-
-        if ($format !== null && $format !== '') {
-            $options['format'] = strtolower(trim($format));
-        } elseif ($json !== null) {
-            $options['format'] = $json ? 'json' : 'text';
-        }
-
-        if ($minSimilarity !== null) {
-            $options['minSimilarity'] = $this->normalizeSimilarity($minSimilarity);
-        }
-
-        if ($failOn !== null && $failOn !== '') {
-            $options['failOn'] = strtolower(trim($failOn));
-        }
-
-        if ($summaryJson !== null) {
-            $options['summaryJson'] = $summaryJson;
-        }
-
-        if ($changedOnly !== null) {
-            $options['changedOnly'] = $changedOnly;
-        }
-
-        if ($changedBase !== null) {
-            $options['changedBase'] = $changedBase;
-        }
-
-        if ($cacheEnabled !== null) {
-            $options['cacheEnabled'] = $cacheEnabled;
-        }
-
-        if ($cacheFile !== null && $cacheFile !== '') {
-            $options['cacheFile'] = $cacheFile;
-        }
-
-        if ($paths !== []) {
-            $options['paths'] = $paths;
-        }
-
-        if ($excludes !== []) {
-            $options['excludes'] = $excludes;
-        }
+        $this->applyControlsFromBundle($options, $bundle);
+        $this->applyDuplicateCacheAndSimilarity($options, $minSimilarity, $cacheEnabled, $cacheFile);
+        $this->assignIfListNotEmpty($options, 'ignoreFingerprints', $ignoreFingerprints);
 
         return $options;
     }
@@ -139,61 +82,10 @@ final readonly class PhpProbeConfig
      */
     public function applyApiOptions(array $options): array
     {
-        $section = $this->section('api');
-
-        $json = $this->boolValue($section, 'json');
-        $format = $this->stringValue($section, 'format');
-        $includeProtected = $this->boolValue($section, 'include_protected');
-        $baseline = $this->stringValue($section, 'baseline');
-        $writeBaseline = $this->stringValue($section, 'write_baseline');
-        $failOn = $this->stringValue($section, 'fail_on');
-        $summaryJson = $this->stringValue($section, 'summary_json');
-        $changedOnly = $this->boolValue($section, 'changed_only');
-        $changedBase = $this->stringValue($section, 'changed_base');
-        $paths = $this->stringList($this->value($section, 'paths'));
-        $excludes = $this->excludePaths($section);
-
-        if ($format !== null && $format !== '') {
-            $options['format'] = strtolower(trim($format));
-        } elseif ($json !== null) {
-            $options['format'] = $json ? 'json' : 'text';
-        }
-
-        if ($includeProtected !== null) {
-            $options['includeProtected'] = $includeProtected;
-        }
-
-        if ($baseline !== null) {
-            $options['baseline'] = $baseline;
-        }
-
-        if ($writeBaseline !== null) {
-            $options['writeBaseline'] = $writeBaseline;
-        }
-
-        if ($failOn !== null && $failOn !== '') {
-            $options['failOn'] = strtolower(trim($failOn));
-        }
-
-        if ($summaryJson !== null) {
-            $options['summaryJson'] = $summaryJson;
-        }
-
-        if ($changedOnly !== null) {
-            $options['changedOnly'] = $changedOnly;
-        }
-
-        if ($changedBase !== null) {
-            $options['changedBase'] = $changedBase;
-        }
-
-        if ($paths !== []) {
-            $options['paths'] = $paths;
-        }
-
-        if ($excludes !== []) {
-            $options['excludes'] = $excludes;
-        }
+        $bundle = $this->sectionBundle('api', true);
+        $baseline = $this->apiBaselineValues($bundle['section']);
+        $this->applyControlsFromBundle($options, $bundle);
+        $this->applyApiBaselineValues($options, ...$baseline);
 
         return $options;
     }
@@ -204,44 +96,13 @@ final readonly class PhpProbeConfig
      */
     public function applySyntaxOptions(array $options): array
     {
-        $section = $this->section('syntax');
-        $format = $this->stringValue($section, 'format');
-        $json = $this->boolValue($section, 'json');
-        $summaryJson = $this->stringValue($section, 'summary_json');
-        $changedOnly = $this->boolValue($section, 'changed_only');
-        $changedBase = $this->stringValue($section, 'changed_base');
+        $bundle = $this->sectionBundle('syntax', false);
+        $section = $bundle['section'];
         $parallel = $this->intValue($section, 'parallel');
-        $paths = $this->stringList($this->value($section, 'paths'));
-        $excludes = $this->excludePaths($section);
-
-        if ($format !== null && $format !== '') {
-            $options['format'] = strtolower(trim($format));
-        } elseif ($json !== null) {
-            $options['format'] = $json ? 'json' : 'text';
-        }
-
-        if ($summaryJson !== null) {
-            $options['summaryJson'] = $summaryJson;
-        }
-
-        if ($changedOnly !== null) {
-            $options['changedOnly'] = $changedOnly;
-        }
-
-        if ($changedBase !== null) {
-            $options['changedBase'] = $changedBase;
-        }
+        $this->applyControlsFromBundle($options, $bundle, null);
 
         if ($parallel !== null) {
             $options['parallel'] = max(1, $parallel);
-        }
-
-        if ($paths !== []) {
-            $options['paths'] = $paths;
-        }
-
-        if ($excludes !== []) {
-            $options['excludes'] = $excludes;
         }
 
         return $options;
@@ -253,16 +114,9 @@ final readonly class PhpProbeConfig
      */
     public function applyCommentOptions(array $options): array
     {
-        $comments = $this->section('comments');
+        $bundle = $this->sectionBundle('comments', true);
+        $comments = $bundle['section'];
         $commentedOut = $this->section('commented_out_code');
-        $paths = $this->stringList($this->value($comments, 'paths'));
-        $excludes = $this->excludePaths($comments);
-        $format = $this->stringValue($comments, 'format');
-        $json = $this->boolValue($comments, 'json');
-        $failOn = $this->stringValue($comments, 'fail_on');
-        $summaryJson = $this->stringValue($comments, 'summary_json');
-        $changedOnly = $this->boolValue($comments, 'changed_only');
-        $changedBase = $this->stringValue($comments, 'changed_base');
         $scanMarkers = $this->boolValue($comments, 'scan_markers');
         $markerTags = array_map('strtoupper', $this->stringList($this->value($comments, 'marker_tags')));
         $markerSeverity = $this->stringMap($this->value($comments, 'marker_severity'), true);
@@ -284,95 +138,47 @@ final readonly class PhpProbeConfig
         $phpdoc = ArrayShape::stringKeyed($this->value($commentedOut, 'phpdoc_comments'));
         $typeSeverity = $this->stringMap($this->value($commentedOut, 'finding_severity'));
         $strictSeverity = $this->stringMap($this->value($commentedOut, 'finding_severity_strict'));
+        ['enabled' => $ruleEnabled, 'severity' => $ruleSeverity] = $this->commentRules($comments);
 
-        if ($format !== null && $format !== '') {
-            $options['format'] = strtolower(trim($format));
-        } elseif ($json !== null) {
-            $options['format'] = $json ? 'json' : 'text';
-        }
-
-        if ($failOn !== null && $failOn !== '') {
-            $options['failOn'] = strtolower(trim($failOn));
-        }
-
-        if ($summaryJson !== null) {
-            $options['summaryJson'] = $summaryJson;
-        }
-
-        if ($changedOnly !== null) {
-            $options['changedOnly'] = $changedOnly;
-        }
-
-        if ($changedBase !== null) {
-            $options['changedBase'] = $changedBase;
-        }
-
-        if ($paths !== []) {
-            $options['paths'] = $paths;
-        }
-
-        if ($excludes !== []) {
-            $options['excludes'] = $excludes;
-        }
+        $this->applyControlsFromBundle($options, $bundle);
 
         if ($ignorePaths !== []) {
             $options['excludes'] = array_values(array_unique([...$options['excludes'], ...$ignorePaths]));
         }
 
-        if ($scanMarkers !== null) {
-            $options['scanMarkers'] = $scanMarkers;
+        foreach ([
+            'scanMarkers' => $scanMarkers,
+            'commentedOutEnabled' => $commentedEnabled,
+            'suppressionEnabled' => $suppressionEnabled,
+            'allowOptionalReasonTagsInStrictMode' => $allowOptionalInStrict,
+        ] as $key => $value) {
+            $this->assignIfNotNull($options, $key, $value);
         }
 
-        if ($markerTags !== []) {
-            $options['markerTags'] = $markerTags;
+        foreach ([
+            'markerTags' => $markerTags,
+            'allowedReasonTags' => $allowedReasonTags,
+            'optionalReasonTags' => $optionalReasonTags,
+            'allowedIssuePatterns' => $issuePatterns,
+        ] as $key => $value) {
+            $this->assignIfListNotEmpty($options, $key, $value);
         }
 
-        if ($markerSeverity !== []) {
-            $options['markerSeverity'] = $markerSeverity;
+        foreach ([
+            'markerSeverity' => $markerSeverity,
+        ] as $key => $value) {
+            $this->assignIfMapNotEmpty($options, $key, $value);
         }
 
-        if ($commentedEnabled !== null) {
-            $options['commentedOutEnabled'] = $commentedEnabled;
-        }
+        $this->assignNormalizedIfNotBlank($options, 'suppressionDirective', $suppressionDirective);
+        $this->assignNormalizedIfNotBlank($options, 'policy', $policy, true);
 
-        if ($allowedReasonTags !== []) {
-            $options['allowedReasonTags'] = $allowedReasonTags;
-        }
-
-        if ($optionalReasonTags !== []) {
-            $options['optionalReasonTags'] = $optionalReasonTags;
-        }
-
-        if ($suppressionEnabled !== null) {
-            $options['suppressionEnabled'] = $suppressionEnabled;
-        }
-
-        if ($suppressionDirective !== null && trim($suppressionDirective) !== '') {
-            $options['suppressionDirective'] = trim($suppressionDirective);
-        }
-
-        if ($policy !== null && trim($policy) !== '') {
-            $options['policy'] = strtolower(trim($policy));
-        }
-
-        if ($allowOptionalInStrict !== null) {
-            $options['allowOptionalReasonTagsInStrictMode'] = $allowOptionalInStrict;
-        }
-
-        if ($minReasonLength !== null) {
-            $options['minReasonLength'] = max(1, $minReasonLength);
-        }
-
-        if ($maxBlockLines !== null) {
-            $options['maxAllowedBlockLines'] = max(1, $maxBlockLines);
-        }
-
-        if ($requireIssue !== null) {
-            $options['requireIssueForBlocksLongerThan'] = max(1, $requireIssue);
-        }
-
-        if ($issuePatterns !== []) {
-            $options['allowedIssuePatterns'] = $issuePatterns;
+        foreach ([
+            'minReasonLength' => $minReasonLength,
+            'maxAllowedBlockLines' => $maxBlockLines,
+            'requireIssueForBlocksLongerThan' => $requireIssue,
+        ] as $key => $value) {
+            $this->assignPositiveIfNotNull($options, $key, $value);
         }
 
         $singleAllowBlank = $this->boolValue($singleLine, 'allow_blank_line_between_reason_and_code');
@@ -381,33 +187,23 @@ final readonly class PhpProbeConfig
         $phpdocAllowExamples = $this->boolValue($phpdoc, 'allow_documentation_examples');
         $phpdocLabels = $this->stringList($this->value($phpdoc, 'example_labels'));
 
-        if ($singleAllowBlank !== null) {
-            $options['allowBlankLineBetweenReasonAndCode'] = $singleAllowBlank;
+        foreach ([
+            'allowBlankLineBetweenReasonAndCode' => $singleAllowBlank,
+            'allowReasonBeforeBlockComment' => $blockAllowBefore,
+            'allowBlankLineBetweenReasonAndCodeInBlock' => $blockAllowBlank,
+            'allowPhpdocExamples' => $phpdocAllowExamples,
+        ] as $key => $value) {
+            $this->assignIfNotNull($options, $key, $value);
         }
-
-        if ($blockAllowBefore !== null) {
-            $options['allowReasonBeforeBlockComment'] = $blockAllowBefore;
+        $this->assignIfListNotEmpty($options, 'phpdocExampleLabels', $phpdocLabels);
+        foreach ([
+            'typeSeverity' => $typeSeverity,
+            'strictSeverity' => $strictSeverity,
+            'ruleSeverity' => $ruleSeverity,
+        ] as $key => $value) {
+            $this->assignIfMapNotEmpty($options, $key, $value);
         }
-
-        if ($blockAllowBlank !== null) {
-            $options['allowBlankLineBetweenReasonAndCodeInBlock'] = $blockAllowBlank;
-        }
-
-        if ($phpdocAllowExamples !== null) {
-            $options['allowPhpdocExamples'] = $phpdocAllowExamples;
-        }
-
-        if ($phpdocLabels !== []) {
-            $options['phpdocExampleLabels'] = $phpdocLabels;
-        }
-
-        if ($typeSeverity !== []) {
-            $options['typeSeverity'] = $typeSeverity;
-        }
-
-        if ($strictSeverity !== []) {
-            $options['strictSeverity'] = $strictSeverity;
-        }
+        $this->assignIfMapNotEmpty($options, 'ruleEnabled', $ruleEnabled);
 
         return $options;
     }
@@ -444,39 +240,23 @@ final readonly class PhpProbeConfig
     private function applyDuplicateScalarOptions(
         array &$options,
         ?string $mode,
-        ?bool $json,
         ?bool $normalize,
         ?bool $fuzzy,
         ?bool $nearMiss,
         ?string $baseline,
         ?string $writeBaseline,
+        ?bool $json,
     ): void {
-        if ($mode !== null) {
-            $options['mode'] = $mode;
-        }
-
-        if ($json !== null) {
-            $options['json'] = $json;
-        }
-
-        if ($normalize !== null) {
-            $options['normalize'] = $normalize;
-        }
-
-        if ($fuzzy !== null) {
-            $options['fuzzy'] = $fuzzy;
-        }
-
-        if ($nearMiss !== null) {
-            $options['nearMiss'] = $nearMiss;
-        }
-
-        if ($baseline !== null) {
-            $options['baseline'] = $baseline;
-        }
-
-        if ($writeBaseline !== null) {
-            $options['writeBaseline'] = $writeBaseline;
+        foreach ([
+            'mode' => $mode,
+            'json' => $json,
+            'normalize' => $normalize,
+            'fuzzy' => $fuzzy,
+            'nearMiss' => $nearMiss,
+            'baseline' => $baseline,
+            'writeBaseline' => $writeBaseline,
+        ] as $key => $value) {
+            $this->assignIfNotNull($options, $key, $value);
         }
     }
 
@@ -489,16 +269,220 @@ final readonly class PhpProbeConfig
         ?int $minTokens,
         ?int $minStatements,
     ): void {
-        if ($minLines !== null) {
-            $options['minLines'] = max(1, $minLines);
+        foreach ([
+            'minLines' => $minLines,
+            'minTokens' => $minTokens,
+            'minStatements' => $minStatements,
+        ] as $key => $value) {
+            $this->assignPositiveIfNotNull($options, $key, $value);
+        }
+    }
+
+    /**
+     * @param array<string, mixed> $options
+     */
+    private function applyDuplicateCacheAndSimilarity(
+        array &$options,
+        ?float $minSimilarity,
+        ?bool $cacheEnabled,
+        ?string $cacheFile,
+    ): void {
+        if ($minSimilarity !== null) {
+            $options['minSimilarity'] = $this->normalizeSimilarity($minSimilarity);
         }
 
-        if ($minTokens !== null) {
-            $options['minTokens'] = max(1, $minTokens);
+        if ($cacheEnabled !== null) {
+            $options['cacheEnabled'] = $cacheEnabled;
         }
 
-        if ($minStatements !== null) {
-            $options['minStatements'] = max(1, $minStatements);
+        if ($cacheFile !== null && $cacheFile !== '') {
+            $options['cacheFile'] = $cacheFile;
+        }
+    }
+
+    /**
+     * @param array<string, mixed> $options
+     */
+    private function applyApiBaselineValues(
+        array &$options,
+        ?bool $includeProtected,
+        ?string $baseline,
+        ?string $writeBaseline,
+    ): void {
+        $this->assignIfNotNull($options, 'includeProtected', $includeProtected);
+        $this->assignIfNotNull($options, 'baseline', $baseline);
+        $this->assignIfNotNull($options, 'writeBaseline', $writeBaseline);
+    }
+
+    /**
+     * @param array<string, mixed> $options
+     */
+    private function applyOutputAndRunControls(
+        array &$options,
+        ?string $format,
+        ?bool $json,
+        ?string $failOn,
+        ?string $summaryJson,
+        ?bool $changedOnly,
+        ?string $changedBase,
+    ): void {
+        if ($format !== null && trim($format) !== '') {
+            $options['format'] = strtolower(trim($format));
+        } elseif ($json !== null) {
+            $options['format'] = $json ? 'json' : 'text';
+        }
+
+        $this->assignNormalizedIfNotBlank($options, 'failOn', $failOn, true);
+        $this->assignIfNotNull($options, 'summaryJson', $summaryJson);
+        $this->assignIfNotNull($options, 'changedOnly', $changedOnly);
+        $this->assignIfNotNull($options, 'changedBase', $changedBase);
+    }
+
+    /**
+     * @param array<string, mixed> $options
+     * @param list<string> $paths
+     * @param list<string> $excludes
+     */
+    private function applyPathsAndExcludes(array &$options, array $paths, array $excludes): void
+    {
+        $this->assignIfListNotEmpty($options, 'paths', $paths);
+        $this->assignIfListNotEmpty($options, 'excludes', $excludes);
+    }
+
+    /**
+     * @param array<string, mixed> $section
+     * @return array{
+     *     format:?string,
+     *     json:?bool,
+     *     failOn:?string,
+     *     summaryJson:?string,
+     *     changedOnly:?bool,
+     *     changedBase:?string,
+     *     paths:list<string>,
+     *     excludes:list<string>
+     * }
+     */
+    private function sectionControls(array $section, bool $withFailOn): array
+    {
+        return [
+            'format' => $this->stringValue($section, 'format'),
+            'json' => $this->boolValue($section, 'json'),
+            'failOn' => $withFailOn ? $this->stringValue($section, 'fail_on') : null,
+            'summaryJson' => $this->stringValue($section, 'summary_json'),
+            'changedOnly' => $this->boolValue($section, 'changed_only'),
+            'changedBase' => $this->stringValue($section, 'changed_base'),
+            'paths' => $this->stringList($this->value($section, 'paths')),
+            'excludes' => $this->excludePaths($section),
+        ];
+    }
+
+    /**
+     * @return array{
+     *     section:array<string, mixed>,
+     *     controls:array{
+     *         format:?string,
+     *         json:?bool,
+     *         failOn:?string,
+     *         summaryJson:?string,
+     *         changedOnly:?bool,
+     *         changedBase:?string,
+     *         paths:list<string>,
+     *         excludes:list<string>
+     *     }
+     * }
+     */
+    private function sectionBundle(string $name, bool $withFailOn): array
+    {
+        $section = $this->section($name);
+
+        return [
+            'section' => $section,
+            'controls' => $this->sectionControls($section, $withFailOn),
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $options
+     * @param array{
+     *     section:array<string, mixed>,
+     *     controls:array{
+     *         format:?string,
+     *         json:?bool,
+     *         failOn:?string,
+     *         summaryJson:?string,
+     *         changedOnly:?bool,
+     *         changedBase:?string,
+     *         paths:list<string>,
+     *         excludes:list<string>
+     *     }
+     * } $bundle
+     */
+    private function applyControlsFromBundle(array &$options, array $bundle, ?string $failOn = null): void
+    {
+        $controls = $bundle['controls'];
+        $this->applyOutputAndRunControls(
+            $options,
+            $controls['format'],
+            $controls['json'],
+            $failOn ?? $controls['failOn'],
+            $controls['summaryJson'],
+            $controls['changedOnly'],
+            $controls['changedBase'],
+        );
+        $this->applyPathsAndExcludes($options, $controls['paths'], $controls['excludes']);
+    }
+
+    /**
+     * @param array<string, mixed> $options
+     */
+    private function assignIfNotNull(array &$options, string $key, mixed $value): void
+    {
+        if ($value !== null) {
+            $options[$key] = $value;
+        }
+    }
+
+    /**
+     * @param array<string, mixed> $options
+     * @param list<string> $value
+     */
+    private function assignIfListNotEmpty(array &$options, string $key, array $value): void
+    {
+        if ($value !== []) {
+            $options[$key] = $value;
+        }
+    }
+
+    /**
+     * @param array<string, mixed> $options
+     */
+    private function assignIfMapNotEmpty(array &$options, string $key, array $value): void
+    {
+        if ($value !== []) {
+            $options[$key] = $value;
+        }
+    }
+
+    /**
+     * @param array<string, mixed> $options
+     */
+    private function assignNormalizedIfNotBlank(array &$options, string $key, ?string $value, bool $lowercase = false): void
+    {
+        if ($value === null || trim($value) === '') {
+            return;
+        }
+
+        $normalized = trim($value);
+        $options[$key] = $lowercase ? strtolower($normalized) : $normalized;
+    }
+
+    /**
+     * @param array<string, mixed> $options
+     */
+    private function assignPositiveIfNotNull(array &$options, string $key, ?int $value): void
+    {
+        if ($value !== null) {
+            $options[$key] = max(1, $value);
         }
     }
 
@@ -565,6 +549,81 @@ final readonly class PhpProbeConfig
     private function normalizeSimilarity(float $value): float
     {
         return $value > 1.0 ? min(100.0, $value) / 100.0 : max(0.0, min(1.0, $value));
+    }
+
+    /**
+     * @param array<string, mixed> $section
+     * @return array{scalars:array{?string,?bool,?bool,?bool,?string,?string},thresholds:array{?int,?int,?int},optional:array{?float,?bool,?string,list<string>}}
+     */
+    private function duplicateSectionValues(array $section): array
+    {
+        $cache = ArrayShape::stringKeyed($this->value($section, 'cache'));
+
+        return [
+            'scalars' => [
+                $this->stringValue($section, 'mode'),
+                $this->boolValue($section, 'normalize'),
+                $this->boolValue($section, 'fuzzy'),
+                $this->boolValue($section, 'near_miss'),
+                $this->stringValue($section, 'baseline'),
+                $this->stringValue($section, 'write_baseline'),
+            ],
+            'thresholds' => [
+                $this->intValue($section, 'min_lines'),
+                $this->intValue($section, 'min_tokens'),
+                $this->intValue($section, 'min_statements'),
+            ],
+            'optional' => [
+                $this->floatValue($section, 'min_similarity'),
+                $this->boolValue($cache, 'enabled'),
+                $this->stringValue($cache, 'file'),
+                $this->stringList($this->value($section, 'ignore_fingerprints')),
+            ],
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $comments
+     * @return array{enabled:array<string,bool>,severity:array<string,string>}
+     */
+    private function commentRules(array $comments): array
+    {
+        $rules = ArrayShape::stringKeyed($this->value($comments, 'rules'));
+        $enabled = [];
+        $severity = [];
+
+        foreach ($rules as $rule => $config) {
+            if (!is_string($rule)) {
+                continue;
+            }
+
+            $entry = ArrayShape::stringKeyed($config);
+            $ruleEnabled = $this->boolValue($entry, 'enabled');
+            $ruleSeverity = $this->stringValue($entry, 'severity');
+
+            if ($ruleEnabled !== null) {
+                $enabled[$rule] = $ruleEnabled;
+            }
+
+            if (is_string($ruleSeverity) && trim($ruleSeverity) !== '') {
+                $severity[$rule] = strtolower(trim($ruleSeverity));
+            }
+        }
+
+        return ['enabled' => $enabled, 'severity' => $severity];
+    }
+
+    /**
+     * @param array<string, mixed> $section
+     * @return array{?bool,?string,?string}
+     */
+    private function apiBaselineValues(array $section): array
+    {
+        return [
+            $this->boolValue($section, 'include_protected'),
+            $this->stringValue($section, 'baseline'),
+            $this->stringValue($section, 'write_baseline'),
+        ];
     }
 
     /**

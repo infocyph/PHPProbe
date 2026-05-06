@@ -52,7 +52,7 @@ jobs:
         run: php bin/phpprobe syntax --config=resources/phpprobe.json --format=markdown --summary-json=build/reports/syntax-summary.json src tests > build/reports/syntax.md
 
       - name: Run duplicate checker
-        run: php bin/phpprobe duplicates --preset=standard --config=resources/phpprobe.json --baseline=resources/.phpprobe-duplicates-baseline.json --format=markdown --summary-json=build/reports/duplicates-summary.json src tests > build/reports/duplicates.md
+        run: php bin/phpprobe duplicates --preset=standard --config=resources/phpprobe.json --format=markdown --summary-json=build/reports/duplicates-summary.json src tests > build/reports/duplicates.md
 
       - name: Run API checker
         run: php bin/phpprobe api --config=resources/phpprobe.json --format=markdown --summary-json=build/reports/api-summary.json src tests > build/reports/api.md

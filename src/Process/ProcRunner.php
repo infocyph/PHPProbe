@@ -9,13 +9,13 @@ final class ProcRunner
     /**
      * @param list<string>|string $command
      */
-    public function run(array|string $command, string $stdin = ''): ?ProcessResult
+    public function run(array|string $command, string $stdin = '', ?string $cwd = null): ?ProcessResult
     {
         $process = proc_open($command, [
             0 => ['pipe', 'r'],
             1 => ['pipe', 'w'],
             2 => ['pipe', 'w'],
-        ], $pipes);
+        ], $pipes, $cwd);
 
         if (!is_resource($process)) {
             return null;

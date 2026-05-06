@@ -10,7 +10,8 @@ use Infocyph\PHPProbe\Config\CliOptions;
 use Infocyph\PHPProbe\Config\Paths;
 use Infocyph\PHPProbe\Config\PhpProbeConfig;
 use Infocyph\PHPProbe\Console\Ansi;
-use Infocyph\PHPProbe\Filesystem\PhpFileFinder;
+use Infocyph\PHPProbe\Util\CheckerRuntime;
+use Infocyph\PHPProbe\Util\GithubAnnotation;
 use Infocyph\PHPProbe\Util\Sarif;
 use Infocyph\PHPProbe\Util\SummaryJson;
 
@@ -28,18 +29,14 @@ final class CommentChecker
      */
     public function run(array $args): int
     {
-        try {
+        return CheckerRuntime::guarded(function () use ($args): int {
             $options = $this->parseArgs($args);
 
             if ($options['help']) {
                 return $this->help();
             }
 
-            $files = (new PhpFileFinder())->find(
-                $options['paths'],
-                $options['excludes'],
-                ['changedOnly' => $options['changedOnly'], 'changedBase' => $options['changedBase']],
-            );
+            $files = CheckerRuntime::phpFiles($options);
             $result = (new CommentScanner())->scan($files, $options);
             $failed = $this->shouldFail($result['findings'], $options['failOn']);
             $exitCode = $failed ? 1 : 0;
@@ -48,11 +45,7 @@ final class CommentChecker
             $this->writeSummaryJson($result, $options, $exitCode);
 
             return $exitCode;
-        } catch (\InvalidArgumentException|\RuntimeException $exception) {
-            fwrite(STDERR, $exception->getMessage() . PHP_EOL);
-
-            return 2;
-        }
+        });
     }
 
     /**
@@ -138,6 +131,8 @@ final class CommentChecker
                 'commented_out_code_block_too_large' => 'error',
                 'invalid_suppression_rule' => 'error',
             ],
+            'ruleEnabled' => [],
+            'ruleSeverity' => [],
         ];
     }
 
@@ -148,9 +143,9 @@ final class CommentChecker
             '',
             'Options:',
             '  --config=FILE                    read PHPProbe checker settings',
-            '  --preset=NAME                    apply preset: phpstorm, standard, or strict',
+            '  --preset=NAME                    apply preset: default, standard, ci, or strict',
             '  --exclude=PATH                   skip a path (repeatable)',
-            '  --format=text|json|markdown|sarif output format (default: text)',
+            '  --format=text|json|markdown|sarif|github output format (default: text)',
             '  --json                           alias for --format=json',
             '  --summary-json=FILE              write machine-readable run summary',
             '  --strict                         enforce strict policy severities',
@@ -195,35 +190,13 @@ final class CommentChecker
      */
     private function parseCliOption(array $args, int &$index, array &$options, string $arg): bool
     {
-        if ($this->cli->parseExclude($args, $index, $options, $arg)) {
-            return true;
-        }
-
-        if ($arg === '--help' || $arg === '-h') {
-            $options['help'] = true;
-
-            return true;
-        }
-
         if ($arg === '--strict') {
             $options['strict'] = true;
 
             return true;
         }
 
-        if ($this->cli->parseOutputFormat($options, $arg)) {
-            return true;
-        }
-
-        if ($this->cli->parseFailOn($options, $arg)) {
-            return true;
-        }
-
-        if ($this->cli->parseSummaryJson($options, $arg)) {
-            return true;
-        }
-
-        if ($this->cli->parseChangedOptions($options, $arg)) {
+        if ($this->cli->parseCommonCheckerOptions($args, $index, $options, $arg, true)) {
             return true;
         }
 
@@ -345,6 +318,7 @@ final class CommentChecker
             'json' => $this->writeJson($result),
             'markdown' => $this->writeMarkdown($result, $options, $failed),
             'sarif' => $this->writeSarif($result),
+            'github' => $this->writeGithub($result),
             default => $this->writeText($result, $options, $failed),
         };
     }
@@ -477,6 +451,32 @@ final class CommentChecker
         }
 
         fwrite(STDOUT, json_encode(Sarif::payload($results), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL);
+    }
+
+    /**
+     * @param array{files:int,findings:list<CommentFinding>,suppressed_count:int} $result
+     */
+    private function writeGithub(array $result): void
+    {
+        foreach ($result['findings'] as $finding) {
+            $level = match (strtolower($finding->severity)) {
+                'error', 'critical', 'high' => 'error',
+                'warning', 'medium' => 'warning',
+                default => 'notice',
+            };
+
+            fwrite(STDOUT, GithubAnnotation::emit(
+                $level,
+                'PHPProbe comments',
+                sprintf('%s (%s)', $finding->message, $finding->type),
+                $finding->file,
+                $finding->line,
+            ) . PHP_EOL);
+        }
+
+        if ($result['findings'] === []) {
+            fwrite(STDOUT, GithubAnnotation::emit('notice', 'PHPProbe comments', 'No comment policy findings.') . PHP_EOL);
+        }
     }
 
     private function sarifLevel(string $severity): string

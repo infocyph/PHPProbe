@@ -47,14 +47,14 @@
       "var/cache",
       "storage/framework/views"
     ],
-    "mode": "audit",
+    "mode": "gate",
     "normalize": true,
     "fuzzy": true,
-    "near_miss": true,
-    "min_lines": 4,
-    "min_tokens": 70,
-    "min_statements": 3,
-    "min_similarity": 0.8,
+    "near_miss": false,
+    "min_lines": 6,
+    "min_tokens": 100,
+    "min_statements": 5,
+    "min_similarity": 0.9,
     "baseline": "",
     "write_baseline": "",
     "ignore_fingerprints": [],
@@ -160,7 +160,7 @@
   },
   "commented_out_code": {
     "enabled": true,
-    "policy": "strict",
+    "policy": "standard",
     "allowed_reason_tags": [
       "TODO",
       "FIXME",
@@ -181,9 +181,9 @@
       "enabled": true,
       "directive": "@phpprobe-ignore"
     },
-    "min_reason_length": 16,
-    "max_allowed_block_lines": 6,
-    "require_issue_for_blocks_longer_than": 2,
+    "min_reason_length": 12,
+    "max_allowed_block_lines": 10,
+    "require_issue_for_blocks_longer_than": 3,
     "allowed_issue_patterns": [
       "/#\\d+/",
       "/[A-Z]+-\\d+/"
