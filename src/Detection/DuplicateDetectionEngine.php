@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Infocyph\PHPProbe\Detection;
 
+use Infocyph\PHPProbe\Util\ProjectPath;
+
 final class DuplicateDetectionEngine
 {
     /**
@@ -54,19 +56,19 @@ final class DuplicateDetectionEngine
 
     /**
      * @param array<string, list<array{id:string,type:string,file:string,start_line:int,end_line:int,token_start:int,token_end:int,statement_hashes:list<string>,shape:list<string>}>> $blocks
-     * @return array{id:string,type:string,file:string,start_line:int,end_line:int,token_start:int,token_end:int,statement_hashes:list<string>,shape:list<string>}
+     * @return array<string, array{id:string,type:string,file:string,start_line:int,end_line:int,token_start:int,token_end:int,statement_hashes:list<string>,shape:list<string>}>
      */
-    private function blockById(array $blocks, string $id): array
+    private function blockIdIndex(array $blocks): array
     {
+        $index = [];
+
         foreach ($blocks as $fileBlocks) {
             foreach ($fileBlocks as $block) {
-                if ($block['id'] === $id) {
-                    return $block;
-                }
+                $index[$block['id']] = $block;
             }
         }
 
-        return ['id' => $id, 'type' => 'unknown', 'file' => '', 'start_line' => 0, 'end_line' => 0, 'token_start' => 0, 'token_end' => 0, 'statement_hashes' => [], 'shape' => []];
+        return $index;
     }
 
     /**
@@ -268,14 +270,26 @@ final class DuplicateDetectionEngine
     private function nearMissPairs(array $blocks, array $options, DuplicateCloneReducer $reducer): array
     {
         $clones = [];
-        $blockCount = count($blocks);
+        $grouped = [];
 
-        for ($left = 0; $left < $blockCount - 1; $left++) {
-            for ($right = $left + 1; $right < $blockCount; $right++) {
-                $clone = $this->nearMissClone($blocks[$left], $blocks[$right], $options, $reducer);
+        foreach ($blocks as $block) {
+            $grouped[$block['type']][] = $block;
+        }
 
-                if ($clone !== null) {
-                    $clones[] = $clone;
+        foreach ($grouped as $typedBlocks) {
+            $blockCount = count($typedBlocks);
+
+            for ($left = 0; $left < $blockCount - 1; $left++) {
+                for ($right = $left + 1; $right < $blockCount; $right++) {
+                    if (!$this->canReachNearMissSimilarity($typedBlocks[$left], $typedBlocks[$right], $options['minSimilarity'])) {
+                        continue;
+                    }
+
+                    $clone = $this->nearMissClone($typedBlocks[$left], $typedBlocks[$right], $options, $reducer);
+
+                    if ($clone !== null) {
+                        $clones[] = $clone;
+                    }
                 }
             }
         }
@@ -293,17 +307,7 @@ final class DuplicateDetectionEngine
 
     private function relativePath(string $path): string
     {
-        $root = realpath(getcwd() ?: '.');
-        $realPath = realpath($path);
-
-        if (!is_string($root) || !is_string($realPath)) {
-            return str_replace('\\', '/', $path);
-        }
-
-        $normalizedRoot = rtrim(str_replace('\\', '/', $root), '/');
-        $normalizedPath = str_replace('\\', '/', $realPath);
-
-        return str_starts_with($normalizedPath, $normalizedRoot . '/') ? substr($normalizedPath, strlen($normalizedRoot) + 1) : $normalizedPath;
+        return ProjectPath::relative($path);
     }
 
     /**
@@ -313,6 +317,11 @@ final class DuplicateDetectionEngine
     private function sequenceSimilarity(array $left, array $right): float
     {
         return $left === [] || $right === [] ? 0.0 : $this->lcsLength($left, $right) / max(count($left), count($right));
+    }
+
+    private function similarityUpperBound(int $leftLength, int $rightLength): float
+    {
+        return min($leftLength, $rightLength) / max(1, max($leftLength, $rightLength));
     }
 
     /**
@@ -360,12 +369,16 @@ final class DuplicateDetectionEngine
             return [];
         }
 
+        $blockIndex = $this->blockIdIndex($blocks);
         $cloneMap = [];
 
         foreach ($this->statementWindows($blocks, $options['minStatements']) as $occurrences) {
             foreach ($occurrences as $occurrence) {
-                $block = $this->blockById($blocks, $occurrence['block']);
-                $this->addStatementClone($cloneMap, $occurrence['hash'], $block, $options);
+                $block = $blockIndex[$occurrence['block']] ?? null;
+
+                if ($block !== null) {
+                    $this->addStatementClone($cloneMap, $occurrence['hash'], $block, $options);
+                }
             }
         }
 
@@ -378,7 +391,8 @@ final class DuplicateDetectionEngine
      */
     private function statementWindows(array $blocks, int $minStatements): array
     {
-        $windows = [];
+        $firstOccurrences = [];
+        $duplicateWindows = [];
 
         foreach ($blocks as $fileBlocks) {
             foreach ($fileBlocks as $block) {
@@ -386,12 +400,24 @@ final class DuplicateDetectionEngine
 
                 for ($index = 0; $index <= $statementWindowLimit; $index++) {
                     $hash = hash('sha256', implode("\0", array_slice($block['statement_hashes'], $index, $minStatements)));
-                    $windows[$hash][] = ['block' => $block['id'], 'hash' => $hash];
+                    $occurrence = ['block' => $block['id'], 'hash' => $hash];
+
+                    if (!isset($firstOccurrences[$hash])) {
+                        $firstOccurrences[$hash] = $occurrence;
+
+                        continue;
+                    }
+
+                    if (!isset($duplicateWindows[$hash])) {
+                        $duplicateWindows[$hash] = [$firstOccurrences[$hash]];
+                    }
+
+                    $duplicateWindows[$hash][] = $occurrence;
                 }
             }
         }
 
-        return array_filter($windows, static fn(array $occurrences): bool => count($occurrences) > 1);
+        return $duplicateWindows;
     }
 
     /**
@@ -473,16 +499,42 @@ final class DuplicateDetectionEngine
      */
     private function tokenWindows(array $streams, int $minTokens): array
     {
-        $windows = [];
+        $firstOccurrences = [];
+        $duplicateWindows = [];
 
         foreach ($streams as $file => $tokens) {
             $tokenWindowLimit = count($tokens) - $minTokens;
 
             for ($index = 0; $index <= $tokenWindowLimit; $index++) {
-                $windows[$this->tokenValueHash($tokens, $index, $minTokens)][] = ['file' => $file, 'index' => $index];
+                $hash = $this->tokenValueHash($tokens, $index, $minTokens);
+                $occurrence = ['file' => $file, 'index' => $index];
+
+                if (!isset($firstOccurrences[$hash])) {
+                    $firstOccurrences[$hash] = $occurrence;
+
+                    continue;
+                }
+
+                if (!isset($duplicateWindows[$hash])) {
+                    $duplicateWindows[$hash] = [$firstOccurrences[$hash]];
+                }
+
+                $duplicateWindows[$hash][] = $occurrence;
             }
         }
 
-        return array_filter($windows, static fn(array $occurrences): bool => count($occurrences) > 1);
+        return $duplicateWindows;
+    }
+
+    /**
+     * @param array{id:string,type:string,file:string,start_line:int,end_line:int,token_start:int,token_end:int,statement_hashes:list<string>,shape:list<string>} $left
+     * @param array{id:string,type:string,file:string,start_line:int,end_line:int,token_start:int,token_end:int,statement_hashes:list<string>,shape:list<string>} $right
+     */
+    private function canReachNearMissSimilarity(array $left, array $right, float $minSimilarity): bool
+    {
+        $statementBound = $this->similarityUpperBound(count($left['statement_hashes']), count($right['statement_hashes']));
+        $shapeBound = $this->similarityUpperBound(count($left['shape']), count($right['shape']));
+
+        return round(($statementBound * 0.72) + ($shapeBound * 0.28), 4) >= $minSimilarity;
     }
 }

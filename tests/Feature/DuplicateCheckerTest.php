@@ -345,6 +345,58 @@ it('reports unknown duplicate presets cleanly', function (): void {
         ->and($run['stderr'])->toContain('Unknown PHPProbe preset "unknown"');
 });
 
+it('rejects unknown duplicate command options', function (): void {
+    $root = makeDuplicateCheckerFixture();
+
+    try {
+        $run = runDuplicateCheckerCommand($root, ['--does-not-exist']);
+    } finally {
+        removeDuplicateCheckerFixture($root);
+    }
+
+    expect($run['exitCode'])->toBe(2)
+        ->and($run['stderr'])->toContain('Unknown option for duplicates command: --does-not-exist');
+});
+
+it('fails when duplicate baseline file is missing', function (): void {
+    $root = makeDuplicateCheckerFixture();
+    $src = $root.DIRECTORY_SEPARATOR.'src';
+    $missingBaseline = $root.DIRECTORY_SEPARATOR.'missing-baseline.json';
+
+    mkdir($src, 0755, true);
+    file_put_contents($src.DIRECTORY_SEPARATOR.'One.php', duplicateBaselineFixture('One'));
+    file_put_contents($src.DIRECTORY_SEPARATOR.'Two.php', duplicateBaselineFixture('Two'));
+
+    try {
+        $run = runDuplicateCheckerCommand($root, ['--json', '--fuzzy', '--min-lines=5', '--min-tokens=20', '--baseline='.$missingBaseline, 'src']);
+    } finally {
+        removeDuplicateCheckerFixture($root);
+    }
+
+    expect($run['exitCode'])->toBe(2)
+        ->and($run['stderr'])->toContain('Duplicate baseline file not found');
+});
+
+it('fails when duplicate baseline JSON is invalid', function (): void {
+    $root = makeDuplicateCheckerFixture();
+    $src = $root.DIRECTORY_SEPARATOR.'src';
+    $baseline = $root.DIRECTORY_SEPARATOR.'duplicates-baseline.json';
+
+    mkdir($src, 0755, true);
+    file_put_contents($src.DIRECTORY_SEPARATOR.'One.php', duplicateBaselineFixture('One'));
+    file_put_contents($src.DIRECTORY_SEPARATOR.'Two.php', duplicateBaselineFixture('Two'));
+    file_put_contents($baseline, '{invalid');
+
+    try {
+        $run = runDuplicateCheckerCommand($root, ['--json', '--fuzzy', '--min-lines=5', '--min-tokens=20', '--baseline='.$baseline, 'src']);
+    } finally {
+        removeDuplicateCheckerFixture($root);
+    }
+
+    expect($run['exitCode'])->toBe(2)
+        ->and($run['stderr'])->toContain('Invalid duplicate baseline JSON');
+});
+
 function duplicateBaselineFixture(string $class): string
 {
     return <<<PHP

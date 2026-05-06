@@ -70,6 +70,19 @@ PHP);
         ->and($run['stdout'])->toContain('Syntax OK: 1 PHP files checked.');
 });
 
+it('rejects unknown syntax command options', function (): void {
+    $root = makeSyntaxCheckerFixture();
+
+    try {
+        $run = runSyntaxCheckerCommand($root, ['--does-not-exist']);
+    } finally {
+        removeSyntaxCheckerFixture($root);
+    }
+
+    expect($run['exitCode'])->toBe(2)
+        ->and($run['stderr'])->toContain('Unknown option for syntax command: --does-not-exist');
+});
+
 /**
  * @return array{exitCode:int,stdout:string,stderr:string}
  */

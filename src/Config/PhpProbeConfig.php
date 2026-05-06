@@ -137,6 +137,186 @@ final readonly class PhpProbeConfig
 
         return $options;
     }
+
+    /**
+     * @param array{help:bool,config:string,paths:list<string>,excludes:list<string>} $options
+     * @return array{help:bool,config:string,paths:list<string>,excludes:list<string>}
+     */
+    public function applySyntaxOptions(array $options): array
+    {
+        $section = $this->section('syntax');
+        $paths = $this->stringList($this->value($section, 'paths'));
+        $excludes = $this->excludePaths($section);
+
+        if ($paths !== []) {
+            $options['paths'] = $paths;
+        }
+
+        if ($excludes !== []) {
+            $options['excludes'] = $excludes;
+        }
+
+        return $options;
+    }
+
+    /**
+     * @param array{
+     *     paths:list<string>,
+     *     excludes:list<string>,
+     *     scanMarkers:bool,
+     *     markerTags:list<string>,
+     *     markerSeverity:array<string,string>,
+     *     commentedOutEnabled:bool,
+     *     allowedReasonTags:list<string>,
+     *     optionalReasonTags:list<string>,
+     *     allowOptionalReasonTagsInStrictMode:bool,
+     *     minReasonLength:int,
+     *     maxAllowedBlockLines:int,
+     *     requireIssueForBlocksLongerThan:int,
+     *     allowedIssuePatterns:list<string>,
+     *     allowBlankLineBetweenReasonAndCode:bool,
+     *     allowReasonBeforeBlockComment:bool,
+     *     allowBlankLineBetweenReasonAndCodeInBlock:bool,
+     *     allowPhpdocExamples:bool,
+     *     phpdocExampleLabels:list<string>,
+     *     typeSeverity:array<string,string>,
+     *     strictSeverity:array<string,string>
+     * } $options
+     * @return array{
+     *     paths:list<string>,
+     *     excludes:list<string>,
+     *     scanMarkers:bool,
+     *     markerTags:list<string>,
+     *     markerSeverity:array<string,string>,
+     *     commentedOutEnabled:bool,
+     *     allowedReasonTags:list<string>,
+     *     optionalReasonTags:list<string>,
+     *     allowOptionalReasonTagsInStrictMode:bool,
+     *     minReasonLength:int,
+     *     maxAllowedBlockLines:int,
+     *     requireIssueForBlocksLongerThan:int,
+     *     allowedIssuePatterns:list<string>,
+     *     allowBlankLineBetweenReasonAndCode:bool,
+     *     allowReasonBeforeBlockComment:bool,
+     *     allowBlankLineBetweenReasonAndCodeInBlock:bool,
+     *     allowPhpdocExamples:bool,
+     *     phpdocExampleLabels:list<string>,
+     *     typeSeverity:array<string,string>,
+     *     strictSeverity:array<string,string>
+     * }
+     */
+    public function applyCommentOptions(array $options): array
+    {
+        $comments = $this->section('comments');
+        $commentedOut = $this->section('commented_out_code');
+        $paths = $this->stringList($this->value($comments, 'paths'));
+        $excludes = $this->excludePaths($comments);
+        $scanMarkers = $this->boolValue($comments, 'scan_markers');
+        $markerTags = array_map('strtoupper', $this->stringList($this->value($comments, 'marker_tags')));
+        $markerSeverity = $this->stringMap($this->value($comments, 'marker_severity'), true);
+        $commentedEnabled = $this->boolValue($commentedOut, 'enabled');
+        $allowedReasonTags = array_map('strtoupper', $this->stringList($this->value($commentedOut, 'allowed_reason_tags')));
+        $optionalReasonTags = array_map('strtoupper', $this->stringList($this->value($commentedOut, 'optional_reason_tags')));
+        $allowOptionalInStrict = $this->boolValue($commentedOut, 'allow_optional_reason_tags_in_strict_mode');
+        $minReasonLength = $this->intValue($commentedOut, 'min_reason_length');
+        $maxBlockLines = $this->intValue($commentedOut, 'max_allowed_block_lines');
+        $requireIssue = $this->intValue($commentedOut, 'require_issue_for_blocks_longer_than');
+        $issuePatterns = $this->stringList($this->value($commentedOut, 'allowed_issue_patterns'));
+        $singleLine = ArrayShape::stringKeyed($this->value($commentedOut, 'single_line_comments'));
+        $block = ArrayShape::stringKeyed($this->value($commentedOut, 'block_comments'));
+        $phpdoc = ArrayShape::stringKeyed($this->value($commentedOut, 'phpdoc_comments'));
+        $typeSeverity = $this->stringMap($this->value($commentedOut, 'finding_severity'));
+        $strictSeverity = $this->stringMap($this->value($commentedOut, 'finding_severity_strict'));
+
+        if ($paths !== []) {
+            $options['paths'] = $paths;
+        }
+
+        if ($excludes !== []) {
+            $options['excludes'] = $excludes;
+        }
+
+        if ($scanMarkers !== null) {
+            $options['scanMarkers'] = $scanMarkers;
+        }
+
+        if ($markerTags !== []) {
+            $options['markerTags'] = $markerTags;
+        }
+
+        if ($markerSeverity !== []) {
+            $options['markerSeverity'] = $markerSeverity;
+        }
+
+        if ($commentedEnabled !== null) {
+            $options['commentedOutEnabled'] = $commentedEnabled;
+        }
+
+        if ($allowedReasonTags !== []) {
+            $options['allowedReasonTags'] = $allowedReasonTags;
+        }
+
+        if ($optionalReasonTags !== []) {
+            $options['optionalReasonTags'] = $optionalReasonTags;
+        }
+
+        if ($allowOptionalInStrict !== null) {
+            $options['allowOptionalReasonTagsInStrictMode'] = $allowOptionalInStrict;
+        }
+
+        if ($minReasonLength !== null) {
+            $options['minReasonLength'] = max(1, $minReasonLength);
+        }
+
+        if ($maxBlockLines !== null) {
+            $options['maxAllowedBlockLines'] = max(1, $maxBlockLines);
+        }
+
+        if ($requireIssue !== null) {
+            $options['requireIssueForBlocksLongerThan'] = max(1, $requireIssue);
+        }
+
+        if ($issuePatterns !== []) {
+            $options['allowedIssuePatterns'] = $issuePatterns;
+        }
+
+        $singleAllowBlank = $this->boolValue($singleLine, 'allow_blank_line_between_reason_and_code');
+        $blockAllowBefore = $this->boolValue($block, 'allow_reason_before_block_comment');
+        $blockAllowBlank = $this->boolValue($block, 'allow_blank_line_between_reason_and_code');
+        $phpdocAllowExamples = $this->boolValue($phpdoc, 'allow_documentation_examples');
+        $phpdocLabels = $this->stringList($this->value($phpdoc, 'example_labels'));
+
+        if ($singleAllowBlank !== null) {
+            $options['allowBlankLineBetweenReasonAndCode'] = $singleAllowBlank;
+        }
+
+        if ($blockAllowBefore !== null) {
+            $options['allowReasonBeforeBlockComment'] = $blockAllowBefore;
+        }
+
+        if ($blockAllowBlank !== null) {
+            $options['allowBlankLineBetweenReasonAndCodeInBlock'] = $blockAllowBlank;
+        }
+
+        if ($phpdocAllowExamples !== null) {
+            $options['allowPhpdocExamples'] = $phpdocAllowExamples;
+        }
+
+        if ($phpdocLabels !== []) {
+            $options['phpdocExampleLabels'] = $phpdocLabels;
+        }
+
+        if ($typeSeverity !== []) {
+            $options['typeSeverity'] = $typeSeverity;
+        }
+
+        if ($strictSeverity !== []) {
+            $options['strictSeverity'] = $strictSeverity;
+        }
+
+        return $options;
+    }
+
     public function merge(self $override): self
     {
         return new self($this->mergeArrays($this->config, $override->config));
@@ -290,6 +470,27 @@ final readonly class PhpProbeConfig
     private function normalizeSimilarity(float $value): float
     {
         return $value > 1.0 ? min(100.0, $value) / 100.0 : max(0.0, min(1.0, $value));
+    }
+
+    /**
+     * @param array<string, mixed> $value
+     * @return array<string, string>
+     */
+    private function stringMap(mixed $value, bool $uppercaseKeys = false): array
+    {
+        if (!is_array($value)) {
+            return [];
+        }
+
+        $map = [];
+
+        foreach ($value as $key => $item) {
+            if (is_string($key) && is_string($item) && $item !== '') {
+                $map[$uppercaseKeys ? strtoupper($key) : $key] = $item;
+            }
+        }
+
+        return $map;
     }
 
     /**

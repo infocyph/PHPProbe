@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Infocyph\PHPProbe;
 
 use Infocyph\PHPProbe\Config\CliOptions;
+use Infocyph\PHPProbe\Console\Ansi;
 use Infocyph\PHPProbe\Config\Paths;
 use Infocyph\PHPProbe\Config\PhpProbeConfig;
 use Infocyph\PHPProbe\Detection\DuplicateDetectionEngine;
@@ -26,29 +27,28 @@ final class DuplicateChecker
     {
         try {
             $options = $this->parseArgs($args);
-        } catch (\InvalidArgumentException $exception) {
+            if ($options['help']) {
+                return $this->help();
+            }
+
+            $result = (new DuplicateDetectionEngine())->analyze((new PhpFileFinder())->find($options['paths'], $options['excludes']), $options);
+
+            if ($options['baseline'] !== '') {
+                $result = $this->withoutBaselineClones($result, $options['baseline']);
+            }
+
+            if ($options['writeBaseline'] !== '') {
+                $this->writeBaseline($result, $options['writeBaseline']);
+            }
+
+            $this->writeResult($result, $options);
+
+            return $options['writeBaseline'] !== '' || $result['clones'] === [] ? 0 : 1;
+        } catch (\InvalidArgumentException|\RuntimeException $exception) {
             fwrite(STDERR, $exception->getMessage() . PHP_EOL);
 
             return 2;
         }
-
-        if ($options['help']) {
-            return $this->help();
-        }
-
-        $result = (new DuplicateDetectionEngine())->analyze((new PhpFileFinder())->find($options['paths'], $options['excludes']), $options);
-
-        if ($options['baseline'] !== '') {
-            $result = $this->withoutBaselineClones($result, $options['baseline']);
-        }
-
-        if ($options['writeBaseline'] !== '') {
-            $this->writeBaseline($result, $options['writeBaseline']);
-        }
-
-        $this->writeResult($result, $options);
-
-        return $options['writeBaseline'] !== '' || $result['clones'] === [] ? 0 : 1;
     }
 
     /**
@@ -106,16 +106,39 @@ final class DuplicateChecker
     private function knownFingerprints(string $baselinePath): array
     {
         if (!is_file($baselinePath)) {
-            return [];
+            throw new \RuntimeException(sprintf('Duplicate baseline file not found: %s', $baselinePath));
         }
 
-        $decoded = json_decode((string) file_get_contents($baselinePath), true);
-        $clones = is_array($decoded) ? ($decoded['clones'] ?? []) : [];
-        $known = [];
+        if (!is_readable($baselinePath)) {
+            throw new \RuntimeException(sprintf('Duplicate baseline file is not readable: %s', $baselinePath));
+        }
+
+        $contents = file_get_contents($baselinePath);
+
+        if (!is_string($contents)) {
+            throw new \RuntimeException(sprintf('Failed to read duplicate baseline file: %s', $baselinePath));
+        }
+
+        try {
+            $decoded = json_decode($contents, true, 512, JSON_THROW_ON_ERROR);
+        } catch (\JsonException $exception) {
+            throw new \RuntimeException(
+                sprintf('Invalid duplicate baseline JSON at %s: %s', $baselinePath, $exception->getMessage()),
+                previous: $exception,
+            );
+        }
+
+        if (!is_array($decoded)) {
+            throw new \RuntimeException(sprintf('Duplicate baseline payload must be a JSON object: %s', $baselinePath));
+        }
+
+        $clones = $decoded['clones'] ?? null;
 
         if (!is_array($clones)) {
-            return [];
+            throw new \RuntimeException(sprintf('Duplicate baseline is missing a valid "clones" array: %s', $baselinePath));
         }
+
+        $known = [];
 
         foreach ($clones as $clone) {
             if (is_array($clone) && is_string($clone['fingerprint'] ?? null)) {
@@ -154,11 +177,24 @@ final class DuplicateChecker
         $options = $this->normalizeMode($options);
         $configuredPaths = $options['paths'];
         $options['paths'] = [];
+        $collectingPathsOnly = false;
 
         $argCount = count($args);
 
         for ($index = 0; $index < $argCount; $index++) {
             $arg = $args[$index];
+
+            if ($collectingPathsOnly) {
+                $options['paths'][] = $arg;
+
+                continue;
+            }
+
+            if ($arg === '--') {
+                $collectingPathsOnly = true;
+
+                continue;
+            }
 
             if ($this->cli->skipConfig($args, $index, $arg) || $this->cli->skipPreset($args, $index, $arg)) {
                 continue;
@@ -166,6 +202,10 @@ final class DuplicateChecker
 
             if ($this->parseCliOption($args, $index, $options, $arg)) {
                 continue;
+            }
+
+            if (str_starts_with($arg, '-')) {
+                throw new \InvalidArgumentException(sprintf('Unknown option for duplicates command: %s', $arg));
             }
 
             $options['paths'][] = $arg;
@@ -285,17 +325,27 @@ final class DuplicateChecker
      */
     private function writeBaseline(array $result, string $path): void
     {
-        $payload = [
-            'version' => 1,
-            'generated_at' => gmdate('c'),
-            'clones' => array_map(static fn(array $clone): array => [
-                'fingerprint' => $clone['fingerprint'],
-                'source' => $clone['source'],
-                'score' => $clone['score'],
-            ], $result['clones']),
-        ];
+        try {
+            $payload = [
+                'version' => 1,
+                'generated_at' => gmdate('c'),
+                'clones' => array_map(static fn(array $clone): array => [
+                    'fingerprint' => $clone['fingerprint'],
+                    'source' => $clone['source'],
+                    'score' => $clone['score'],
+                ], $result['clones']),
+            ];
+            $encoded = json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR) . PHP_EOL;
+        } catch (\JsonException $exception) {
+            throw new \RuntimeException(
+                sprintf('Could not encode duplicate baseline JSON for %s: %s', $path, $exception->getMessage()),
+                previous: $exception,
+            );
+        }
 
-        file_put_contents($path, json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL);
+        if (file_put_contents($path, $encoded) === false) {
+            throw new \RuntimeException(sprintf('Failed to write duplicate baseline file: %s', $path));
+        }
     }
 
     /**
@@ -311,11 +361,15 @@ final class DuplicateChecker
         }
 
         if ($options['writeBaseline'] !== '') {
-            fwrite(STDOUT, sprintf('Duplicate baseline written: %s', $options['writeBaseline']) . PHP_EOL);
+            fwrite(STDOUT, Ansi::color(sprintf('Duplicate baseline written: %s', $options['writeBaseline']), 'cyan', STDOUT) . PHP_EOL);
         }
 
         if ($result['clones'] === []) {
-            fwrite(STDOUT, sprintf('No new duplicated code found (%d PHP files, %d lines checked).', $result['files'], $result['total_lines']) . PHP_EOL);
+            fwrite(STDOUT, Ansi::color(
+                sprintf('No new duplicated code found (%d PHP files, %d lines checked).', $result['files'], $result['total_lines']),
+                'green',
+                STDOUT,
+            ) . PHP_EOL);
 
             return;
         }
@@ -328,31 +382,35 @@ final class DuplicateChecker
      */
     private function writeTextClones(array $result): void
     {
-        fwrite(STDERR, sprintf(
+        fwrite(STDERR, Ansi::color(sprintf(
             'Found %d clone group(s) with %d duplicated lines in %d PHP files:',
             count($result['clones']),
             $result['duplicated_lines'],
             $result['files'],
-        ) . PHP_EOL);
+        ), 'red', STDERR) . PHP_EOL);
 
-        foreach ($result['clones'] as $clone) {
+        foreach ($result['clones'] as $index => $clone) {
             $first = $clone['occurrences'][0];
             fwrite(STDERR, sprintf(
-                '  - %s:%d-%d (%d lines, %.0f%% similar, %s, score %.1f)',
-                $first['file'],
-                $first['start_line'],
-                $first['end_line'],
+                '  %d) %d lines, %.0f%% similar, %s, score %.1f',
+                $index + 1,
                 $clone['lines'],
                 $clone['similarity'] * 100,
                 $clone['source'],
                 $clone['score'],
             ) . PHP_EOL);
+            fwrite(STDERR, sprintf(
+                '     %s:%d-%d',
+                $first['file'],
+                $first['start_line'],
+                $first['end_line'],
+            ) . PHP_EOL);
 
             foreach (array_slice($clone['occurrences'], 1) as $occurrence) {
-                fwrite(STDERR, sprintf('    %s:%d-%d', $occurrence['file'], $occurrence['start_line'], $occurrence['end_line']) . PHP_EOL);
+                fwrite(STDERR, sprintf('     %s:%d-%d', $occurrence['file'], $occurrence['start_line'], $occurrence['end_line']) . PHP_EOL);
             }
         }
 
-        fwrite(STDERR, sprintf('%.2f%% duplicated lines.', $result['duplicate_percentage']) . PHP_EOL);
+        fwrite(STDERR, Ansi::color(sprintf('%.2f%% duplicated lines.', $result['duplicate_percentage']), 'yellow', STDERR) . PHP_EOL);
     }
 }

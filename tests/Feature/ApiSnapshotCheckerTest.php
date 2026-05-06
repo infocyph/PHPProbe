@@ -113,6 +113,56 @@ PHP);
         ->and($ids)->not()->toContain('class Demo\Hidden');
 });
 
+it('rejects unknown api command options', function (): void {
+    $root = makeApiSnapshotCheckerFixture();
+
+    try {
+        $run = runApiSnapshotCheckerCommand($root, ['--does-not-exist']);
+    } finally {
+        removeApiSnapshotCheckerFixture($root);
+    }
+
+    expect($run['exitCode'])->toBe(2)
+        ->and($run['stderr'])->toContain('Unknown option for api command: --does-not-exist');
+});
+
+it('fails when api baseline file is missing', function (): void {
+    $root = makeApiSnapshotCheckerFixture();
+    $src = $root.DIRECTORY_SEPARATOR.'src';
+    $missingBaseline = $root.DIRECTORY_SEPARATOR.'missing-api-baseline.json';
+
+    mkdir($src, 0755, true);
+    file_put_contents($src.DIRECTORY_SEPARATOR.'Contract.php', apiContractFixture('string'));
+
+    try {
+        $run = runApiSnapshotCheckerCommand($root, ['--json', '--baseline='.$missingBaseline, 'src']);
+    } finally {
+        removeApiSnapshotCheckerFixture($root);
+    }
+
+    expect($run['exitCode'])->toBe(2)
+        ->and($run['stderr'])->toContain('API baseline file not found');
+});
+
+it('fails when api baseline JSON is invalid', function (): void {
+    $root = makeApiSnapshotCheckerFixture();
+    $src = $root.DIRECTORY_SEPARATOR.'src';
+    $baseline = $root.DIRECTORY_SEPARATOR.'api-baseline.json';
+
+    mkdir($src, 0755, true);
+    file_put_contents($src.DIRECTORY_SEPARATOR.'Contract.php', apiContractFixture('string'));
+    file_put_contents($baseline, '{invalid');
+
+    try {
+        $run = runApiSnapshotCheckerCommand($root, ['--json', '--baseline='.$baseline, 'src']);
+    } finally {
+        removeApiSnapshotCheckerFixture($root);
+    }
+
+    expect($run['exitCode'])->toBe(2)
+        ->and($run['stderr'])->toContain('Invalid API baseline JSON');
+});
+
 function apiContractFixture(string $returnType, string $protectedReturnType = 'int'): string
 {
     return <<<PHP

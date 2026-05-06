@@ -6,6 +6,7 @@ namespace Infocyph\PHPProbe;
 
 use Infocyph\PHPProbe\Api\ApiSnapshotIndex;
 use Infocyph\PHPProbe\Config\CliOptions;
+use Infocyph\PHPProbe\Console\Ansi;
 use Infocyph\PHPProbe\Config\Paths;
 use Infocyph\PHPProbe\Config\PhpProbeConfig;
 use Infocyph\PHPProbe\Filesystem\PhpFileFinder;
@@ -26,7 +27,7 @@ final class ApiSnapshotChecker
     {
         try {
             return $this->runWithOptions($this->parseArgs($args));
-        } catch (\InvalidArgumentException $exception) {
+        } catch (\InvalidArgumentException|\RuntimeException $exception) {
             fwrite(STDERR, $exception->getMessage() . PHP_EOL);
 
             return 2;
@@ -114,14 +115,35 @@ final class ApiSnapshotChecker
      */
     private function loadBaseline(string $path): array
     {
-        if ($path === '' || !is_file($path) || !is_readable($path)) {
+        if ($path === '') {
             return ['version' => 1, 'generated_at' => '', 'symbols' => []];
         }
 
-        $decoded = json_decode((string) file_get_contents($path), true);
+        if (!is_file($path)) {
+            throw new \RuntimeException(sprintf('API baseline file not found: %s', $path));
+        }
+
+        if (!is_readable($path)) {
+            throw new \RuntimeException(sprintf('API baseline file is not readable: %s', $path));
+        }
+
+        $contents = file_get_contents($path);
+
+        if (!is_string($contents)) {
+            throw new \RuntimeException(sprintf('Failed to read API baseline file: %s', $path));
+        }
+
+        try {
+            $decoded = json_decode($contents, true, 512, JSON_THROW_ON_ERROR);
+        } catch (\JsonException $exception) {
+            throw new \RuntimeException(
+                sprintf('Invalid API baseline JSON at %s: %s', $path, $exception->getMessage()),
+                previous: $exception,
+            );
+        }
 
         if (!is_array($decoded)) {
-            return ['version' => 1, 'generated_at' => '', 'symbols' => []];
+            throw new \RuntimeException(sprintf('API baseline payload must be a JSON object: %s', $path));
         }
 
         $symbols = is_array($decoded['symbols'] ?? null) ? array_values(array_filter(
@@ -148,6 +170,7 @@ final class ApiSnapshotChecker
         $options = $this->cli->mergeConfigWithPreset($config, $this->cli->presetName($args))->applyApiOptions($options);
         $configuredPaths = $options['paths'];
         $options['paths'] = [];
+        $collectingPathsOnly = false;
 
         $index = 0;
         $argCount = count($args);
@@ -155,9 +178,27 @@ final class ApiSnapshotChecker
         while ($index < $argCount) {
             $arg = $args[$index];
 
+            if ($collectingPathsOnly) {
+                $options['paths'][] = $arg;
+                $index++;
+
+                continue;
+            }
+
+            if ($arg === '--') {
+                $collectingPathsOnly = true;
+                $index++;
+
+                continue;
+            }
+
             if (!$this->cli->skipConfig($args, $index, $arg)
                 && !$this->cli->skipPreset($args, $index, $arg)
                 && !$this->parseCliOption($args, $index, $options, $arg)) {
+                if (str_starts_with($arg, '-')) {
+                    throw new \InvalidArgumentException(sprintf('Unknown option for api command: %s', $arg));
+                }
+
                 $options['paths'][] = $arg;
             }
 
@@ -252,7 +293,18 @@ final class ApiSnapshotChecker
 
     private function writeBaseline(array $snapshot, string $path): void
     {
-        file_put_contents($path, json_encode($snapshot, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL);
+        try {
+            $encoded = json_encode($snapshot, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR) . PHP_EOL;
+        } catch (\JsonException $exception) {
+            throw new \RuntimeException(
+                sprintf('Could not encode API baseline JSON for %s: %s', $path, $exception->getMessage()),
+                previous: $exception,
+            );
+        }
+
+        if (file_put_contents($path, $encoded) === false) {
+            throw new \RuntimeException(sprintf('Failed to write API baseline file: %s', $path));
+        }
     }
 
     /**
@@ -268,28 +320,38 @@ final class ApiSnapshotChecker
         }
 
         if ($options['writeBaseline'] !== '') {
-            fwrite(STDOUT, sprintf('Public API baseline written: %s', $options['writeBaseline']) . PHP_EOL);
+            fwrite(STDOUT, Ansi::color(sprintf('Public API baseline written: %s', $options['writeBaseline']), 'cyan', STDOUT) . PHP_EOL);
         }
 
         $symbolCount = count($result['snapshot']['symbols'] ?? []);
 
         if ($options['baseline'] === '') {
-            fwrite(STDOUT, sprintf('Public API snapshot OK: %d symbol(s) scanned.', $symbolCount) . PHP_EOL);
+            fwrite(STDOUT, Ansi::color(sprintf('Public API snapshot OK: %d symbol(s) scanned.', $symbolCount), 'green', STDOUT) . PHP_EOL);
 
             return;
         }
 
         if (!$result['changed']) {
-            fwrite(STDOUT, sprintf('Public API unchanged: %d symbol(s) scanned.', $symbolCount) . PHP_EOL);
+            fwrite(STDOUT, Ansi::color(sprintf('Public API unchanged: %d symbol(s) scanned.', $symbolCount), 'green', STDOUT) . PHP_EOL);
 
             return;
         }
 
-        fwrite(STDERR, 'Public API snapshot changed:' . PHP_EOL);
+        fwrite(STDERR, Ansi::color('Public API snapshot changed:', 'red', STDERR) . PHP_EOL);
+
+        $labels = ['added' => 'Added', 'removed' => 'Removed', 'changed' => 'Changed'];
 
         foreach (['added', 'removed', 'changed'] as $type) {
-            foreach ($result['changes'][$type] as $symbol) {
-                fwrite(STDERR, sprintf('  - %s: %s', $type, $symbol) . PHP_EOL);
+            $items = $result['changes'][$type];
+
+            if ($items === []) {
+                continue;
+            }
+
+            fwrite(STDERR, sprintf('  %s (%d)', $labels[$type], count($items)) . PHP_EOL);
+
+            foreach ($items as $symbol) {
+                fwrite(STDERR, sprintf('    - %s', $symbol) . PHP_EOL);
             }
         }
     }

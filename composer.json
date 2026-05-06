@@ -44,10 +44,11 @@
     "optimize-autoloader": true,
     "sort-packages": true
   },
-  "scripts": {
-    "test": "vendor/bin/pest -c pest.xml",
-    "lint": "@php bin/phpprobe syntax src tests",
-    "duplicates": "@php bin/phpprobe duplicates --preset=standard --config=resources/phpprobe.json src tests",
-    "api": "@php bin/phpprobe api --config=resources/phpprobe.json src tests"
+    "scripts": {
+      "test": "vendor/bin/pest -c pest.xml",
+      "lint": "@php bin/phpprobe syntax src tests",
+    "duplicates": "@php bin/phpprobe duplicates --preset=standard --config=resources/phpprobe.json --baseline=resources/.phpprobe-duplicates-baseline.json src tests",
+      "api": "@php bin/phpprobe api --config=resources/phpprobe.json src tests",
+      "comments": "@php bin/phpprobe comments --config=resources/phpprobe.json src tests"
+    }
   }
-}

@@ -1,0 +1,36 @@
+{
+    "version": 1,
+    "generated_at": "2026-05-06T07:12:18+00:00",
+    "clones": [
+        {
+            "fingerprint": "84cc019f15701ac134fd8026b7f6715b21317758be3b29d502b5840479e5bc9a",
+            "source": "tokens",
+            "score": 222.4
+        },
+        {
+            "fingerprint": "d19a26ec1dc7b405759627c036003d71f0fd0780e5ba4ac917ccb18149fa1374",
+            "source": "tokens",
+            "score": 215.4
+        },
+        {
+            "fingerprint": "e7e18beed9abb811f1a43e463f6adc8347e40e49b87e9f7373adf6c44ce39e74",
+            "source": "tokens",
+            "score": 172.6
+        },
+        {
+            "fingerprint": "c7b509af41b9ce03b9ae533ca1ada7e447e7fc7e6551b0434383aa00376eab1e",
+            "source": "tokens",
+            "score": 158.6
+        },
+        {
+            "fingerprint": "baabba091d3d58d65256e865b3033551632ad147f9e1d7b296e9787ed1f2d379",
+            "source": "tokens",
+            "score": 155.8
+        },
+        {
+            "fingerprint": "397f1a223697f40e31f1b81ec38a9dd0620f0a046a685e568f1d304793be7adc",
+            "source": "tokens",
+            "score": 153
+        }
+    ]
+}

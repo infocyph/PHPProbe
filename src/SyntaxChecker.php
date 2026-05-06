@@ -4,15 +4,23 @@ declare(strict_types=1);
 
 namespace Infocyph\PHPProbe;
 
+use Infocyph\PHPProbe\Config\CliOptions;
+use Infocyph\PHPProbe\Console\Ansi;
 use Infocyph\PHPProbe\Config\Paths;
 use Infocyph\PHPProbe\Config\PhpProbeConfig;
-use Infocyph\PHPProbe\Config\PresetRepository;
 use Infocyph\PHPProbe\Filesystem\PhpFileFinder;
 use Infocyph\PHPProbe\Process\ProcessResult;
 use Infocyph\PHPProbe\Process\ProcRunner;
 
 final class SyntaxChecker
 {
+    private CliOptions $cli;
+
+    public function __construct()
+    {
+        $this->cli = new CliOptions();
+    }
+
     /**
      * @param list<string> $paths
      */
@@ -20,7 +28,7 @@ final class SyntaxChecker
     {
         try {
             $options = $this->parseArgs($paths);
-        } catch (\InvalidArgumentException $exception) {
+        } catch (\InvalidArgumentException|\RuntimeException $exception) {
             fwrite(STDERR, $exception->getMessage() . PHP_EOL);
 
             return 2;
@@ -39,95 +47,6 @@ final class SyntaxChecker
         }
 
         return $this->lintFiles($files);
-    }
-
-    /**
-     * @param list<string> $args
-     * @param array{help:bool,config:string,preset:string,paths:list<string>,excludes:list<string>} $options
-     */
-    private function consumeConfigOption(array $args, int &$index, string $arg, array &$options): bool
-    {
-        $config = $this->optionValue($arg, '--config');
-
-        if ($config !== null) {
-            $options['config'] = $config;
-
-            return true;
-        }
-
-        if ($arg !== '--config') {
-            return false;
-        }
-
-        if (isset($args[$index + 1])) {
-            $options['config'] = $args[++$index];
-        }
-
-        return true;
-    }
-
-    /**
-     * @param list<string> $args
-     * @param array{help:bool,config:string,preset:string,paths:list<string>,excludes:list<string>} $options
-     */
-    private function consumeExcludeOption(array $args, int &$index, string $arg, array &$options): bool
-    {
-        $exclude = $this->optionValue($arg, '--exclude');
-
-        if ($exclude !== null) {
-            if ($exclude !== '') {
-                $options['excludes'][] = $exclude;
-            }
-
-            return true;
-        }
-
-        if ($arg !== '--exclude') {
-            return false;
-        }
-
-        if (isset($args[$index + 1]) && $args[$index + 1] !== '') {
-            $options['excludes'][] = $args[++$index];
-        }
-
-        return true;
-    }
-
-    /**
-     * @param list<string> $args
-     * @param array{help:bool,config:string,preset:string,paths:list<string>,excludes:list<string>} $options
-     */
-    private function consumePresetOption(array $args, int &$index, string $arg, array &$options): bool
-    {
-        $preset = $this->optionValue($arg, '--preset');
-
-        if ($preset !== null) {
-            $options['preset'] = $preset;
-
-            return true;
-        }
-
-        if ($arg !== '--preset') {
-            return false;
-        }
-
-        if (isset($args[$index + 1])) {
-            $options['preset'] = $args[++$index];
-        }
-
-        return true;
-    }
-
-    private function configWithPreset(PhpProbeConfig $config, string $cliPreset): PhpProbeConfig
-    {
-        $repository = new PresetRepository();
-        $configPreset = $config->preset();
-
-        if (is_string($configPreset) && $configPreset !== '') {
-            $config = $repository->config($configPreset)->merge($config);
-        }
-
-        return $cliPreset !== '' ? $config->merge($repository->config($cliPreset)) : $config;
     }
 
     private function help(): int
@@ -178,74 +97,100 @@ final class SyntaxChecker
         }
 
         if ($failures === []) {
-            fwrite(STDOUT, sprintf('Syntax OK: %d PHP files checked.', count($files)) . PHP_EOL);
+            fwrite(STDOUT, Ansi::color(sprintf('Syntax OK: %d PHP files checked.', count($files)), 'green', STDOUT) . PHP_EOL);
 
             return 0;
         }
 
-        fwrite(STDERR, sprintf('Syntax errors in %d file(s):', count($failures)) . PHP_EOL);
+        fwrite(STDERR, Ansi::color(sprintf('Syntax errors in %d file(s):', count($failures)), 'red', STDERR) . PHP_EOL);
 
         foreach ($failures as [$file, $message]) {
-            fwrite(STDERR, "- {$file}" . PHP_EOL . $message . PHP_EOL);
+            fwrite(STDERR, '  ' . Ansi::color($file, 'cyan', STDERR) . PHP_EOL);
+
+            foreach (preg_split('/\R/', trim($message)) ?: [] as $line) {
+                if ($line !== '') {
+                    fwrite(STDERR, '    ' . $line . PHP_EOL);
+                }
+            }
         }
 
         return 1;
     }
 
-    private function optionValue(string $arg, string $name): ?string
-    {
-        if (!str_starts_with($arg, $name . '=')) {
-            return null;
-        }
-
-        return substr($arg, strlen($name) + 1);
-    }
-
     /**
      * @param list<string> $args
-     * @return array{help:bool,config:string,preset:string,paths:list<string>,excludes:list<string>}
+     * @return array{help:bool,config:string,paths:list<string>,excludes:list<string>}
      */
     private function parseArgs(array $args): array
     {
         $options = [
             'help' => false,
             'config' => Paths::config('phpprobe.json'),
-            'preset' => '',
             'paths' => [],
             'excludes' => [],
         ];
-
+        $options['config'] = $this->cli->configPath($args, $options['config']);
+        $config = $this->cli->mergeConfigWithPreset(PhpProbeConfig::fromFile($options['config']), $this->cli->presetName($args));
+        $options = $config->applySyntaxOptions($options);
+        $configuredPaths = $options['paths'];
+        $options['paths'] = [];
+        $index = 0;
         $argCount = count($args);
+        $collectingPathsOnly = false;
 
-        for ($index = 0; $index < $argCount; $index++) {
+        while ($index < $argCount) {
             $arg = $args[$index];
 
-            if ($arg === '--help' || $arg === '-h') {
-                $options['help'] = true;
+            if ($collectingPathsOnly) {
+                $options['paths'][] = $arg;
+                $index++;
 
                 continue;
             }
 
-            if ($this->consumeConfigOption($args, $index, $arg, $options)
-                || $this->consumePresetOption($args, $index, $arg, $options)
-                || $this->consumeExcludeOption($args, $index, $arg, $options)) {
+            if ($arg === '--') {
+                $collectingPathsOnly = true;
+                $index++;
+
                 continue;
             }
 
-            $options['paths'][] = $arg;
+            if (!$this->cli->skipConfig($args, $index, $arg)
+                && !$this->cli->skipPreset($args, $index, $arg)
+                && !$this->parseCliOption($args, $index, $options, $arg)) {
+                if (str_starts_with($arg, '-')) {
+                    throw new \InvalidArgumentException(sprintf('Unknown option for syntax command: %s', $arg));
+                }
+
+                $options['paths'][] = $arg;
+            }
+
+            $index++;
         }
-
-        $config = $this->configWithPreset(PhpProbeConfig::fromFile($options['config']), $options['preset']);
 
         if ($options['paths'] === []) {
-            $options['paths'] = $config->syntaxPaths();
+            $options['paths'] = $configuredPaths;
         }
 
-        $options['excludes'] = array_values(array_unique([
-            ...$config->syntaxExcludes(),
-            ...$options['excludes'],
-        ]));
-
         return $options;
+    }
+
+    /**
+     * @param list<string> $args
+     * @param array{help:bool,config:string,paths:list<string>,excludes:list<string>} $options
+     */
+    private function parseCliOption(array $args, int &$index, array &$options, string $arg): bool
+    {
+        if ($this->cli->parseExclude($args, $index, $options, $arg)) {
+            return true;
+        }
+
+        if ($arg === '--help' || $arg === '-h') {
+            $options['help'] = true;
+
+            return true;
+        }
+
+        return false;
     }
 }
