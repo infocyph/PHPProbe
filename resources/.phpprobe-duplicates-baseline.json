@@ -1,36 +1,71 @@
 {
     "version": 1,
-    "generated_at": "2026-05-06T07:12:18+00:00",
+    "generated_at": "2026-05-06T09:35:59+00:00",
     "clones": [
         {
-            "fingerprint": "84cc019f15701ac134fd8026b7f6715b21317758be3b29d502b5840479e5bc9a",
+            "fingerprint": "65edf497c75023b2bd013f4bb1f770a5e43e88ce8e37922c7f9d4d0e88b063c7",
             "source": "tokens",
-            "score": 222.4
+            "score": 224.4
         },
         {
-            "fingerprint": "d19a26ec1dc7b405759627c036003d71f0fd0780e5ba4ac917ccb18149fa1374",
+            "fingerprint": "0bffdd382bce7ed3caff6476cc3321d143a17c67653db094cd405fb72538effe",
             "source": "tokens",
-            "score": 215.4
+            "score": 188.6
         },
         {
-            "fingerprint": "e7e18beed9abb811f1a43e463f6adc8347e40e49b87e9f7373adf6c44ce39e74",
+            "fingerprint": "6e7956bf0217046b225214da8669f784cb404b1f309f5cd33ea2b077b803733a",
+            "source": "tokens",
+            "score": 183.6
+        },
+        {
+            "fingerprint": "ea76cd0d5b42c4d4120d00eabbfb0953f78ffd1782abe77c74ddd84933ed6153",
+            "source": "tokens",
+            "score": 181.8
+        },
+        {
+            "fingerprint": "4d68193edc1c2b035b5b86e760e702616040481cfb62627858ed7341d948ec05",
+            "source": "tokens",
+            "score": 175.2
+        },
+        {
+            "fingerprint": "c18a55081eea7f8ed993650c968c9d325c43c289854a86d33d22019b90166751",
             "source": "tokens",
             "score": 172.6
         },
         {
-            "fingerprint": "c7b509af41b9ce03b9ae533ca1ada7e447e7fc7e6551b0434383aa00376eab1e",
+            "fingerprint": "de63e6b88a5859c1e66539bb6d56ed4433bd1611a4560b921ea7769de1f415ee",
             "source": "tokens",
-            "score": 158.6
+            "score": 166.4
         },
         {
-            "fingerprint": "baabba091d3d58d65256e865b3033551632ad147f9e1d7b296e9787ed1f2d379",
+            "fingerprint": "96021426570e587f8cf858fcc573ee46596dbe0ba36a7fc0d75f8ab8eeb81999",
             "source": "tokens",
-            "score": 155.8
+            "score": 160.8
         },
         {
-            "fingerprint": "397f1a223697f40e31f1b81ec38a9dd0620f0a046a685e568f1d304793be7adc",
+            "fingerprint": "7295e29cf724e60bc160914ab685e55f33fc7286fb20c4ed5c4e0bd112125019",
             "source": "tokens",
-            "score": 153
+            "score": 155.6
+        },
+        {
+            "fingerprint": "f5baf6b06984fc54d1f8233149c95bb135f50198fe1e8937c55780c73788c967",
+            "source": "tokens",
+            "score": 154.6
+        },
+        {
+            "fingerprint": "b27cfdf7ec1935f38205ad2bd03851bc6db371a5e4a4ad2b6c3a2d05baceb414",
+            "source": "tokens",
+            "score": 150
+        },
+        {
+            "fingerprint": "8d1cdda29cbcb2080259ca519efd72373807ff055705bb866c3089e3f94156a9",
+            "source": "tokens",
+            "score": 137.4
+        },
+        {
+            "fingerprint": "988166654f6fea820c5213dbe12fc4ef36a8bf8c93fb28170493d7069920479b",
+            "source": "tokens",
+            "score": 131.6
         }
     ]
 }

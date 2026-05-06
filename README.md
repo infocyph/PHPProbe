@@ -39,13 +39,17 @@ For checker subcommands (`syntax`, `duplicates`, `api`, `comments`), unknown opt
 
 ```bash
 php vendor/bin/phpprobe syntax
+php vendor/bin/phpprobe syntax --format=markdown --parallel=4 src
 php vendor/bin/phpprobe duplicates
 php vendor/bin/phpprobe duplicates --json
+php vendor/bin/phpprobe duplicates --summary-json=build/duplicates-summary.json src
 php vendor/bin/phpprobe duplicates --preset=strict --json src
 php vendor/bin/phpprobe api --write-baseline=.phpprobe-api-baseline.json src
 php vendor/bin/phpprobe api --baseline=.phpprobe-api-baseline.json src
+php vendor/bin/phpprobe api --fail-on=error --format=markdown --baseline=.phpprobe-api-baseline.json src
 php vendor/bin/phpprobe comments --fail-on=warning src
 php vendor/bin/phpprobe comments --strict --json src
+php vendor/bin/phpprobe comments --policy=strict --format=markdown src
 php vendor/bin/phpprobe presets
 php vendor/bin/phpprobe preset phpstorm
 ```
@@ -225,6 +229,12 @@ Options:
 | `--config` | `--config=FILE` or `--config FILE` | Read checker settings from a specific config file. |
 | `--preset` | `--preset=NAME` or `--preset NAME` | Apply `phpstorm`, `standard`, or `strict` as a run-level preset. |
 | `--exclude` | `--exclude=PATH` or `--exclude PATH` | Exclude a path. Repeatable. |
+| `--format` | `--format=text|json|markdown|sarif` | Output format. Default is `text`. |
+| `--json` | flag | Alias for `--format=json`. |
+| `--summary-json` | `--summary-json=FILE` | Write a machine-readable run summary JSON. |
+| `--changed-only` | flag | Scan only changed PHP files from Git diff. |
+| `--changed-base` | `--changed-base=REF` | Base ref used with `--changed-only`. |
+| `--parallel` | `--parallel=N` | Parallel lint worker count. Default is `1`. |
 | `--help`, `-h` | flag | Print syntax checker help and exit `0`. |
 
 Path behavior:
@@ -238,8 +248,8 @@ Output and exits:
 
 | Condition | Stream | Exit |
 | --- | --- | --- |
-| No PHP files found | `stdout`: `No PHP files found.` | `0` |
-| All files pass | `stdout`: `Syntax OK: N PHP files checked.` | `0` |
+| No PHP files found | `stdout`: `No PHP files found.` plus summary | `0` |
+| All files pass | `stdout`: `Syntax OK: N PHP files checked.` plus summary | `0` |
 | One or more files fail | `stderr`: failing file list plus lint output | `1` |
 | Unknown option or runtime config error | `stderr`: error | `2` |
 | Unknown preset | `stderr`: preset error | `2` |
@@ -261,9 +271,14 @@ Options:
 | `--config` | `--config=FILE` or `--config FILE` | Read checker settings from a specific config file. |
 | `--preset` | `--preset=NAME` or `--preset NAME` | Apply `phpstorm`, `standard`, or `strict` as a run-level preset. |
 | `--exclude` | `--exclude=PATH` or `--exclude PATH` | Exclude a path. Repeatable. |
-| `--json` | flag | Emit machine-readable JSON to `stdout`. |
+| `--format` | `--format=text|json|markdown|sarif` | Output format. Default is `text`. |
+| `--json` | flag | Alias for `--format=json`. |
 | `--strict` | flag | Escalate commented-out-code policy severities. |
+| `--policy` | `--policy=relaxed|standard|strict` | Comment policy profile. |
 | `--fail-on` | `--fail-on=error|warning|info` | Control failure threshold (default: `error`). |
+| `--summary-json` | `--summary-json=FILE` | Write a machine-readable run summary JSON. |
+| `--changed-only` | flag | Scan only changed PHP files from Git diff. |
+| `--changed-base` | `--changed-base=REF` | Base ref used with `--changed-only`. |
 | `--tags` | `--tags=TODO,FIXME,...` | Override marker tags for marker detection. |
 | `--help`, `-h` | flag | Print comments checker help and exit `0`. |
 
@@ -289,13 +304,14 @@ Policy-to-finding mapping:
 | Issue reference required for long blocks | `commented_out_code_requires_issue_reference` |
 | Oversized block disallowed | `commented_out_code_block_too_large` |
 | PHPDoc code without clear example label | `commented_out_code_in_phpdoc_without_example_label` |
+| Invalid suppression directive | `invalid_suppression_rule` |
 | Explicitly valid tagged reason (informational) | `commented_out_code_with_valid_reason` |
 
 Output and exits:
 
 | Condition | Stream | Exit |
 | --- | --- | --- |
-| No failing findings at threshold | `stdout`: summary (or JSON) | `0` |
+| No failing findings at threshold | `stdout`: summary (or JSON/markdown/SARIF) | `0` |
 | Findings at or above threshold | `stderr`: text report (or JSON on `stdout`) | `1` |
 | Unknown option or runtime config error | `stderr`: error | `2` |
 
@@ -320,7 +336,12 @@ Options:
 | `--include-protected` | flag | Include protected members. This is the default. |
 | `--baseline` | `--baseline=FILE` | Compare the current API against a snapshot file. |
 | `--write-baseline` | `--write-baseline`, `--write-baseline=FILE` | Write the current API snapshot and exit `0`. Bare flag writes `.phpprobe-api-baseline.json`. |
-| `--json` | flag | Emit machine-readable JSON to `stdout`. |
+| `--format` | `--format=text|json|markdown|sarif` | Output format. Default is `text`. |
+| `--json` | flag | Alias for `--format=json`. |
+| `--fail-on` | `--fail-on=error|warning|info` | Failure threshold for API drift. Default is `warning`. |
+| `--summary-json` | `--summary-json=FILE` | Write a machine-readable run summary JSON. |
+| `--changed-only` | flag | Scan only changed PHP files from Git diff. |
+| `--changed-base` | `--changed-base=REF` | Base ref used with `--changed-only`. |
 | `--help`, `-h` | flag | Print API checker help and exit `0`. |
 
 Path behavior:
@@ -345,8 +366,8 @@ Output and exits:
 | --- | --- | --- |
 | No baseline passed | `stdout`: `Public API snapshot OK: N symbol(s) scanned.` | `0` |
 | Baseline matches | `stdout`: `Public API unchanged: N symbol(s) scanned.` | `0` |
-| Baseline differs | `stderr`: added/removed/changed symbol list | `1` |
-| `--json` | `stdout`: JSON result | `0` or `1`, depending on drift |
+| Baseline differs | `stderr`: added/removed/changed symbol list | `1` by default, `0` when `--fail-on=error` |
+| `--format=json|markdown|sarif` | `stdout`: selected format payload | `0` or `1`, depending on drift and fail-on |
 | `--write-baseline` | `stdout`: baseline message or JSON result | `0` |
 | Unknown option or runtime config/baseline error | `stderr`: error | `2` |
 | Unknown preset | `stderr`: preset error | `2` |
@@ -379,7 +400,15 @@ Options:
 | `--no-fuzzy` | flag | Disable fuzzy identifier/call normalization. |
 | `--baseline` | `--baseline=FILE` | Suppress clone groups whose fingerprints are already in a baseline file. |
 | `--write-baseline` | `--write-baseline`, `--write-baseline=FILE` | Write current clone fingerprints to a baseline and exit `0`. Bare flag writes `.phpprobe-duplicates-baseline.json`. |
-| `--json` | flag | Emit machine-readable JSON to `stdout`. |
+| `--format` | `--format=text|json|markdown|sarif` | Output format. Default is `text`. |
+| `--json` | flag | Alias for `--format=json`. |
+| `--fail-on` | `--fail-on=error|warning|info` | Failure threshold. Default is `warning`. |
+| `--error-duplicate-percentage` | `--error-duplicate-percentage=N` | Error threshold used when `--fail-on=error`. Default `20`. |
+| `--summary-json` | `--summary-json=FILE` | Write a machine-readable run summary JSON. |
+| `--changed-only` | flag | Scan only changed PHP files from Git diff. |
+| `--changed-base` | `--changed-base=REF` | Base ref used with `--changed-only`. |
+| `--no-cache` | flag | Disable duplicate result cache. |
+| `--cache-file` | `--cache-file=FILE` | Duplicate result cache path. |
 | `--help`, `-h` | flag | Print duplicate checker help and exit `0`. |
 
 Exact accepted forms matter: numeric options, `--mode`, `--baseline` and valued `--write-baseline=FILE` are parsed in equals form. `--config`, `--preset` and `--exclude` also accept split form. `--write-baseline` may also be passed as a bare flag.
@@ -400,10 +429,9 @@ Output and exits:
 
 | Condition | Stream | Exit |
 | --- | --- | --- |
-| No clone groups after baseline suppression | `stdout`: `No new duplicated code found (...)` | `0` |
-| Clone groups found | `stderr`: text report | `1` |
-| `--json` with no clones | `stdout`: JSON result | `0` |
-| `--json` with clones | `stdout`: JSON result | `1` |
+| No clone groups after baseline suppression | `stdout`: `No new duplicated code found (...)` plus summary | `0` |
+| Clone groups found | `stderr`: text report plus summary | `1` by default |
+| `--format=json|markdown|sarif` | `stdout`: selected format payload | depends on clone findings and fail-on |
 | `--write-baseline` | `stdout`: baseline message or JSON result | `0` |
 | Unknown option or runtime config/baseline error | `stderr`: error | `2` |
 | Unknown preset | `stderr`: preset error | `2` |

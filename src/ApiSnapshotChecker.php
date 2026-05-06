@@ -6,10 +6,11 @@ namespace Infocyph\PHPProbe;
 
 use Infocyph\PHPProbe\Api\ApiSnapshotIndex;
 use Infocyph\PHPProbe\Config\CliOptions;
-use Infocyph\PHPProbe\Console\Ansi;
 use Infocyph\PHPProbe\Config\Paths;
 use Infocyph\PHPProbe\Config\PhpProbeConfig;
+use Infocyph\PHPProbe\Console\Ansi;
 use Infocyph\PHPProbe\Filesystem\PhpFileFinder;
+use Infocyph\PHPProbe\Util\SummaryJson;
 
 final class ApiSnapshotChecker
 {
@@ -35,7 +36,7 @@ final class ApiSnapshotChecker
     }
 
     /**
-     * @param array{help:bool,json:bool,config:string,preset:string,includeProtected:bool,baseline:string,writeBaseline:string,paths:list<string>,excludes:list<string>} $options
+     * @param array<string, mixed> $options
      */
     private function runWithOptions(array $options): int
     {
@@ -43,7 +44,11 @@ final class ApiSnapshotChecker
             return $this->help();
         }
 
-        $files = (new PhpFileFinder())->find($options['paths'], $options['excludes']);
+        $files = (new PhpFileFinder())->find(
+            $options['paths'],
+            $options['excludes'],
+            ['changedOnly' => $options['changedOnly'], 'changedBase' => $options['changedBase']],
+        );
         $snapshot = (new ApiSnapshotIndex())->build($files, ['includeProtected' => $options['includeProtected']]);
         $result = $this->result($snapshot, $options['baseline']);
 
@@ -51,18 +56,26 @@ final class ApiSnapshotChecker
             $this->writeBaseline($snapshot, $options['writeBaseline']);
         }
 
-        $this->writeResult($result, $options);
+        $failed = $this->shouldFail($result, $options);
+        $exitCode = $options['writeBaseline'] !== '' ? 0 : ($failed ? 1 : 0);
+        $this->writeResult($result, $options, $failed);
+        $this->writeSummaryJson($result, $options, $exitCode);
 
-        return $options['writeBaseline'] !== '' || !$result['changed'] ? 0 : 1;
+        return $exitCode;
     }
+
     /**
-     * @return array{help:bool,json:bool,config:string,preset:string,includeProtected:bool,baseline:string,writeBaseline:string,paths:list<string>,excludes:list<string>}
+     * @return array<string, mixed>
      */
     private function defaultOptions(): array
     {
         return [
             'help' => false,
-            'json' => false,
+            'format' => 'text',
+            'failOn' => 'warning',
+            'summaryJson' => '',
+            'changedOnly' => false,
+            'changedBase' => '',
             'config' => Paths::config('phpprobe.json'),
             'preset' => '',
             'includeProtected' => true,
@@ -79,15 +92,20 @@ final class ApiSnapshotChecker
             'Usage: phpprobe api [options] [paths...]',
             '',
             'Options:',
-            '  --config=FILE                  read PHPProbe checker settings',
-            '  --preset=NAME                  apply preset: phpstorm, standard, or strict',
-            '  --exclude=PATH                 skip a path (repeatable)',
-            '  --public-only                  ignore protected members',
-            '  --include-protected            include protected members (default)',
-            '  --baseline=FILE                compare against a public API snapshot',
-            '  --write-baseline[=FILE]        write the current public API snapshot and exit 0',
-            '  --json                         output machine-readable JSON',
-            '  --help                         show this help',
+            '  --config=FILE                    read PHPProbe checker settings',
+            '  --preset=NAME                    apply preset: phpstorm, standard, or strict',
+            '  --exclude=PATH                   skip a path (repeatable)',
+            '  --public-only                    ignore protected members',
+            '  --include-protected              include protected members (default)',
+            '  --baseline=FILE                  compare against a public API snapshot',
+            '  --write-baseline[=FILE]          write the current public API snapshot and exit 0',
+            '  --format=text|json|markdown|sarif output format (default: text)',
+            '  --json                           alias for --format=json',
+            '  --fail-on=error|warning|info     failure threshold (default: warning)',
+            '  --summary-json=FILE              write machine-readable run summary',
+            '  --changed-only                   scan only changed PHP files from Git diff',
+            '  --changed-base=REF               Git base ref used with --changed-only',
+            '  --help                           show this help',
         ]) . PHP_EOL);
 
         return 0;
@@ -160,7 +178,7 @@ final class ApiSnapshotChecker
 
     /**
      * @param list<string> $args
-     * @return array{help:bool,json:bool,config:string,preset:string,includeProtected:bool,baseline:string,writeBaseline:string,paths:list<string>,excludes:list<string>}
+     * @return array<string, mixed>
      */
     private function parseArgs(array $args): array
     {
@@ -214,7 +232,7 @@ final class ApiSnapshotChecker
 
     /**
      * @param list<string> $args
-     * @param array{help:bool,json:bool,config:string,preset:string,includeProtected:bool,baseline:string,writeBaseline:string,paths:list<string>,excludes:list<string>} $options
+     * @param array<string, mixed> $options
      */
     private function parseCliOption(array $args, int &$index, array &$options, string $arg): bool
     {
@@ -228,9 +246,19 @@ final class ApiSnapshotChecker
             return true;
         }
 
-        if ($arg === '--json') {
-            $options['json'] = true;
+        if ($this->cli->parseOutputFormat($options, $arg)) {
+            return true;
+        }
 
+        if ($this->cli->parseFailOn($options, $arg)) {
+            return true;
+        }
+
+        if ($this->cli->parseSummaryJson($options, $arg)) {
+            return true;
+        }
+
+        if ($this->cli->parseChangedOptions($options, $arg)) {
             return true;
         }
 
@@ -291,6 +319,19 @@ final class ApiSnapshotChecker
         ];
     }
 
+    private function shouldFail(array $result, array $options): bool
+    {
+        if (($options['baseline'] ?? '') === '' || ($result['changed'] ?? false) !== true) {
+            return false;
+        }
+
+        return match ($options['failOn']) {
+            'error' => false,
+            'warning', 'info' => true,
+            default => true,
+        };
+    }
+
     private function writeBaseline(array $snapshot, string $path): void
     {
         try {
@@ -309,16 +350,32 @@ final class ApiSnapshotChecker
 
     /**
      * @param array{snapshot:array<string, mixed>,baseline:array<string, mixed>,changed:bool,changes:array{added:list<string>,removed:list<string>,changed:list<string>}} $result
-     * @param array{json:bool,baseline:string,writeBaseline:string} $options
+     * @param array<string, mixed> $options
      */
-    private function writeResult(array $result, array $options): void
+    private function writeResult(array $result, array $options, bool $failed): void
     {
-        if ($options['json']) {
-            fwrite(STDOUT, json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL);
+        match ($options['format']) {
+            'json' => $this->writeJson($result),
+            'markdown' => $this->writeMarkdown($result, $options, $failed),
+            'sarif' => $this->writeSarif($result),
+            default => $this->writeText($result, $options, $failed),
+        };
+    }
 
-            return;
-        }
+    /**
+     * @param array{snapshot:array<string, mixed>,baseline:array<string, mixed>,changed:bool,changes:array{added:list<string>,removed:list<string>,changed:list<string>}} $result
+     */
+    private function writeJson(array $result): void
+    {
+        fwrite(STDOUT, json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL);
+    }
 
+    /**
+     * @param array{snapshot:array<string, mixed>,baseline:array<string, mixed>,changed:bool,changes:array{added:list<string>,removed:list<string>,changed:list<string>}} $result
+     * @param array{baseline:string,writeBaseline:string,failOn:string} $options
+     */
+    private function writeText(array $result, array $options, bool $failed): void
+    {
         if ($options['writeBaseline'] !== '') {
             fwrite(STDOUT, Ansi::color(sprintf('Public API baseline written: %s', $options['writeBaseline']), 'cyan', STDOUT) . PHP_EOL);
         }
@@ -327,12 +384,14 @@ final class ApiSnapshotChecker
 
         if ($options['baseline'] === '') {
             fwrite(STDOUT, Ansi::color(sprintf('Public API snapshot OK: %d symbol(s) scanned.', $symbolCount), 'green', STDOUT) . PHP_EOL);
+            fwrite(STDOUT, $this->summaryFooter($result, $options, $failed) . PHP_EOL);
 
             return;
         }
 
         if (!$result['changed']) {
             fwrite(STDOUT, Ansi::color(sprintf('Public API unchanged: %d symbol(s) scanned.', $symbolCount), 'green', STDOUT) . PHP_EOL);
+            fwrite(STDOUT, $this->summaryFooter($result, $options, $failed) . PHP_EOL);
 
             return;
         }
@@ -354,5 +413,116 @@ final class ApiSnapshotChecker
                 fwrite(STDERR, sprintf('    - %s', $symbol) . PHP_EOL);
             }
         }
+
+        fwrite(STDERR, $this->summaryFooter($result, $options, $failed) . PHP_EOL);
+    }
+
+    /**
+     * @param array{snapshot:array<string, mixed>,baseline:array<string, mixed>,changed:bool,changes:array{added:list<string>,removed:list<string>,changed:list<string>}} $result
+     * @param array{baseline:string,failOn:string} $options
+     */
+    private function writeMarkdown(array $result, array $options, bool $failed): void
+    {
+        $symbolCount = count($result['snapshot']['symbols'] ?? []);
+        $lines = [
+            '# PHPProbe API Snapshot Report',
+            '',
+            sprintf('- Symbols scanned: `%d`', $symbolCount),
+            sprintf('- Baseline: `%s`', $options['baseline'] !== '' ? $options['baseline'] : '(none)'),
+            sprintf('- Changed: `%s`', $result['changed'] ? 'yes' : 'no'),
+            sprintf('- Fail-on: `%s`', $options['failOn']),
+            sprintf('- Status: `%s`', $failed ? 'FAIL' : 'PASS'),
+            '',
+        ];
+
+        $lines[] = '| Change Type | Symbol |';
+        $lines[] = '| --- | --- |';
+
+        foreach (['added', 'removed', 'changed'] as $type) {
+            foreach ($result['changes'][$type] as $symbol) {
+                $lines[] = sprintf('| %s | `%s` |', ucfirst($type), $symbol);
+            }
+        }
+
+        if ($result['changes']['added'] === [] && $result['changes']['removed'] === [] && $result['changes']['changed'] === []) {
+            $lines[] = '| None | - |';
+        }
+
+        fwrite(STDOUT, implode(PHP_EOL, $lines) . PHP_EOL);
+    }
+
+    /**
+     * @param array{snapshot:array<string, mixed>,baseline:array<string, mixed>,changed:bool,changes:array{added:list<string>,removed:list<string>,changed:list<string>}} $result
+     */
+    private function writeSarif(array $result): void
+    {
+        $results = [];
+
+        foreach (['added', 'removed', 'changed'] as $type) {
+            foreach ($result['changes'][$type] as $symbol) {
+                $results[] = [
+                    'ruleId' => 'api_snapshot_' . $type,
+                    'level' => 'warning',
+                    'message' => ['text' => sprintf('Public API %s symbol: %s', $type, $symbol)],
+                ];
+            }
+        }
+
+        $payload = [
+            'version' => '2.1.0',
+            '$schema' => 'https://json.schemastore.org/sarif-2.1.0.json',
+            'runs' => [[
+                'tool' => [
+                    'driver' => [
+                        'name' => 'PHPProbe',
+                        'informationUri' => 'https://github.com/infocyph/phpprobe',
+                    ],
+                ],
+                'results' => $results,
+            ]],
+        ];
+
+        fwrite(STDOUT, json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL);
+    }
+
+    /**
+     * @param array{snapshot:array<string, mixed>,baseline:array<string, mixed>,changed:bool,changes:array{added:list<string>,removed:list<string>,changed:list<string>}} $result
+     * @param array{baseline:string,failOn:string} $options
+     */
+    private function summaryFooter(array $result, array $options, bool $failed): string
+    {
+        return sprintf(
+            'Summary: symbols=%d changes=%d fail-on=%s baseline=%s status=%s',
+            count($result['snapshot']['symbols'] ?? []),
+            count($result['changes']['added']) + count($result['changes']['removed']) + count($result['changes']['changed']),
+            $options['failOn'],
+            $options['baseline'] !== '' ? 'on' : 'off',
+            $failed ? 'FAIL' : 'PASS',
+        );
+    }
+
+    /**
+     * @param array{snapshot:array<string, mixed>,baseline:array<string, mixed>,changed:bool,changes:array{added:list<string>,removed:list<string>,changed:list<string>}} $result
+     * @param array{summaryJson:string,baseline:string,failOn:string} $options
+     */
+    private function writeSummaryJson(array $result, array $options, int $exitCode): void
+    {
+        if ($options['summaryJson'] === '') {
+            return;
+        }
+
+        SummaryJson::write($options['summaryJson'], [
+            'checker' => 'api',
+            'exit_code' => $exitCode,
+            'fail_on' => $options['failOn'],
+            'has_baseline' => $options['baseline'] !== '',
+            'symbols' => count($result['snapshot']['symbols'] ?? []),
+            'changed' => $result['changed'],
+            'changes' => [
+                'added' => count($result['changes']['added']),
+                'removed' => count($result['changes']['removed']),
+                'changed' => count($result['changes']['changed']),
+            ],
+        ]);
     }
 }

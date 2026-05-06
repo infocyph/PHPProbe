@@ -7,6 +7,32 @@ namespace Infocyph\PHPProbe\Config;
 final readonly class CliOptions
 {
     /**
+     * @param list<string> $allowed
+     */
+    public function isAllowedFormat(string $format, array $allowed = ['text', 'json', 'markdown', 'sarif']): bool
+    {
+        return in_array(strtolower(trim($format)), $allowed, true);
+    }
+
+    /**
+     * @param list<string> $allowed
+     */
+    public function normalizeFormat(string $format, array $allowed = ['text', 'json', 'markdown', 'sarif']): string
+    {
+        $normalized = strtolower(trim($format));
+
+        if (!$this->isAllowedFormat($normalized, $allowed)) {
+            throw new \InvalidArgumentException(sprintf(
+                'Invalid --format value "%s". Expected one of: %s.',
+                $format,
+                implode(', ', $allowed),
+            ));
+        }
+
+        return $normalized;
+    }
+
+    /**
      * @param list<string> $args
      */
     public function configPath(array $args, string $default): string
@@ -29,6 +55,28 @@ final readonly class CliOptions
     public function optionValue(string $arg, string $name): ?string
     {
         return str_starts_with($arg, $name . '=') ? substr($arg, strlen($name) + 1) : null;
+    }
+
+    /**
+     * @param array{changedOnly:bool,changedBase:string} $options
+     */
+    public function parseChangedOptions(array &$options, string $arg): bool
+    {
+        if ($arg === '--changed-only') {
+            $options['changedOnly'] = true;
+
+            return true;
+        }
+
+        $changedBase = $this->optionValue($arg, '--changed-base');
+
+        if ($changedBase === null) {
+            return false;
+        }
+
+        $options['changedBase'] = trim($changedBase);
+
+        return true;
     }
 
     /**
@@ -62,6 +110,70 @@ final readonly class CliOptions
         }
 
         return false;
+    }
+
+    /**
+     * @param array{summaryJson:string} $options
+     */
+    public function parseSummaryJson(array &$options, string $arg): bool
+    {
+        $summaryJson = $this->optionValue($arg, '--summary-json');
+
+        if ($summaryJson === null) {
+            return false;
+        }
+
+        $options['summaryJson'] = trim($summaryJson);
+
+        return true;
+    }
+
+    /**
+     * @param array{format:string} $options
+     * @param list<string> $allowed
+     */
+    public function parseOutputFormat(array &$options, string $arg, array $allowed = ['text', 'json', 'markdown', 'sarif']): bool
+    {
+        if ($arg === '--json') {
+            $options['format'] = 'json';
+
+            return true;
+        }
+
+        $format = $this->optionValue($arg, '--format');
+
+        if ($format === null) {
+            return false;
+        }
+
+        $options['format'] = $this->normalizeFormat($format, $allowed);
+
+        return true;
+    }
+
+    /**
+     * @param array{failOn:string} $options
+     */
+    public function parseFailOn(array &$options, string $arg): bool
+    {
+        $failOn = $this->optionValue($arg, '--fail-on');
+
+        if ($failOn === null) {
+            return false;
+        }
+
+        $normalized = strtolower(trim($failOn));
+
+        if (!in_array($normalized, ['error', 'warning', 'info'], true)) {
+            throw new \InvalidArgumentException(sprintf(
+                'Invalid --fail-on value "%s". Expected: error, warning, info.',
+                $failOn,
+            ));
+        }
+
+        $options['failOn'] = $normalized;
+
+        return true;
     }
 
     /**

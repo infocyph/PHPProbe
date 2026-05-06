@@ -7,10 +7,11 @@ namespace Infocyph\PHPProbe;
 use Infocyph\PHPProbe\Comment\CommentFinding;
 use Infocyph\PHPProbe\Comment\CommentScanner;
 use Infocyph\PHPProbe\Config\CliOptions;
-use Infocyph\PHPProbe\Console\Ansi;
 use Infocyph\PHPProbe\Config\Paths;
 use Infocyph\PHPProbe\Config\PhpProbeConfig;
+use Infocyph\PHPProbe\Console\Ansi;
 use Infocyph\PHPProbe\Filesystem\PhpFileFinder;
+use Infocyph\PHPProbe\Util\SummaryJson;
 
 final class CommentChecker
 {
@@ -33,10 +34,19 @@ final class CommentChecker
                 return $this->help();
             }
 
-            $result = (new CommentScanner())->scan((new PhpFileFinder())->find($options['paths'], $options['excludes']), $options);
-            $this->writeResult($result, $options);
+            $files = (new PhpFileFinder())->find(
+                $options['paths'],
+                $options['excludes'],
+                ['changedOnly' => $options['changedOnly'], 'changedBase' => $options['changedBase']],
+            );
+            $result = (new CommentScanner())->scan($files, $options);
+            $failed = $this->shouldFail($result['findings'], $options['failOn']);
+            $exitCode = $failed ? 1 : 0;
 
-            return $this->shouldFail($result['findings'], $options['failOn']) ? 1 : 0;
+            $this->writeResult($result, $options, $failed);
+            $this->writeSummaryJson($result, $options, $exitCode);
+
+            return $exitCode;
         } catch (\InvalidArgumentException|\RuntimeException $exception) {
             fwrite(STDERR, $exception->getMessage() . PHP_EOL);
 
@@ -45,44 +55,24 @@ final class CommentChecker
     }
 
     /**
-     * @return array{
-     *     help:bool,
-     *     json:bool,
-     *     strict:bool,
-     *     failOn:string,
-     *     config:string,
-     *     paths:list<string>,
-     *     excludes:list<string>,
-     *     scanMarkers:bool,
-     *     markerTags:list<string>,
-     *     markerSeverity:array<string,string>,
-     *     commentedOutEnabled:bool,
-     *     allowedReasonTags:list<string>,
-     *     optionalReasonTags:list<string>,
-     *     allowOptionalReasonTagsInStrictMode:bool,
-     *     minReasonLength:int,
-     *     maxAllowedBlockLines:int,
-     *     requireIssueForBlocksLongerThan:int,
-     *     allowedIssuePatterns:list<string>,
-     *     allowBlankLineBetweenReasonAndCode:bool,
-     *     allowReasonBeforeBlockComment:bool,
-     *     allowBlankLineBetweenReasonAndCodeInBlock:bool,
-     *     allowPhpdocExamples:bool,
-     *     phpdocExampleLabels:list<string>,
-     *     typeSeverity:array<string,string>,
-     *     strictSeverity:array<string,string>
-     * }
+     * @return array<string, mixed>
      */
     private function defaultOptions(): array
     {
         return [
             'help' => false,
-            'json' => false,
+            'format' => 'text',
             'strict' => false,
             'failOn' => 'error',
+            'summaryJson' => '',
+            'changedOnly' => false,
+            'changedBase' => '',
             'config' => Paths::config('phpprobe.json'),
             'paths' => [],
             'excludes' => [],
+            'policy' => 'standard',
+            'suppressionEnabled' => true,
+            'suppressionDirective' => '@phpprobe-ignore',
             'scanMarkers' => true,
             'markerTags' => [
                 'TODO',
@@ -137,6 +127,7 @@ final class CommentChecker
                 'commented_out_code_block_too_large' => 'error',
                 'commented_out_code_requires_issue_reference' => 'warning',
                 'commented_out_code_in_phpdoc_without_example_label' => 'warning',
+                'invalid_suppression_rule' => 'warning',
             ],
             'strictSeverity' => [
                 'commented_out_code_without_reason' => 'error',
@@ -144,6 +135,7 @@ final class CommentChecker
                 'commented_out_code_without_valid_reason' => 'error',
                 'commented_out_code_with_weak_reason' => 'error',
                 'commented_out_code_block_too_large' => 'error',
+                'invalid_suppression_rule' => 'error',
             ],
         ];
     }
@@ -154,14 +146,19 @@ final class CommentChecker
             'Usage: phpprobe comments [options] [paths...]',
             '',
             'Options:',
-            '  --config=FILE                  read PHPProbe checker settings',
-            '  --preset=NAME                  apply preset: phpstorm, standard, or strict',
-            '  --exclude=PATH                 skip a path (repeatable)',
-            '  --json                         output machine-readable JSON',
-            '  --strict                       enforce strict policy severities',
-            '  --fail-on=error|warning|info   minimum severity level to fail',
-            '  --tags=TODO,FIXME,...          override marker tags',
-            '  --help                         show this help',
+            '  --config=FILE                    read PHPProbe checker settings',
+            '  --preset=NAME                    apply preset: phpstorm, standard, or strict',
+            '  --exclude=PATH                   skip a path (repeatable)',
+            '  --format=text|json|markdown|sarif output format (default: text)',
+            '  --json                           alias for --format=json',
+            '  --summary-json=FILE              write machine-readable run summary',
+            '  --strict                         enforce strict policy severities',
+            '  --policy=relaxed|standard|strict comment policy profile',
+            '  --fail-on=error|warning|info     minimum severity level to fail',
+            '  --changed-only                   scan only changed PHP files from Git diff',
+            '  --changed-base=REF               Git base ref used with --changed-only',
+            '  --tags=TODO,FIXME,...            override marker tags',
+            '  --help                           show this help',
         ]) . PHP_EOL);
 
         return 0;
@@ -169,33 +166,7 @@ final class CommentChecker
 
     /**
      * @param list<string> $args
-     * @return array{
-     *     help:bool,
-     *     json:bool,
-     *     strict:bool,
-     *     failOn:string,
-     *     config:string,
-     *     paths:list<string>,
-     *     excludes:list<string>,
-     *     scanMarkers:bool,
-     *     markerTags:list<string>,
-     *     markerSeverity:array<string,string>,
-     *     commentedOutEnabled:bool,
-     *     allowedReasonTags:list<string>,
-     *     optionalReasonTags:list<string>,
-     *     allowOptionalReasonTagsInStrictMode:bool,
-     *     minReasonLength:int,
-     *     maxAllowedBlockLines:int,
-     *     requireIssueForBlocksLongerThan:int,
-     *     allowedIssuePatterns:list<string>,
-     *     allowBlankLineBetweenReasonAndCode:bool,
-     *     allowReasonBeforeBlockComment:bool,
-     *     allowBlankLineBetweenReasonAndCodeInBlock:bool,
-     *     allowPhpdocExamples:bool,
-     *     phpdocExampleLabels:list<string>,
-     *     typeSeverity:array<string,string>,
-     *     strictSeverity:array<string,string>
-     * }
+     * @return array<string, mixed>
      */
     private function parseArgs(array $args): array
     {
@@ -242,19 +213,14 @@ final class CommentChecker
             $options['paths'] = $configuredPaths;
         }
 
+        $options = $this->applyPolicyPreset($options);
+
         return $options;
     }
 
     /**
      * @param list<string> $args
-     * @param array{
-     *     help:bool,
-     *     json:bool,
-     *     strict:bool,
-     *     failOn:string,
-     *     excludes:list<string>,
-     *     markerTags:list<string>
-     * } $options
+     * @param array<string, mixed> $options
      */
     private function parseCliOption(array $args, int &$index, array &$options, string $arg): bool
     {
@@ -268,28 +234,32 @@ final class CommentChecker
             return true;
         }
 
-        if ($arg === '--json') {
-            $options['json'] = true;
-
-            return true;
-        }
-
         if ($arg === '--strict') {
             $options['strict'] = true;
 
             return true;
         }
 
-        $failOn = $this->cli->optionValue($arg, '--fail-on');
+        if ($this->cli->parseOutputFormat($options, $arg)) {
+            return true;
+        }
 
-        if ($failOn !== null) {
-            $normalized = strtolower(trim($failOn));
+        if ($this->cli->parseFailOn($options, $arg)) {
+            return true;
+        }
 
-            if (!in_array($normalized, ['error', 'warning', 'info'], true)) {
-                throw new \InvalidArgumentException(sprintf('Invalid --fail-on value "%s". Expected: error, warning, info.', $failOn));
-            }
+        if ($this->cli->parseSummaryJson($options, $arg)) {
+            return true;
+        }
 
-            $options['failOn'] = $normalized;
+        if ($this->cli->parseChangedOptions($options, $arg)) {
+            return true;
+        }
+
+        $policy = $this->cli->optionValue($arg, '--policy');
+
+        if ($policy !== null) {
+            $options['policy'] = strtolower(trim($policy));
 
             return true;
         }
@@ -309,6 +279,35 @@ final class CommentChecker
         }
 
         return false;
+    }
+
+    /**
+     * @param array<string, mixed> $options
+     * @return array<string, mixed>
+     */
+    private function applyPolicyPreset(array $options): array
+    {
+        return match ($options['policy']) {
+            'relaxed' => [
+                ...$options,
+                'minReasonLength' => max(8, (int) $options['minReasonLength']),
+                'maxAllowedBlockLines' => max(15, (int) $options['maxAllowedBlockLines']),
+                'requireIssueForBlocksLongerThan' => max(5, (int) $options['requireIssueForBlocksLongerThan']),
+            ],
+            'standard' => $options,
+            'strict' => [
+                ...$options,
+                'strict' => true,
+                'allowOptionalReasonTagsInStrictMode' => false,
+                'minReasonLength' => max(16, (int) $options['minReasonLength']),
+                'maxAllowedBlockLines' => min(6, (int) $options['maxAllowedBlockLines']),
+                'requireIssueForBlocksLongerThan' => min(2, (int) $options['requireIssueForBlocksLongerThan']),
+            ],
+            default => throw new \InvalidArgumentException(sprintf(
+                'Invalid --policy value "%s". Expected: relaxed, standard, strict.',
+                (string) $options['policy'],
+            )),
+        };
     }
 
     /**
@@ -345,25 +344,64 @@ final class CommentChecker
     }
 
     /**
-     * @param array{files:int,findings:list<CommentFinding>} $result
-     * @param array{json:bool} $options
+     * @param array{files:int,findings:list<CommentFinding>,suppressed_count:int} $result
+     * @param array{summaryJson:string,format:string,failOn:string} $options
      */
-    private function writeResult(array $result, array $options): void
+    private function writeSummaryJson(array $result, array $options, int $exitCode): void
     {
-        if ($options['json']) {
-            fwrite(STDOUT, json_encode([
-                'files' => $result['files'],
-                'findings' => array_map(
-                    static fn(CommentFinding $finding): array => $finding->toArray(),
-                    $result['findings'],
-                ),
-            ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL);
-
+        if ($options['summaryJson'] === '') {
             return;
         }
 
+        SummaryJson::write($options['summaryJson'], [
+            'checker' => 'comments',
+            'exit_code' => $exitCode,
+            'fail_on' => $options['failOn'],
+            'files' => $result['files'],
+            'findings' => count($result['findings']),
+            'format' => $options['format'],
+            'suppressed_count' => $result['suppressed_count'],
+        ]);
+    }
+
+    /**
+     * @param array{files:int,findings:list<CommentFinding>,suppressed_count:int} $result
+     * @param array{format:string,failOn:string} $options
+     */
+    private function writeResult(array $result, array $options, bool $failed): void
+    {
+        match ($options['format']) {
+            'json' => $this->writeJson($result),
+            'markdown' => $this->writeMarkdown($result, $options, $failed),
+            'sarif' => $this->writeSarif($result),
+            default => $this->writeText($result, $options, $failed),
+        };
+    }
+
+    /**
+     * @param array{files:int,findings:list<CommentFinding>,suppressed_count:int} $result
+     */
+    private function writeJson(array $result): void
+    {
+        fwrite(STDOUT, json_encode([
+            'files' => $result['files'],
+            'suppressed_count' => $result['suppressed_count'],
+            'findings' => array_map(
+                static fn(CommentFinding $finding): array => $finding->toArray(),
+                $result['findings'],
+            ),
+        ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL);
+    }
+
+    /**
+     * @param array{files:int,findings:list<CommentFinding>,suppressed_count:int} $result
+     * @param array{failOn:string} $options
+     */
+    private function writeText(array $result, array $options, bool $failed): void
+    {
         if ($result['findings'] === []) {
             fwrite(STDOUT, Ansi::color(sprintf('No comment policy findings (%d PHP files scanned).', $result['files']), 'green', STDOUT) . PHP_EOL);
+            fwrite(STDOUT, $this->summaryFooter($result, $options, $failed) . PHP_EOL);
 
             return;
         }
@@ -394,20 +432,119 @@ final class CommentChecker
                 $lineLabel = $finding->line === $finding->endLine
                     ? (string) $finding->line
                     : sprintf('%d-%d', $finding->line, $finding->endLine);
-                $title = $this->findingTitle($finding->type);
 
-                fwrite(
-                    STDERR,
-                    sprintf(
-                        '  %s  L%s  %s',
-                        Ansi::severity($finding->severity, STDERR),
-                        $lineLabel,
-                        $title,
-                    ) . PHP_EOL,
-                );
+                fwrite(STDERR, sprintf(
+                    '  %s  L%s  %s',
+                    Ansi::severity($finding->severity, STDERR),
+                    $lineLabel,
+                    $this->findingTitle($finding->type),
+                ) . PHP_EOL);
                 fwrite(STDERR, '      ' . $finding->message . PHP_EOL);
             }
         }
+
+        fwrite(STDERR, $this->summaryFooter($result, $options, $failed) . PHP_EOL);
+    }
+
+    /**
+     * @param array{files:int,findings:list<CommentFinding>,suppressed_count:int} $result
+     * @param array{failOn:string} $options
+     */
+    private function writeMarkdown(array $result, array $options, bool $failed): void
+    {
+        $lines = [
+            '# PHPProbe Comment Report',
+            '',
+            sprintf('- Files scanned: `%d`', $result['files']),
+            sprintf('- Findings: `%d`', count($result['findings'])),
+            sprintf('- Suppressed: `%d`', $result['suppressed_count']),
+            sprintf('- Fail-on: `%s`', $options['failOn']),
+            sprintf('- Status: `%s`', $failed ? 'FAIL' : 'PASS'),
+            '',
+        ];
+
+        if ($result['findings'] === []) {
+            $lines[] = 'No comment policy findings.';
+        } else {
+            $lines[] = '| Severity | Type | Location | Message |';
+            $lines[] = '| --- | --- | --- | --- |';
+
+            foreach ($result['findings'] as $finding) {
+                $lines[] = sprintf(
+                    '| %s | `%s` | `%s:%d` | %s |',
+                    strtoupper($finding->severity),
+                    $finding->type,
+                    $finding->file,
+                    $finding->line,
+                    str_replace('|', '\|', $finding->message),
+                );
+            }
+        }
+
+        fwrite(STDOUT, implode(PHP_EOL, $lines) . PHP_EOL);
+    }
+
+    /**
+     * @param array{files:int,findings:list<CommentFinding>,suppressed_count:int} $result
+     */
+    private function writeSarif(array $result): void
+    {
+        $results = [];
+
+        foreach ($result['findings'] as $finding) {
+            $results[] = [
+                'ruleId' => $finding->type,
+                'level' => $this->sarifLevel($finding->severity),
+                'message' => ['text' => $finding->message],
+                'locations' => [[
+                    'physicalLocation' => [
+                        'artifactLocation' => ['uri' => $finding->file],
+                        'region' => ['startLine' => $finding->line],
+                    ],
+                ]],
+            ];
+        }
+
+        $payload = [
+            'version' => '2.1.0',
+            '$schema' => 'https://json.schemastore.org/sarif-2.1.0.json',
+            'runs' => [[
+                'tool' => [
+                    'driver' => [
+                        'name' => 'PHPProbe',
+                        'informationUri' => 'https://github.com/infocyph/phpprobe',
+                    ],
+                ],
+                'results' => $results,
+            ]],
+        ];
+
+        fwrite(STDOUT, json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL);
+    }
+
+    private function sarifLevel(string $severity): string
+    {
+        return match (strtolower($severity)) {
+            'error', 'critical', 'high' => 'error',
+            'warning', 'medium' => 'warning',
+            default => 'note',
+        };
+    }
+
+    /**
+     * @param array{files:int,findings:list<CommentFinding>,suppressed_count:int} $result
+     * @param array{failOn:string} $options
+     */
+    private function summaryFooter(array $result, array $options, bool $failed): string
+    {
+        return sprintf(
+            'Summary: files=%d findings=%d suppressed=%d fail-on=%s status=%s',
+            $result['files'],
+            count($result['findings']),
+            $result['suppressed_count'],
+            $options['failOn'],
+            $failed ? 'FAIL' : 'PASS',
+        );
     }
 
     private function findingTitle(string $type): string
@@ -422,6 +559,7 @@ final class CommentChecker
             'commented_out_code_block_too_large' => 'Commented-out Code Block Too Large',
             'commented_out_code_requires_issue_reference' => 'Commented-out Code Requires Issue Reference',
             'commented_out_code_in_phpdoc_without_example_label' => 'PHPDoc Code Without Example Label',
+            'invalid_suppression_rule' => 'Invalid Suppression Rule',
             default => str_replace('_', ' ', ucfirst($type)),
         };
     }

@@ -214,6 +214,31 @@ it('rejects unknown comment checker options', function (): void {
         ->and($run['stderr'])->toContain('Unknown option for comments command: --does-not-exist');
 });
 
+it('supports markdown output format', function (): void {
+    $root = makeCommentCheckerFixture();
+    $src = $root.DIRECTORY_SEPARATOR.'src';
+
+    mkdir($src, 0755, true);
+    file_put_contents($src.DIRECTORY_SEPARATOR.'Marker.php', <<<'PHP'
+<?php
+
+// SECURITY(auth): inspect token logging before release
+final class Marker
+{
+}
+PHP);
+
+    try {
+        $run = runCommentCheckerCommand($root, ['--format=markdown', '--fail-on=info', 'src']);
+    } finally {
+        removeCommentCheckerFixture($root);
+    }
+
+    expect($run['exitCode'])->toBe(1)
+        ->and($run['stdout'])->toContain('# PHPProbe Comment Report')
+        ->and($run['stdout'])->toContain('`comment_marker`');
+});
+
 function makeCommentCheckerFixture(): string
 {
     $root = sys_get_temp_dir().DIRECTORY_SEPARATOR.'phpprobe-comments-'.uniqid('', true);

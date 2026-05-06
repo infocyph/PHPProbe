@@ -49,6 +49,28 @@ it('fails when the public api drifts from the baseline', function (): void {
         ->and($result['changes']['changed'])->toContain('class Demo\Contract');
 });
 
+it('supports fail-on=error to report drift without failing exit code', function (): void {
+    $root = makeApiSnapshotCheckerFixture();
+    $src = $root.DIRECTORY_SEPARATOR.'src';
+    $baseline = $root.DIRECTORY_SEPARATOR.'api-baseline.json';
+
+    mkdir($src, 0755, true);
+    file_put_contents($src.DIRECTORY_SEPARATOR.'Contract.php', apiContractFixture('string'));
+
+    try {
+        runApiSnapshotCheckerCommand($root, ['--write-baseline='.$baseline, 'src']);
+        file_put_contents($src.DIRECTORY_SEPARATOR.'Contract.php', apiContractFixture('int'));
+        $run = runApiSnapshotCheckerCommand($root, ['--json', '--fail-on=error', '--baseline='.$baseline, 'src']);
+    } finally {
+        removeApiSnapshotCheckerFixture($root);
+    }
+
+    $result = json_decode($run['stdout'], true);
+
+    expect($run['exitCode'])->toBe(0)
+        ->and($result['changed'])->toBeTrue();
+});
+
 it('can ignore protected members for public-only snapshots', function (): void {
     $root = makeApiSnapshotCheckerFixture();
     $src = $root.DIRECTORY_SEPARATOR.'src';
@@ -161,6 +183,26 @@ it('fails when api baseline JSON is invalid', function (): void {
 
     expect($run['exitCode'])->toBe(2)
         ->and($run['stderr'])->toContain('Invalid API baseline JSON');
+});
+
+it('writes summary json output when requested', function (): void {
+    $root = makeApiSnapshotCheckerFixture();
+    $src = $root.DIRECTORY_SEPARATOR.'src';
+    $summary = $root.DIRECTORY_SEPARATOR.'summary.json';
+
+    mkdir($src, 0755, true);
+    file_put_contents($src.DIRECTORY_SEPARATOR.'Contract.php', apiContractFixture('string'));
+
+    try {
+        $run = runApiSnapshotCheckerCommand($root, ['--summary-json='.$summary, 'src']);
+        $payload = json_decode(file_get_contents($summary) ?: 'null', true);
+    } finally {
+        removeApiSnapshotCheckerFixture($root);
+    }
+
+    expect($run['exitCode'])->toBe(0)
+        ->and($payload['checker'])->toBe('api')
+        ->and($payload['exit_code'])->toBe(0);
 });
 
 function apiContractFixture(string $returnType, string $protectedReturnType = 'int'): string

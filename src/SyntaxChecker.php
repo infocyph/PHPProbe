@@ -5,12 +5,13 @@ declare(strict_types=1);
 namespace Infocyph\PHPProbe;
 
 use Infocyph\PHPProbe\Config\CliOptions;
-use Infocyph\PHPProbe\Console\Ansi;
 use Infocyph\PHPProbe\Config\Paths;
 use Infocyph\PHPProbe\Config\PhpProbeConfig;
+use Infocyph\PHPProbe\Console\Ansi;
 use Infocyph\PHPProbe\Filesystem\PhpFileFinder;
 use Infocyph\PHPProbe\Process\ProcessResult;
 use Infocyph\PHPProbe\Process\ProcRunner;
+use Infocyph\PHPProbe\Util\SummaryJson;
 
 final class SyntaxChecker
 {
@@ -22,12 +23,12 @@ final class SyntaxChecker
     }
 
     /**
-     * @param list<string> $paths
+     * @param list<string> $args
      */
-    public function run(array $paths): int
+    public function run(array $args): int
     {
         try {
-            $options = $this->parseArgs($paths);
+            $options = $this->parseArgs($args);
         } catch (\InvalidArgumentException|\RuntimeException $exception) {
             fwrite(STDERR, $exception->getMessage() . PHP_EOL);
 
@@ -38,15 +39,21 @@ final class SyntaxChecker
             return $this->help();
         }
 
-        $files = (new PhpFileFinder())->find($options['paths'], $options['excludes']);
+        $files = (new PhpFileFinder())->find(
+            $options['paths'],
+            $options['excludes'],
+            ['changedOnly' => $options['changedOnly'], 'changedBase' => $options['changedBase']],
+        );
+        $result = $files === []
+            ? ['files_checked' => 0, 'failures' => []]
+            : $this->lintFiles($files, $options['parallel']);
+        $failed = $result['failures'] !== [];
+        $exitCode = $failed ? 1 : 0;
 
-        if ($files === []) {
-            fwrite(STDOUT, 'No PHP files found.' . PHP_EOL);
+        $this->writeResult($result, $options, $failed);
+        $this->writeSummaryJson($result, $options, $exitCode);
 
-            return 0;
-        }
-
-        return $this->lintFiles($files);
+        return $exitCode;
     }
 
     private function help(): int
@@ -55,10 +62,16 @@ final class SyntaxChecker
             'Usage: phpprobe syntax [options] [paths...]',
             '',
             'Options:',
-            '  --config=FILE                  read PHPProbe checker settings',
-            '  --preset=NAME                  apply preset: phpstorm, standard, or strict',
-            '  --exclude=PATH                 skip a path (repeatable)',
-            '  --help                         show this help',
+            '  --config=FILE                    read PHPProbe checker settings',
+            '  --preset=NAME                    apply preset: phpstorm, standard, or strict',
+            '  --exclude=PATH                   skip a path (repeatable)',
+            '  --format=text|json|markdown|sarif output format (default: text)',
+            '  --json                           alias for --format=json',
+            '  --summary-json=FILE              write machine-readable run summary',
+            '  --changed-only                   scan only changed PHP files from Git diff',
+            '  --changed-base=REF               Git base ref used with --changed-only',
+            '  --parallel=N                     parallel lint worker count (default: 1)',
+            '  --help                           show this help',
         ]) . PHP_EOL);
 
         return 0;
@@ -83,8 +96,22 @@ final class SyntaxChecker
 
     /**
      * @param list<string> $files
+     * @return array{files_checked:int,failures:list<array{file:string,message:string}>}
      */
-    private function lintFiles(array $files): int
+    private function lintFiles(array $files, int $parallel): array
+    {
+        if ($parallel <= 1 || count($files) <= 1) {
+            return $this->lintFilesSequential($files);
+        }
+
+        return $this->lintFilesParallel($files, $parallel);
+    }
+
+    /**
+     * @param list<string> $files
+     * @return array{files_checked:int,failures:list<array{file:string,message:string}>}
+     */
+    private function lintFilesSequential(array $files): array
     {
         $failures = [];
 
@@ -92,39 +119,269 @@ final class SyntaxChecker
             $failure = $this->lintFile($file);
 
             if (is_string($failure)) {
-                $failures[] = [$file, $failure];
+                $failures[] = ['file' => $file, 'message' => $failure];
             }
         }
 
-        if ($failures === []) {
-            fwrite(STDOUT, Ansi::color(sprintf('Syntax OK: %d PHP files checked.', count($files)), 'green', STDOUT) . PHP_EOL);
+        return ['files_checked' => count($files), 'failures' => $failures];
+    }
 
-            return 0;
+    /**
+     * @param list<string> $files
+     * @return array{files_checked:int,failures:list<array{file:string,message:string}>}
+     */
+    private function lintFilesParallel(array $files, int $parallel): array
+    {
+        $queue = array_values($files);
+        $limit = max(1, min($parallel, count($queue)));
+        $running = [];
+        $failures = [];
+
+        while ($queue !== [] || $running !== []) {
+            while ($queue !== [] && count($running) < $limit) {
+                $file = array_shift($queue);
+
+                if (!is_string($file)) {
+                    continue;
+                }
+
+                $running[] = $this->startLintProcess($file);
+            }
+
+            foreach ($running as $key => $job) {
+                $job['stdout'] .= stream_get_contents($job['pipes'][1]) ?: '';
+                $job['stderr'] .= stream_get_contents($job['pipes'][2]) ?: '';
+                $status = proc_get_status($job['process']);
+
+                if (($status['running'] ?? false) === true) {
+                    $running[$key] = $job;
+
+                    continue;
+                }
+
+                fclose($job['pipes'][0]);
+                fclose($job['pipes'][1]);
+                fclose($job['pipes'][2]);
+                $exitCode = proc_close($job['process']);
+
+                if ($exitCode !== 0) {
+                    $message = trim($job['stdout'] . PHP_EOL . $job['stderr']);
+                    $failures[] = [
+                        'file' => $job['file'],
+                        'message' => $message !== '' ? $message : 'Unknown lint failure',
+                    ];
+                }
+
+                unset($running[$key]);
+            }
+
+            if ($running !== []) {
+                usleep(10000);
+            }
         }
 
-        fwrite(STDERR, Ansi::color(sprintf('Syntax errors in %d file(s):', count($failures)), 'red', STDERR) . PHP_EOL);
+        return ['files_checked' => count($files), 'failures' => array_values($failures)];
+    }
 
-        foreach ($failures as [$file, $message]) {
-            fwrite(STDERR, '  ' . Ansi::color($file, 'cyan', STDERR) . PHP_EOL);
+    /**
+     * @return array{file:string,process:resource,pipes:array{0:resource,1:resource,2:resource},stdout:string,stderr:string}
+     */
+    private function startLintProcess(string $file): array
+    {
+        $process = proc_open([PHP_BINARY, '-d', 'display_errors=1', '-l', $file], [
+            0 => ['pipe', 'r'],
+            1 => ['pipe', 'w'],
+            2 => ['pipe', 'w'],
+        ], $pipes);
 
-            foreach (preg_split('/\R/', trim($message)) ?: [] as $line) {
+        if (!is_resource($process) || !is_array($pipes)) {
+            throw new \RuntimeException(sprintf('Could not start syntax lint process for %s', $file));
+        }
+
+        stream_set_blocking($pipes[1], false);
+        stream_set_blocking($pipes[2], false);
+
+        return [
+            'file' => $file,
+            'process' => $process,
+            'pipes' => $pipes,
+            'stdout' => '',
+            'stderr' => '',
+        ];
+    }
+
+    /**
+     * @param array{files_checked:int,failures:list<array{file:string,message:string}>} $result
+     * @param array{format:string} $options
+     */
+    private function writeResult(array $result, array $options, bool $failed): void
+    {
+        match ($options['format']) {
+            'json' => $this->writeJson($result),
+            'markdown' => $this->writeMarkdown($result, $failed),
+            'sarif' => $this->writeSarif($result),
+            default => $this->writeText($result, $options, $failed),
+        };
+    }
+
+    /**
+     * @param array{files_checked:int,failures:list<array{file:string,message:string}>} $result
+     */
+    private function writeJson(array $result): void
+    {
+        fwrite(STDOUT, json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL);
+    }
+
+    /**
+     * @param array{files_checked:int,failures:list<array{file:string,message:string}>} $result
+     */
+    private function writeText(array $result, array $options, bool $failed): void
+    {
+        if ($result['files_checked'] === 0) {
+            fwrite(STDOUT, 'No PHP files found.' . PHP_EOL);
+            fwrite(STDOUT, $this->summaryFooter($result, $options, $failed) . PHP_EOL);
+
+            return;
+        }
+
+        if ($result['failures'] === []) {
+            fwrite(STDOUT, Ansi::color(sprintf('Syntax OK: %d PHP files checked.', $result['files_checked']), 'green', STDOUT) . PHP_EOL);
+            fwrite(STDOUT, $this->summaryFooter($result, $options, $failed) . PHP_EOL);
+
+            return;
+        }
+
+        fwrite(STDERR, Ansi::color(sprintf('Syntax errors in %d file(s):', count($result['failures'])), 'red', STDERR) . PHP_EOL);
+
+        foreach ($result['failures'] as $failure) {
+            fwrite(STDERR, '  ' . Ansi::color($failure['file'], 'cyan', STDERR) . PHP_EOL);
+
+            foreach (preg_split('/\R/', trim($failure['message'])) ?: [] as $line) {
                 if ($line !== '') {
                     fwrite(STDERR, '    ' . $line . PHP_EOL);
                 }
             }
         }
 
-        return 1;
+        fwrite(STDERR, $this->summaryFooter($result, $options, $failed) . PHP_EOL);
+    }
+
+    /**
+     * @param array{files_checked:int,failures:list<array{file:string,message:string}>} $result
+     */
+    private function writeMarkdown(array $result, bool $failed): void
+    {
+        $lines = [
+            '# PHPProbe Syntax Report',
+            '',
+            sprintf('- Files checked: `%d`', $result['files_checked']),
+            sprintf('- Failures: `%d`', count($result['failures'])),
+            sprintf('- Status: `%s`', $failed ? 'FAIL' : 'PASS'),
+            '',
+        ];
+
+        if ($result['failures'] === []) {
+            $lines[] = 'No syntax errors found.';
+        } else {
+            $lines[] = '| File | Message |';
+            $lines[] = '| --- | --- |';
+
+            foreach ($result['failures'] as $failure) {
+                $lines[] = sprintf(
+                    '| `%s` | %s |',
+                    $failure['file'],
+                    str_replace('|', '\|', trim(preg_replace('/\s+/', ' ', $failure['message']) ?? $failure['message'])),
+                );
+            }
+        }
+
+        fwrite(STDOUT, implode(PHP_EOL, $lines) . PHP_EOL);
+    }
+
+    /**
+     * @param array{files_checked:int,failures:list<array{file:string,message:string}>} $result
+     */
+    private function writeSarif(array $result): void
+    {
+        $results = [];
+
+        foreach ($result['failures'] as $failure) {
+            $results[] = [
+                'ruleId' => 'php_syntax_error',
+                'level' => 'error',
+                'message' => ['text' => trim($failure['message'])],
+                'locations' => [[
+                    'physicalLocation' => [
+                        'artifactLocation' => ['uri' => $failure['file']],
+                        'region' => ['startLine' => 1],
+                    ],
+                ]],
+            ];
+        }
+
+        $payload = [
+            'version' => '2.1.0',
+            '$schema' => 'https://json.schemastore.org/sarif-2.1.0.json',
+            'runs' => [[
+                'tool' => [
+                    'driver' => [
+                        'name' => 'PHPProbe',
+                        'informationUri' => 'https://github.com/infocyph/phpprobe',
+                    ],
+                ],
+                'results' => $results,
+            ]],
+        ];
+
+        fwrite(STDOUT, json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL);
+    }
+
+    /**
+     * @param array{files_checked:int,failures:list<array{file:string,message:string}>} $result
+     */
+    private function summaryFooter(array $result, array $options, bool $failed): string
+    {
+        return sprintf(
+            'Summary: files=%d failures=%d parallel=%d status=%s',
+            $result['files_checked'],
+            count($result['failures']),
+            $options['parallel'],
+            $failed ? 'FAIL' : 'PASS',
+        );
+    }
+
+    /**
+     * @param array{files_checked:int,failures:list<array{file:string,message:string}>} $result
+     * @param array{summaryJson:string,parallel:int} $options
+     */
+    private function writeSummaryJson(array $result, array $options, int $exitCode): void
+    {
+        if ($options['summaryJson'] === '') {
+            return;
+        }
+
+        SummaryJson::write($options['summaryJson'], [
+            'checker' => 'syntax',
+            'exit_code' => $exitCode,
+            'files_checked' => $result['files_checked'],
+            'failures' => count($result['failures']),
+            'parallel' => $options['parallel'],
+        ]);
     }
 
     /**
      * @param list<string> $args
-     * @return array{help:bool,config:string,paths:list<string>,excludes:list<string>}
+     * @return array{help:bool,format:string,summaryJson:string,changedOnly:bool,changedBase:string,parallel:int,config:string,paths:list<string>,excludes:list<string>}
      */
     private function parseArgs(array $args): array
     {
         $options = [
             'help' => false,
+            'format' => 'text',
+            'summaryJson' => '',
+            'changedOnly' => false,
+            'changedBase' => '',
+            'parallel' => 1,
             'config' => Paths::config('phpprobe.json'),
             'paths' => [],
             'excludes' => [],
@@ -172,12 +429,14 @@ final class SyntaxChecker
             $options['paths'] = $configuredPaths;
         }
 
+        $options['parallel'] = max(1, (int) $options['parallel']);
+
         return $options;
     }
 
     /**
      * @param list<string> $args
-     * @param array{help:bool,config:string,paths:list<string>,excludes:list<string>} $options
+     * @param array{help:bool,format:string,summaryJson:string,changedOnly:bool,changedBase:string,parallel:int,config:string,paths:list<string>,excludes:list<string>} $options
      */
     private function parseCliOption(array $args, int &$index, array &$options, string $arg): bool
     {
@@ -187,6 +446,26 @@ final class SyntaxChecker
 
         if ($arg === '--help' || $arg === '-h') {
             $options['help'] = true;
+
+            return true;
+        }
+
+        if ($this->cli->parseOutputFormat($options, $arg)) {
+            return true;
+        }
+
+        if ($this->cli->parseSummaryJson($options, $arg)) {
+            return true;
+        }
+
+        if ($this->cli->parseChangedOptions($options, $arg)) {
+            return true;
+        }
+
+        $parallel = $this->cli->optionValue($arg, '--parallel');
+
+        if ($parallel !== null) {
+            $options['parallel'] = max(1, (int) $parallel);
 
             return true;
         }

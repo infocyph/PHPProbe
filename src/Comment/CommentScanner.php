@@ -27,19 +27,25 @@ final class CommentScanner
      *     allowBlankLineBetweenReasonAndCodeInBlock:bool,
      *     allowPhpdocExamples:bool,
      *     phpdocExampleLabels:list<string>,
+     *     suppressionEnabled?:bool,
+     *     suppressionDirective?:string,
      *     strict:bool,
      *     typeSeverity:array<string,string>,
      *     strictSeverity:array<string,string>
      * } $options
-     * @return array{files:int,findings:list<CommentFinding>}
+     * @return array{files:int,findings:list<CommentFinding>,suppressed_count:int}
      */
     public function scan(array $files, array $options): array
     {
         $findings = [];
+        $suppressedCount = 0;
 
         foreach ($files as $file) {
             $comments = (new PhpCommentExtractor())->extract($file);
-            $findings = [...$findings, ...$this->scanMarkers($file, $comments, $options), ...$this->scanCommentedOutCode($file, $comments, $options)];
+            $fileFindings = [...$this->scanMarkers($file, $comments, $options), ...$this->scanCommentedOutCode($file, $comments, $options)];
+            ['findings' => $activeFindings, 'suppressed' => $suppressed] = $this->applySuppressions($file, $comments, $fileFindings, $options);
+            $suppressedCount += $suppressed;
+            $findings = [...$findings, ...$activeFindings];
         }
 
         usort(
@@ -47,7 +53,104 @@ final class CommentScanner
             static fn(CommentFinding $left, CommentFinding $right): int => [$left->file, $left->line, $left->endLine, $left->type] <=> [$right->file, $right->line, $right->endLine, $right->type],
         );
 
-        return ['files' => count($files), 'findings' => $findings];
+        return ['files' => count($files), 'findings' => $findings, 'suppressed_count' => $suppressedCount];
+    }
+
+    /**
+     * @param list<array{type:string,raw:string,line:int,end_line:int}> $comments
+     * @param list<CommentFinding> $findings
+     * @param array{suppressionEnabled?:bool,suppressionDirective?:string,typeSeverity:array<string,string>,strictSeverity:array<string,string>,strict:bool} $options
+     * @return array{findings:list<CommentFinding>,suppressed:int}
+     */
+    private function applySuppressions(string $file, array $comments, array $findings, array $options): array
+    {
+        if (($options['suppressionEnabled'] ?? true) !== true) {
+            return ['findings' => $findings, 'suppressed' => 0];
+        }
+
+        $directive = trim((string) ($options['suppressionDirective'] ?? '@phpprobe-ignore'));
+        $entries = [];
+        $knownRules = $this->knownSuppressionRules();
+        $invalids = [];
+
+        foreach ($comments as $comment) {
+            foreach ($this->commentLines($comment) as $line) {
+                if (!str_contains($line['text'], $directive)) {
+                    continue;
+                }
+
+                if (preg_match('/' . preg_quote($directive, '/') . '\s+([A-Za-z0-9_\-*.,]+)/', $line['text'], $matches) !== 1) {
+                    $invalids[] = $this->finding(
+                        $file,
+                        $line['line'],
+                        $line['line'],
+                        'invalid_suppression_rule',
+                        sprintf('Invalid suppression directive format. Expected "%s RULE_ID".', $directive),
+                        $options,
+                        raw: $line['text'],
+                    );
+
+                    continue;
+                }
+
+                $tokens = array_values(array_filter(array_map('trim', explode(',', $matches[1])), static fn(string $value): bool => $value !== ''));
+                $rules = [];
+
+                foreach ($tokens as $token) {
+                    if ($token === '*') {
+                        $rules[] = '*';
+
+                        continue;
+                    }
+
+                    if (!in_array($token, $knownRules, true)) {
+                        $invalids[] = $this->finding(
+                            $file,
+                            $line['line'],
+                            $line['line'],
+                            'invalid_suppression_rule',
+                            sprintf('Unknown suppression rule id "%s".', $token),
+                            $options,
+                            raw: $line['text'],
+                        );
+
+                        continue;
+                    }
+
+                    $rules[] = $token;
+                }
+
+                if ($rules !== []) {
+                    $entries[] = ['line' => $line['line'], 'end_line' => $line['line'] + 1, 'rules' => $rules];
+                }
+            }
+        }
+
+        $active = [];
+        $suppressed = 0;
+
+        foreach ($findings as $finding) {
+            $matched = false;
+
+            foreach ($entries as $entry) {
+                if ($finding->line < $entry['line'] || $finding->line > $entry['end_line']) {
+                    continue;
+                }
+
+                if (in_array('*', $entry['rules'], true) || in_array($finding->type, $entry['rules'], true)) {
+                    $matched = true;
+                    $suppressed++;
+
+                    break;
+                }
+            }
+
+            if (!$matched) {
+                $active[] = $finding;
+            }
+        }
+
+        return ['findings' => [...$active, ...$invalids], 'suppressed' => $suppressed];
     }
 
     /**
@@ -775,5 +878,24 @@ final class CommentScanner
         }
 
         return $options['typeSeverity'][$type] ?? 'info';
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function knownSuppressionRules(): array
+    {
+        return [
+            'comment_marker',
+            'commented_out_code_without_reason',
+            'commented_out_code_without_valid_tag',
+            'commented_out_code_without_valid_reason',
+            'commented_out_code_with_weak_reason',
+            'commented_out_code_with_valid_reason',
+            'commented_out_code_block_too_large',
+            'commented_out_code_requires_issue_reference',
+            'commented_out_code_in_phpdoc_without_example_label',
+            'invalid_suppression_rule',
+        ];
     }
 }

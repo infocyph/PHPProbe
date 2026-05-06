@@ -47,8 +47,8 @@ final readonly class PhpProbeConfig
     }
 
     /**
-     * @param array{help:bool,json:bool,config:string,mode:string,normalize:bool,fuzzy:bool,nearMiss:bool,minLines:int,minTokens:int,minStatements:int,minSimilarity:float,baseline:string,writeBaseline:string,paths:list<string>,excludes:list<string>} $options
-     * @return array{help:bool,json:bool,config:string,mode:string,normalize:bool,fuzzy:bool,nearMiss:bool,minLines:int,minTokens:int,minStatements:int,minSimilarity:float,baseline:string,writeBaseline:string,paths:list<string>,excludes:list<string>}
+     * @param array<string, mixed> $options
+     * @return array<string, mixed>
      */
     public function applyDuplicateOptions(array $options): array
     {
@@ -56,6 +56,7 @@ final readonly class PhpProbeConfig
 
         $mode = $this->stringValue($section, 'mode');
         $json = $this->boolValue($section, 'json');
+        $format = $this->stringValue($section, 'format');
         $normalize = $this->boolValue($section, 'normalize');
         $fuzzy = $this->boolValue($section, 'fuzzy');
         $nearMiss = $this->boolValue($section, 'near_miss');
@@ -65,6 +66,12 @@ final readonly class PhpProbeConfig
         $minSimilarity = $this->floatValue($section, 'min_similarity');
         $baseline = $this->stringValue($section, 'baseline');
         $writeBaseline = $this->stringValue($section, 'write_baseline');
+        $failOn = $this->stringValue($section, 'fail_on');
+        $summaryJson = $this->stringValue($section, 'summary_json');
+        $changedOnly = $this->boolValue($section, 'changed_only');
+        $changedBase = $this->stringValue($section, 'changed_base');
+        $cacheEnabled = $this->boolValue(ArrayShape::stringKeyed($this->value($section, 'cache')), 'enabled');
+        $cacheFile = $this->stringValue(ArrayShape::stringKeyed($this->value($section, 'cache')), 'file');
 
         $paths = $this->stringList($this->value($section, 'paths'));
         $excludes = $this->excludePaths($section);
@@ -81,8 +88,38 @@ final readonly class PhpProbeConfig
         );
         $this->applyDuplicateThresholdOptions($options, $minLines, $minTokens, $minStatements);
 
+        if ($format !== null && $format !== '') {
+            $options['format'] = strtolower(trim($format));
+        } elseif ($json !== null) {
+            $options['format'] = $json ? 'json' : 'text';
+        }
+
         if ($minSimilarity !== null) {
             $options['minSimilarity'] = $this->normalizeSimilarity($minSimilarity);
+        }
+
+        if ($failOn !== null && $failOn !== '') {
+            $options['failOn'] = strtolower(trim($failOn));
+        }
+
+        if ($summaryJson !== null) {
+            $options['summaryJson'] = $summaryJson;
+        }
+
+        if ($changedOnly !== null) {
+            $options['changedOnly'] = $changedOnly;
+        }
+
+        if ($changedBase !== null) {
+            $options['changedBase'] = $changedBase;
+        }
+
+        if ($cacheEnabled !== null) {
+            $options['cacheEnabled'] = $cacheEnabled;
+        }
+
+        if ($cacheFile !== null && $cacheFile !== '') {
+            $options['cacheFile'] = $cacheFile;
         }
 
         if ($paths !== []) {
@@ -97,22 +134,29 @@ final readonly class PhpProbeConfig
     }
 
     /**
-     * @param array{help:bool,json:bool,config:string,preset:string,includeProtected:bool,baseline:string,writeBaseline:string,paths:list<string>,excludes:list<string>} $options
-     * @return array{help:bool,json:bool,config:string,preset:string,includeProtected:bool,baseline:string,writeBaseline:string,paths:list<string>,excludes:list<string>}
+     * @param array<string, mixed> $options
+     * @return array<string, mixed>
      */
     public function applyApiOptions(array $options): array
     {
         $section = $this->section('api');
 
         $json = $this->boolValue($section, 'json');
+        $format = $this->stringValue($section, 'format');
         $includeProtected = $this->boolValue($section, 'include_protected');
         $baseline = $this->stringValue($section, 'baseline');
         $writeBaseline = $this->stringValue($section, 'write_baseline');
+        $failOn = $this->stringValue($section, 'fail_on');
+        $summaryJson = $this->stringValue($section, 'summary_json');
+        $changedOnly = $this->boolValue($section, 'changed_only');
+        $changedBase = $this->stringValue($section, 'changed_base');
         $paths = $this->stringList($this->value($section, 'paths'));
         $excludes = $this->excludePaths($section);
 
-        if ($json !== null) {
-            $options['json'] = $json;
+        if ($format !== null && $format !== '') {
+            $options['format'] = strtolower(trim($format));
+        } elseif ($json !== null) {
+            $options['format'] = $json ? 'json' : 'text';
         }
 
         if ($includeProtected !== null) {
@@ -127,6 +171,22 @@ final readonly class PhpProbeConfig
             $options['writeBaseline'] = $writeBaseline;
         }
 
+        if ($failOn !== null && $failOn !== '') {
+            $options['failOn'] = strtolower(trim($failOn));
+        }
+
+        if ($summaryJson !== null) {
+            $options['summaryJson'] = $summaryJson;
+        }
+
+        if ($changedOnly !== null) {
+            $options['changedOnly'] = $changedOnly;
+        }
+
+        if ($changedBase !== null) {
+            $options['changedBase'] = $changedBase;
+        }
+
         if ($paths !== []) {
             $options['paths'] = $paths;
         }
@@ -139,14 +199,42 @@ final readonly class PhpProbeConfig
     }
 
     /**
-     * @param array{help:bool,config:string,paths:list<string>,excludes:list<string>} $options
-     * @return array{help:bool,config:string,paths:list<string>,excludes:list<string>}
+     * @param array<string, mixed> $options
+     * @return array<string, mixed>
      */
     public function applySyntaxOptions(array $options): array
     {
         $section = $this->section('syntax');
+        $format = $this->stringValue($section, 'format');
+        $json = $this->boolValue($section, 'json');
+        $summaryJson = $this->stringValue($section, 'summary_json');
+        $changedOnly = $this->boolValue($section, 'changed_only');
+        $changedBase = $this->stringValue($section, 'changed_base');
+        $parallel = $this->intValue($section, 'parallel');
         $paths = $this->stringList($this->value($section, 'paths'));
         $excludes = $this->excludePaths($section);
+
+        if ($format !== null && $format !== '') {
+            $options['format'] = strtolower(trim($format));
+        } elseif ($json !== null) {
+            $options['format'] = $json ? 'json' : 'text';
+        }
+
+        if ($summaryJson !== null) {
+            $options['summaryJson'] = $summaryJson;
+        }
+
+        if ($changedOnly !== null) {
+            $options['changedOnly'] = $changedOnly;
+        }
+
+        if ($changedBase !== null) {
+            $options['changedBase'] = $changedBase;
+        }
+
+        if ($parallel !== null) {
+            $options['parallel'] = max(1, $parallel);
+        }
 
         if ($paths !== []) {
             $options['paths'] = $paths;
@@ -160,50 +248,8 @@ final readonly class PhpProbeConfig
     }
 
     /**
-     * @param array{
-     *     paths:list<string>,
-     *     excludes:list<string>,
-     *     scanMarkers:bool,
-     *     markerTags:list<string>,
-     *     markerSeverity:array<string,string>,
-     *     commentedOutEnabled:bool,
-     *     allowedReasonTags:list<string>,
-     *     optionalReasonTags:list<string>,
-     *     allowOptionalReasonTagsInStrictMode:bool,
-     *     minReasonLength:int,
-     *     maxAllowedBlockLines:int,
-     *     requireIssueForBlocksLongerThan:int,
-     *     allowedIssuePatterns:list<string>,
-     *     allowBlankLineBetweenReasonAndCode:bool,
-     *     allowReasonBeforeBlockComment:bool,
-     *     allowBlankLineBetweenReasonAndCodeInBlock:bool,
-     *     allowPhpdocExamples:bool,
-     *     phpdocExampleLabels:list<string>,
-     *     typeSeverity:array<string,string>,
-     *     strictSeverity:array<string,string>
-     * } $options
-     * @return array{
-     *     paths:list<string>,
-     *     excludes:list<string>,
-     *     scanMarkers:bool,
-     *     markerTags:list<string>,
-     *     markerSeverity:array<string,string>,
-     *     commentedOutEnabled:bool,
-     *     allowedReasonTags:list<string>,
-     *     optionalReasonTags:list<string>,
-     *     allowOptionalReasonTagsInStrictMode:bool,
-     *     minReasonLength:int,
-     *     maxAllowedBlockLines:int,
-     *     requireIssueForBlocksLongerThan:int,
-     *     allowedIssuePatterns:list<string>,
-     *     allowBlankLineBetweenReasonAndCode:bool,
-     *     allowReasonBeforeBlockComment:bool,
-     *     allowBlankLineBetweenReasonAndCodeInBlock:bool,
-     *     allowPhpdocExamples:bool,
-     *     phpdocExampleLabels:list<string>,
-     *     typeSeverity:array<string,string>,
-     *     strictSeverity:array<string,string>
-     * }
+     * @param array<string, mixed> $options
+     * @return array<string, mixed>
      */
     public function applyCommentOptions(array $options): array
     {
@@ -211,12 +257,23 @@ final readonly class PhpProbeConfig
         $commentedOut = $this->section('commented_out_code');
         $paths = $this->stringList($this->value($comments, 'paths'));
         $excludes = $this->excludePaths($comments);
+        $format = $this->stringValue($comments, 'format');
+        $json = $this->boolValue($comments, 'json');
+        $failOn = $this->stringValue($comments, 'fail_on');
+        $summaryJson = $this->stringValue($comments, 'summary_json');
+        $changedOnly = $this->boolValue($comments, 'changed_only');
+        $changedBase = $this->stringValue($comments, 'changed_base');
         $scanMarkers = $this->boolValue($comments, 'scan_markers');
         $markerTags = array_map('strtoupper', $this->stringList($this->value($comments, 'marker_tags')));
         $markerSeverity = $this->stringMap($this->value($comments, 'marker_severity'), true);
         $commentedEnabled = $this->boolValue($commentedOut, 'enabled');
         $allowedReasonTags = array_map('strtoupper', $this->stringList($this->value($commentedOut, 'allowed_reason_tags')));
         $optionalReasonTags = array_map('strtoupper', $this->stringList($this->value($commentedOut, 'optional_reason_tags')));
+        $ignorePaths = $this->stringList($this->value($commentedOut, 'ignore_paths'));
+        $suppression = ArrayShape::stringKeyed($this->value($commentedOut, 'suppression'));
+        $suppressionEnabled = $this->boolValue($suppression, 'enabled');
+        $suppressionDirective = $this->stringValue($suppression, 'directive');
+        $policy = $this->stringValue($commentedOut, 'policy');
         $allowOptionalInStrict = $this->boolValue($commentedOut, 'allow_optional_reason_tags_in_strict_mode');
         $minReasonLength = $this->intValue($commentedOut, 'min_reason_length');
         $maxBlockLines = $this->intValue($commentedOut, 'max_allowed_block_lines');
@@ -228,12 +285,38 @@ final readonly class PhpProbeConfig
         $typeSeverity = $this->stringMap($this->value($commentedOut, 'finding_severity'));
         $strictSeverity = $this->stringMap($this->value($commentedOut, 'finding_severity_strict'));
 
+        if ($format !== null && $format !== '') {
+            $options['format'] = strtolower(trim($format));
+        } elseif ($json !== null) {
+            $options['format'] = $json ? 'json' : 'text';
+        }
+
+        if ($failOn !== null && $failOn !== '') {
+            $options['failOn'] = strtolower(trim($failOn));
+        }
+
+        if ($summaryJson !== null) {
+            $options['summaryJson'] = $summaryJson;
+        }
+
+        if ($changedOnly !== null) {
+            $options['changedOnly'] = $changedOnly;
+        }
+
+        if ($changedBase !== null) {
+            $options['changedBase'] = $changedBase;
+        }
+
         if ($paths !== []) {
             $options['paths'] = $paths;
         }
 
         if ($excludes !== []) {
             $options['excludes'] = $excludes;
+        }
+
+        if ($ignorePaths !== []) {
+            $options['excludes'] = array_values(array_unique([...$options['excludes'], ...$ignorePaths]));
         }
 
         if ($scanMarkers !== null) {
@@ -258,6 +341,18 @@ final readonly class PhpProbeConfig
 
         if ($optionalReasonTags !== []) {
             $options['optionalReasonTags'] = $optionalReasonTags;
+        }
+
+        if ($suppressionEnabled !== null) {
+            $options['suppressionEnabled'] = $suppressionEnabled;
+        }
+
+        if ($suppressionDirective !== null && trim($suppressionDirective) !== '') {
+            $options['suppressionDirective'] = trim($suppressionDirective);
+        }
+
+        if ($policy !== null && trim($policy) !== '') {
+            $options['policy'] = strtolower(trim($policy));
         }
 
         if ($allowOptionalInStrict !== null) {
@@ -344,7 +439,7 @@ final readonly class PhpProbeConfig
     }
 
     /**
-     * @param array{help:bool,json:bool,config:string,mode:string,normalize:bool,fuzzy:bool,nearMiss:bool,minLines:int,minTokens:int,minStatements:int,minSimilarity:float,baseline:string,writeBaseline:string,paths:list<string>,excludes:list<string>} $options
+     * @param array<string, mixed> $options
      */
     private function applyDuplicateScalarOptions(
         array &$options,
@@ -386,7 +481,7 @@ final readonly class PhpProbeConfig
     }
 
     /**
-     * @param array{help:bool,json:bool,config:string,mode:string,normalize:bool,fuzzy:bool,nearMiss:bool,minLines:int,minTokens:int,minStatements:int,minSimilarity:float,baseline:string,writeBaseline:string,paths:list<string>,excludes:list<string>} $options
+     * @param array<string, mixed> $options
      */
     private function applyDuplicateThresholdOptions(
         array &$options,

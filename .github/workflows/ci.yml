@@ -45,17 +45,27 @@ jobs:
       - name: Run tests
         run: composer test
 
+      - name: Prepare report directory
+        run: mkdir -p build/reports
+
       - name: Run syntax checker
-        run: composer lint
+        run: php bin/phpprobe syntax --config=resources/phpprobe.json --format=markdown --summary-json=build/reports/syntax-summary.json src tests > build/reports/syntax.md
 
       - name: Run duplicate checker
-        run: composer duplicates
+        run: php bin/phpprobe duplicates --preset=standard --config=resources/phpprobe.json --baseline=resources/.phpprobe-duplicates-baseline.json --format=markdown --summary-json=build/reports/duplicates-summary.json src tests > build/reports/duplicates.md
 
       - name: Run API checker
-        run: composer api
+        run: php bin/phpprobe api --config=resources/phpprobe.json --format=markdown --summary-json=build/reports/api-summary.json src tests > build/reports/api.md
 
       - name: Run comment checker
-        run: composer comments
+        run: php bin/phpprobe comments --config=resources/phpprobe.json --format=markdown --summary-json=build/reports/comments-summary.json src tests > build/reports/comments.md
+
+      - name: Upload checker reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phpprobe-reports-php-${{ matrix.php }}
+          path: build/reports/
 
   phpforge-integration:
     name: PHPForge Integration

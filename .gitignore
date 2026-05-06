@@ -19,3 +19,5 @@ test.php
 var
 vendor
 d2utmp*
+.phpprobe-duplicates-cache.json
+build/reports/
