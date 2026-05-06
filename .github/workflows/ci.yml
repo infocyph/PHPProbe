@@ -27,7 +27,7 @@ jobs:
 
     steps:
       - name: Checkout PHPProbe
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup PHP
         uses: shivammathur/setup-php@v2
@@ -62,7 +62,7 @@ jobs:
 
       - name: Upload checker reports
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: phpprobe-reports-php-${{ matrix.php }}
           path: build/reports/
@@ -77,12 +77,12 @@ jobs:
 
     steps:
       - name: Checkout PHPProbe
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           path: phpprobe
 
       - name: Checkout PHPForge
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: ${{ env.PHPFORGE_REPOSITORY }}
           ref: ${{ env.PHPFORGE_REF }}
@@ -108,24 +108,14 @@ jobs:
       - name: Run PHPForge tests
         working-directory: phpforge
         run: |
-          if [ -x vendor/bin/pest ]; then
-            if [ -f pest.xml ]; then
-              vendor/bin/pest --configuration=pest.xml
-            elif [ -f phpunit.xml ]; then
-              vendor/bin/pest --configuration=phpunit.xml
-            elif [ -f phpunit.xml.dist ]; then
-              vendor/bin/pest --configuration=phpunit.xml.dist
-            else
-              vendor/bin/pest
-            fi
+          if composer run --list | grep -qE '^\s+ic:test:code\s'; then
+            composer ic:test:code
+          elif composer run --list | grep -qE '^\s+ic:tests\s'; then
+            composer ic:tests
+          elif [ -x vendor/bin/pest ]; then
+            vendor/bin/pest
           elif [ -x vendor/bin/phpunit ]; then
-            if [ -f phpunit.xml ]; then
-              vendor/bin/phpunit --configuration=phpunit.xml
-            elif [ -f phpunit.xml.dist ]; then
-              vendor/bin/phpunit --configuration=phpunit.xml.dist
-            else
-              vendor/bin/phpunit
-            fi
+            vendor/bin/phpunit
           elif composer run --list | grep -qE '^\s+test\s'; then
             composer test
           else
