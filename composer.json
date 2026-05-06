@@ -45,7 +45,7 @@
     "sort-packages": true
   },
     "scripts": {
-      "test": "vendor/bin/pest -c pest.xml",
+      "test": "vendor/bin/pest --configuration=pest.xml",
       "lint": "@php bin/phpprobe syntax src tests",
     "duplicates": "@php bin/phpprobe duplicates --preset=standard --config=resources/phpprobe.json --baseline=resources/.phpprobe-duplicates-baseline.json src tests",
       "api": "@php bin/phpprobe api --config=resources/phpprobe.json src tests",

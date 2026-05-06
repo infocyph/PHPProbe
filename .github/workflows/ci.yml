@@ -111,7 +111,7 @@ jobs:
           if composer run --list | grep -qE '^\s+test\s'; then
             composer test
           elif [ -x vendor/bin/pest ]; then
-            vendor/bin/pest -c pest.xml
+            vendor/bin/pest --configuration=pest.xml
           elif [ -x vendor/bin/phpunit ]; then
             vendor/bin/phpunit
           else
