@@ -7,6 +7,60 @@ namespace Infocyph\PHPProbe\Config;
 final readonly class CliOptions
 {
     /**
+     * @param list<string> $args
+     * @param array<string, mixed> $options
+     * @param callable(string,int,array<string,mixed>):bool $parseCliOption
+     */
+    public function collectPaths(array $args, array &$options, array $configuredPaths, callable $parseCliOption, string $unknownOptionMessage): void
+    {
+        $options['paths'] = [];
+        $collectingPathsOnly = false;
+        $index = 0;
+        $argCount = count($args);
+
+        while ($index < $argCount) {
+            $arg = $args[$index];
+
+            if ($collectingPathsOnly) {
+                $options['paths'][] = $arg;
+                $index++;
+
+                continue;
+            }
+
+            if ($arg === '--') {
+                $collectingPathsOnly = true;
+                $index++;
+
+                continue;
+            }
+
+            if ($this->skipConfig($args, $index, $arg) || $this->skipPreset($args, $index, $arg)) {
+                $index++;
+
+                continue;
+            }
+
+            if ($parseCliOption($arg, $index, $options)) {
+                $index++;
+
+                continue;
+            }
+
+            if (str_starts_with($arg, '-')) {
+                throw new \InvalidArgumentException(sprintf($unknownOptionMessage, $arg));
+            }
+
+            $options['paths'][] = $arg;
+            $index++;
+        }
+
+        if ($options['paths'] === []) {
+            $options['paths'] = $configuredPaths;
+        }
+    }
+
+    /**
      * @param list<string> $allowed
      */
     public function isAllowedFormat(string $format, array $allowed = ['text', 'json', 'markdown', 'sarif']): bool

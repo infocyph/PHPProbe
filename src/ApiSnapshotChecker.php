@@ -10,6 +10,7 @@ use Infocyph\PHPProbe\Config\Paths;
 use Infocyph\PHPProbe\Config\PhpProbeConfig;
 use Infocyph\PHPProbe\Console\Ansi;
 use Infocyph\PHPProbe\Filesystem\PhpFileFinder;
+use Infocyph\PHPProbe\Util\Sarif;
 use Infocyph\PHPProbe\Util\SummaryJson;
 
 final class ApiSnapshotChecker
@@ -187,45 +188,13 @@ final class ApiSnapshotChecker
         $config = PhpProbeConfig::fromFile($options['config']);
         $options = $this->cli->mergeConfigWithPreset($config, $this->cli->presetName($args))->applyApiOptions($options);
         $configuredPaths = $options['paths'];
-        $options['paths'] = [];
-        $collectingPathsOnly = false;
-
-        $index = 0;
-        $argCount = count($args);
-
-        while ($index < $argCount) {
-            $arg = $args[$index];
-
-            if ($collectingPathsOnly) {
-                $options['paths'][] = $arg;
-                $index++;
-
-                continue;
-            }
-
-            if ($arg === '--') {
-                $collectingPathsOnly = true;
-                $index++;
-
-                continue;
-            }
-
-            if (!$this->cli->skipConfig($args, $index, $arg)
-                && !$this->cli->skipPreset($args, $index, $arg)
-                && !$this->parseCliOption($args, $index, $options, $arg)) {
-                if (str_starts_with($arg, '-')) {
-                    throw new \InvalidArgumentException(sprintf('Unknown option for api command: %s', $arg));
-                }
-
-                $options['paths'][] = $arg;
-            }
-
-            $index++;
-        }
-
-        if ($options['paths'] === []) {
-            $options['paths'] = $configuredPaths;
-        }
+        $this->cli->collectPaths(
+            $args,
+            $options,
+            $configuredPaths,
+            fn(string $arg, int &$index, array &$items): bool => $this->parseCliOption($args, $index, $items, $arg),
+            'Unknown option for api command: %s',
+        );
 
         return $options;
     }
@@ -468,21 +437,7 @@ final class ApiSnapshotChecker
             }
         }
 
-        $payload = [
-            'version' => '2.1.0',
-            '$schema' => 'https://json.schemastore.org/sarif-2.1.0.json',
-            'runs' => [[
-                'tool' => [
-                    'driver' => [
-                        'name' => 'PHPProbe',
-                        'informationUri' => 'https://github.com/infocyph/phpprobe',
-                    ],
-                ],
-                'results' => $results,
-            ]],
-        ];
-
-        fwrite(STDOUT, json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL);
+        fwrite(STDOUT, json_encode(Sarif::payload($results), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL);
     }
 
     /**

@@ -1,17 +1,7 @@
 {
     "version": 1,
-    "generated_at": "2026-05-06T09:35:59+00:00",
+    "generated_at": "2026-05-06T10:13:40+00:00",
     "clones": [
-        {
-            "fingerprint": "65edf497c75023b2bd013f4bb1f770a5e43e88ce8e37922c7f9d4d0e88b063c7",
-            "source": "tokens",
-            "score": 224.4
-        },
-        {
-            "fingerprint": "0bffdd382bce7ed3caff6476cc3321d143a17c67653db094cd405fb72538effe",
-            "source": "tokens",
-            "score": 188.6
-        },
         {
             "fingerprint": "6e7956bf0217046b225214da8669f784cb404b1f309f5cd33ea2b077b803733a",
             "source": "tokens",
@@ -23,17 +13,17 @@
             "score": 181.8
         },
         {
-            "fingerprint": "4d68193edc1c2b035b5b86e760e702616040481cfb62627858ed7341d948ec05",
+            "fingerprint": "24303addd6d51326dbd02139a76a1b51cdace40a834a0b36c3f3f1373ccd1977",
             "source": "tokens",
-            "score": 175.2
+            "score": 177.8
         },
         {
-            "fingerprint": "c18a55081eea7f8ed993650c968c9d325c43c289854a86d33d22019b90166751",
+            "fingerprint": "af8c2c9cf92601883292cc5c73bf0a815828ec9dd830d2278800f4b63f40f008",
             "source": "tokens",
             "score": 172.6
         },
         {
-            "fingerprint": "de63e6b88a5859c1e66539bb6d56ed4433bd1611a4560b921ea7769de1f415ee",
+            "fingerprint": "fd87aa84cb9d10b70f9127f74a8a6bfd62ec98a38263c0f3d83f6db556a42f9e",
             "source": "tokens",
             "score": 166.4
         },
@@ -43,19 +33,19 @@
             "score": 160.8
         },
         {
+            "fingerprint": "090072e42a39aac6498f4b466da4e71f5143ebf493057a4ad859741444d34083",
+            "source": "tokens",
+            "score": 159
+        },
+        {
             "fingerprint": "7295e29cf724e60bc160914ab685e55f33fc7286fb20c4ed5c4e0bd112125019",
             "source": "tokens",
             "score": 155.6
         },
         {
-            "fingerprint": "f5baf6b06984fc54d1f8233149c95bb135f50198fe1e8937c55780c73788c967",
+            "fingerprint": "f5f8ab66610450e003dd3c0efb98467154e24dc0d60e702d541c9a278a2ba0d0",
             "source": "tokens",
-            "score": 154.6
-        },
-        {
-            "fingerprint": "b27cfdf7ec1935f38205ad2bd03851bc6db371a5e4a4ad2b6c3a2d05baceb414",
-            "source": "tokens",
-            "score": 150
+            "score": 138
         },
         {
             "fingerprint": "8d1cdda29cbcb2080259ca519efd72373807ff055705bb866c3089e3f94156a9",
