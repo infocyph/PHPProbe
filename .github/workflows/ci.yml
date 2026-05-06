@@ -1,0 +1,124 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      phpforge_ref:
+        description: "PHPForge git ref (branch, tag, or SHA)"
+        required: false
+        default: "main"
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  phpprobe:
+    name: PHPProbe (PHP ${{ matrix.php }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ["8.2", "8.3", "8.4", "8.5"]
+
+    steps:
+      - name: Checkout PHPProbe
+        uses: actions/checkout@v6
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          coverage: none
+          tools: composer:v2
+
+      - name: Validate composer.json
+        run: composer validate --strict
+
+      - name: Install dependencies
+        run: composer install --prefer-dist --no-interaction --no-progress
+
+      - name: Run tests
+        run: composer test
+
+      - name: Prepare report directory
+        run: mkdir -p build/reports
+
+      - name: Run syntax checker
+        run: php bin/phpprobe syntax --config=resources/phpprobe.json --format=markdown --summary-json=build/reports/syntax-summary.json src tests > build/reports/syntax.md
+
+      - name: Run duplicate checker
+        run: php bin/phpprobe duplicates --preset=standard --config=resources/phpprobe.json --baseline=resources/.phpprobe-duplicates-baseline.json --format=markdown --summary-json=build/reports/duplicates-summary.json src tests > build/reports/duplicates.md
+
+      - name: Run API checker
+        run: php bin/phpprobe api --config=resources/phpprobe.json --format=markdown --summary-json=build/reports/api-summary.json src tests > build/reports/api.md
+
+      - name: Run comment checker
+        run: php bin/phpprobe comments --config=resources/phpprobe.json --format=markdown --summary-json=build/reports/comments-summary.json src tests > build/reports/comments.md
+
+      - name: Upload checker reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: phpprobe-reports-php-${{ matrix.php }}
+          path: build/reports/
+
+  phpforge-integration:
+    name: PHPForge Integration
+    runs-on: ubuntu-latest
+    needs: phpprobe
+    env:
+      PHPFORGE_REPOSITORY: infocyph/phpforge
+      PHPFORGE_REF: ${{ github.event.inputs.phpforge_ref || 'main' }}
+
+    steps:
+      - name: Checkout PHPProbe
+        uses: actions/checkout@v6
+        with:
+          path: phpprobe
+
+      - name: Checkout PHPForge
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ env.PHPFORGE_REPOSITORY }}
+          ref: ${{ env.PHPFORGE_REF }}
+          path: phpforge
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.2"
+          coverage: none
+          tools: composer:v2
+
+      - name: Configure PHPForge to use local PHPProbe
+        working-directory: phpforge
+        run: |
+          composer config repositories.local-phpprobe '{"type":"path","url":"../phpprobe","options":{"symlink":true}}'
+          composer require --dev infocyph/phpprobe:@dev --no-update --no-interaction
+
+      - name: Install PHPForge dependencies
+        working-directory: phpforge
+        run: composer update --prefer-dist --no-interaction --no-progress
+
+      - name: Run PHPForge tests
+        working-directory: phpforge
+        run: |
+          if composer run --list | grep -qE '^\s+ic:test:code\s'; then
+            composer ic:test:code
+          elif composer run --list | grep -qE '^\s+ic:tests\s'; then
+            composer ic:tests
+          elif [ -x vendor/bin/pest ]; then
+            vendor/bin/pest
+          elif [ -x vendor/bin/phpunit ]; then
+            vendor/bin/phpunit
+          elif composer run --list | grep -qE '^\s+test\s'; then
+            composer test
+          else
+            echo "No supported PHPForge test command found." >&2
+            exit 1
+          fi

@@ -1,53 +1,55 @@
 {
-  "name": "infocyph/phpprobe",
-  "description": "Standalone PHP syntax and duplicate code checker.",
-  "license": "MIT",
-  "type": "library",
-  "keywords": [
-    "infocyph",
-    "php",
-    "syntax",
-    "duplicate-code",
-    "copy-paste-detection"
-  ],
-  "authors": [
-    {
-      "name": "infocyph",
-      "email": "infocyph@gmail.com"
+    "name": "infocyph/phpprobe",
+    "description": "Standalone PHP syntax and duplicate code checker.",
+    "license": "MIT",
+    "type": "library",
+    "keywords": [
+        "infocyph",
+        "php",
+        "syntax",
+        "duplicate-code",
+        "copy-paste-detection"
+    ],
+    "authors": [
+        {
+            "name": "infocyph",
+            "email": "infocyph@gmail.com"
+        },
+        {
+            "name": "abmmhasan",
+            "email": "abmmhasan@gmail.com"
+        }
+    ],
+    "require": {
+        "php": ">=8.2",
+        "nikic/php-parser": "^5.7"
     },
-    {
-      "name": "abmmhasan",
-      "email": "abmmhasan@gmail.com"
-    }
-  ],
-  "require": {
-    "php": ">=8.2",
-    "nikic/php-parser": "^5.7"
-  },
-  "require-dev": {
-    "pestphp/pest": ">=3.0 <5.0"
-  },
-  "minimum-stability": "dev",
-  "prefer-stable": true,
-  "autoload": {
-    "psr-4": {
-      "Infocyph\\PHPProbe\\": "src/"
-    }
-  },
-  "bin": [
-    "bin/phpprobe"
-  ],
-  "config": {
-    "allow-plugins": {
-      "pestphp/pest-plugin": true
+    "require-dev": {
+        "pestphp/pest": ">=3.0 <5.0"
     },
-    "optimize-autoloader": true,
-    "sort-packages": true
-  },
-  "scripts": {
-    "test": "vendor/bin/pest -c pest.xml",
-    "lint": "@php bin/phpprobe syntax src tests",
-    "duplicates": "@php bin/phpprobe duplicates --preset=standard --config=resources/phpprobe.json src tests",
-    "api": "@php bin/phpprobe api --config=resources/phpprobe.json src tests"
-  }
+    "minimum-stability": "dev",
+    "prefer-stable": true,
+    "autoload": {
+        "psr-4": {
+            "Infocyph\\PHPProbe\\": "src/"
+        }
+    },
+    "bin": [
+        "bin/phpprobe"
+    ],
+    "config": {
+        "allow-plugins": {
+            "pestphp/pest-plugin": true
+        },
+        "optimize-autoloader": true,
+        "sort-packages": true
+    },
+    "scripts": {
+        "test": "vendor/bin/pest --configuration=pest.xml",
+        "lint": "@php bin/phpprobe syntax src tests",
+        "duplicates": "@php bin/phpprobe duplicates --preset=standard --config=resources/phpprobe.json --baseline=resources/.phpprobe-duplicates-baseline.json src tests",
+        "api": "@php bin/phpprobe api --config=resources/phpprobe.json src tests",
+        "comments": "@php bin/phpprobe comments --config=resources/phpprobe.json src tests",
+        "tests" : ["@test", "@lint", "@duplicates", "@api", "@comments"]
+    }
 }

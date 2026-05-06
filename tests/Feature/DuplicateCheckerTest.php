@@ -84,6 +84,34 @@ PHP);
         ->and($result['clones'])->toBe([]);
 });
 
+it('supports fail-on=error threshold for duplicate percentage', function (): void {
+    $root = makeDuplicateCheckerFixture();
+    $src = $root.DIRECTORY_SEPARATOR.'src';
+
+    mkdir($src, 0755, true);
+    file_put_contents($src.DIRECTORY_SEPARATOR.'Alpha.php', duplicateBaselineFixture('Alpha'));
+    file_put_contents($src.DIRECTORY_SEPARATOR.'Beta.php', duplicateBaselineFixture('Beta'));
+
+    try {
+        $run = runDuplicateCheckerCommand($root, [
+            '--json',
+            '--fuzzy',
+            '--min-lines=5',
+            '--min-tokens=20',
+            '--fail-on=error',
+            '--error-duplicate-percentage=100',
+            'src',
+        ]);
+    } finally {
+        removeDuplicateCheckerFixture($root);
+    }
+
+    $result = json_decode($run['stdout'], true);
+
+    expect($run['exitCode'])->toBe(0)
+        ->and($result['clones'])->not()->toBeEmpty();
+});
+
 it('detects near-miss block clones in audit mode', function (): void {
     $root = makeDuplicateCheckerFixture();
     $src = $root.DIRECTORY_SEPARATOR.'src';
@@ -343,6 +371,58 @@ it('reports unknown duplicate presets cleanly', function (): void {
 
     expect($run['exitCode'])->toBe(2)
         ->and($run['stderr'])->toContain('Unknown PHPProbe preset "unknown"');
+});
+
+it('rejects unknown duplicate command options', function (): void {
+    $root = makeDuplicateCheckerFixture();
+
+    try {
+        $run = runDuplicateCheckerCommand($root, ['--does-not-exist']);
+    } finally {
+        removeDuplicateCheckerFixture($root);
+    }
+
+    expect($run['exitCode'])->toBe(2)
+        ->and($run['stderr'])->toContain('Unknown option for duplicates command: --does-not-exist');
+});
+
+it('fails when duplicate baseline file is missing', function (): void {
+    $root = makeDuplicateCheckerFixture();
+    $src = $root.DIRECTORY_SEPARATOR.'src';
+    $missingBaseline = $root.DIRECTORY_SEPARATOR.'missing-baseline.json';
+
+    mkdir($src, 0755, true);
+    file_put_contents($src.DIRECTORY_SEPARATOR.'One.php', duplicateBaselineFixture('One'));
+    file_put_contents($src.DIRECTORY_SEPARATOR.'Two.php', duplicateBaselineFixture('Two'));
+
+    try {
+        $run = runDuplicateCheckerCommand($root, ['--json', '--fuzzy', '--min-lines=5', '--min-tokens=20', '--baseline='.$missingBaseline, 'src']);
+    } finally {
+        removeDuplicateCheckerFixture($root);
+    }
+
+    expect($run['exitCode'])->toBe(2)
+        ->and($run['stderr'])->toContain('Duplicate baseline file not found');
+});
+
+it('fails when duplicate baseline JSON is invalid', function (): void {
+    $root = makeDuplicateCheckerFixture();
+    $src = $root.DIRECTORY_SEPARATOR.'src';
+    $baseline = $root.DIRECTORY_SEPARATOR.'duplicates-baseline.json';
+
+    mkdir($src, 0755, true);
+    file_put_contents($src.DIRECTORY_SEPARATOR.'One.php', duplicateBaselineFixture('One'));
+    file_put_contents($src.DIRECTORY_SEPARATOR.'Two.php', duplicateBaselineFixture('Two'));
+    file_put_contents($baseline, '{invalid');
+
+    try {
+        $run = runDuplicateCheckerCommand($root, ['--json', '--fuzzy', '--min-lines=5', '--min-tokens=20', '--baseline='.$baseline, 'src']);
+    } finally {
+        removeDuplicateCheckerFixture($root);
+    }
+
+    expect($run['exitCode'])->toBe(2)
+        ->and($run['stderr'])->toContain('Invalid duplicate baseline JSON');
 });
 
 function duplicateBaselineFixture(string $class): string

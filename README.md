@@ -1,6 +1,6 @@
 # PHPProbe
 
-Standalone PHP checker for syntax validation, duplicate-code detection, and public API snapshot checks.
+Standalone PHP checker for syntax validation, duplicate-code detection, public API snapshot checks and comment policy checks.
 
 PHPProbe is the checker runtime. It can be used directly as `phpprobe`, required by tool-combiner packages such as PHPForge, or called from PHP code through the public gateway classes.
 
@@ -27,21 +27,29 @@ php vendor/bin/phpprobe
 php vendor/bin/phpprobe syntax [options] [paths...]
 php vendor/bin/phpprobe duplicates [options] [paths...]
 php vendor/bin/phpprobe api [options] [paths...]
+php vendor/bin/phpprobe comments [options] [paths...]
 php vendor/bin/phpprobe presets
 php vendor/bin/phpprobe preset <name>
 ```
 
 Unknown commands print the top-level usage and exit `0`. There is no separate `--version` command.
+For checker subcommands (`syntax`, `duplicates`, `api`, `comments`), unknown options fail with exit `2`.
 
 ## Quick Start
 
 ```bash
 php vendor/bin/phpprobe syntax
+php vendor/bin/phpprobe syntax --format=markdown --parallel=4 src
 php vendor/bin/phpprobe duplicates
 php vendor/bin/phpprobe duplicates --json
+php vendor/bin/phpprobe duplicates --summary-json=build/duplicates-summary.json src
 php vendor/bin/phpprobe duplicates --preset=strict --json src
 php vendor/bin/phpprobe api --write-baseline=.phpprobe-api-baseline.json src
 php vendor/bin/phpprobe api --baseline=.phpprobe-api-baseline.json src
+php vendor/bin/phpprobe api --fail-on=error --format=markdown --baseline=.phpprobe-api-baseline.json src
+php vendor/bin/phpprobe comments --fail-on=warning src
+php vendor/bin/phpprobe comments --strict --json src
+php vendor/bin/phpprobe comments --policy=strict --format=markdown src
 php vendor/bin/phpprobe presets
 php vendor/bin/phpprobe preset phpstorm
 ```
@@ -53,6 +61,7 @@ The package-facing checker gateways live directly under `src/`:
 - `Infocyph\PHPProbe\SyntaxChecker`
 - `Infocyph\PHPProbe\DuplicateChecker`
 - `Infocyph\PHPProbe\ApiSnapshotChecker`
+- `Infocyph\PHPProbe\CommentChecker`
 
 All expose:
 
@@ -64,12 +73,14 @@ public function run(array $args): int
 
 ```php
 use Infocyph\PHPProbe\ApiSnapshotChecker;
+use Infocyph\PHPProbe\CommentChecker;
 use Infocyph\PHPProbe\DuplicateChecker;
 use Infocyph\PHPProbe\SyntaxChecker;
 
 $syntaxCode = (new SyntaxChecker())->run(['--config=phpprobe.json', 'src']);
 $duplicateCode = (new DuplicateChecker())->run(['--preset=strict', '--json', 'src']);
 $apiCode = (new ApiSnapshotChecker())->run(['--baseline=.phpprobe-api-baseline.json', 'src']);
+$commentCode = (new CommentChecker())->run(['--strict', '--fail-on=warning', 'src']);
 ```
 
 Everything else is internal implementation detail, grouped by role:
@@ -78,8 +89,8 @@ Everything else is internal implementation detail, grouped by role:
 | --- | --- |
 | `Api` | Public API snapshot extraction from parser ASTs. |
 | `Console` | CLI dispatch for `bin/phpprobe`. |
-| `Config` | Config lookup, preset lookup, JSON parsing, config merging, and shared CLI option handling. |
-| `Detection` | Duplicate-code token indexing, AST block indexing, scoring, grouping, and pruning. |
+| `Config` | Config lookup, preset lookup, JSON parsing, config merging and shared CLI option handling. |
+| `Detection` | Duplicate-code token indexing, AST block indexing, scoring, grouping and pruning. |
 | `Filesystem` | Git-aware PHP file discovery and path exclusion. |
 | `Process` | Small `proc_open` runner wrappers. |
 | `Util` | Narrow shared helpers. |
@@ -150,11 +161,11 @@ A full project config may override any part of the selected preset:
 }
 ```
 
-Config keys accept snake case, kebab case, and camel case. For example, `min_tokens`, `min-tokens`, and `minTokens` are equivalent. Excludes can be configured as either `exclude` or `exclude_paths`.
+Config keys accept snake case, kebab case and camel case. For example, `min_tokens`, `min-tokens` and `minTokens` are equivalent. Excludes can be configured as either `exclude` or `exclude_paths`.
 
-Internal duplicate defaults, before the bundled `phpstorm` config is applied, are `mode=gate`, `normalize=true`, `fuzzy=false`, `near_miss=false`, `min_lines=5`, `min_tokens=70`, `min_statements=4`, `min_similarity=0.85`, no baseline, no JSON output, and no configured paths or excludes.
+Internal duplicate defaults, before the bundled `phpstorm` config is applied, are `mode=gate`, `normalize=true`, `fuzzy=false`, `near_miss=false`, `min_lines=5`, `min_tokens=70`, `min_statements=4`, `min_similarity=0.85`, no baseline, no JSON output and no configured paths or excludes.
 
-Internal API defaults are `include_protected=true`, no baseline, no JSON output, and no configured paths or excludes.
+Internal API defaults are `include_protected=true`, no baseline, no JSON output and no configured paths or excludes.
 
 Config merge order is:
 
@@ -178,7 +189,7 @@ Available presets:
 | `standard` | Quieter CI gate. `gate` mode, normalized tokens, fuzzy identifiers, no near-miss matching, `min_lines=6`, `min_tokens=100`, `min_statements=5`, `min_similarity=0.9`. | Includes protected members. |
 | `strict` | Sensitive audit. `audit` mode, normalized tokens, fuzzy identifiers, near-miss matching, `min_lines=4`, `min_tokens=70`, `min_statements=3`, `min_similarity=0.8`. | Includes protected members. |
 
-All presets include the same default syntax, duplicate, and API excludes:
+All presets include the same default syntax, duplicate and API excludes:
 
 ```text
 tests, vendor, node_modules, .git, .idea, .vscode, coverage,
@@ -218,6 +229,12 @@ Options:
 | `--config` | `--config=FILE` or `--config FILE` | Read checker settings from a specific config file. |
 | `--preset` | `--preset=NAME` or `--preset NAME` | Apply `phpstorm`, `standard`, or `strict` as a run-level preset. |
 | `--exclude` | `--exclude=PATH` or `--exclude PATH` | Exclude a path. Repeatable. |
+| `--format` | `--format=text|json|markdown|sarif` | Output format. Default is `text`. |
+| `--json` | flag | Alias for `--format=json`. |
+| `--summary-json` | `--summary-json=FILE` | Write a machine-readable run summary JSON. |
+| `--changed-only` | flag | Scan only changed PHP files from Git diff. |
+| `--changed-base` | `--changed-base=REF` | Base ref used with `--changed-only`. |
+| `--parallel` | `--parallel=N` | Parallel lint worker count. Default is `1`. |
 | `--help`, `-h` | flag | Print syntax checker help and exit `0`. |
 
 Path behavior:
@@ -231,14 +248,76 @@ Output and exits:
 
 | Condition | Stream | Exit |
 | --- | --- | --- |
-| No PHP files found | `stdout`: `No PHP files found.` | `0` |
-| All files pass | `stdout`: `Syntax OK: N PHP files checked.` | `0` |
+| No PHP files found | `stdout`: `No PHP files found.` plus summary | `0` |
+| All files pass | `stdout`: `Syntax OK: N PHP files checked.` plus summary | `0` |
 | One or more files fail | `stderr`: failing file list plus lint output | `1` |
+| Unknown option or runtime config error | `stderr`: error | `2` |
 | Unknown preset | `stderr`: preset error | `2` |
+
+## Comment Policy Checker
+
+The comment checker scans PHP comments using `token_get_all()` and reports marker tags and commented-out code policy findings.
+
+Command:
+
+```bash
+php vendor/bin/phpprobe comments [options] [paths...]
+```
+
+Options:
+
+| Option | Form | Meaning |
+| --- | --- | --- |
+| `--config` | `--config=FILE` or `--config FILE` | Read checker settings from a specific config file. |
+| `--preset` | `--preset=NAME` or `--preset NAME` | Apply `phpstorm`, `standard`, or `strict` as a run-level preset. |
+| `--exclude` | `--exclude=PATH` or `--exclude PATH` | Exclude a path. Repeatable. |
+| `--format` | `--format=text|json|markdown|sarif` | Output format. Default is `text`. |
+| `--json` | flag | Alias for `--format=json`. |
+| `--strict` | flag | Escalate commented-out-code policy severities. |
+| `--policy` | `--policy=relaxed|standard|strict` | Comment policy profile. |
+| `--fail-on` | `--fail-on=error|warning|info` | Control failure threshold (default: `error`). |
+| `--summary-json` | `--summary-json=FILE` | Write a machine-readable run summary JSON. |
+| `--changed-only` | flag | Scan only changed PHP files from Git diff. |
+| `--changed-base` | `--changed-base=REF` | Base ref used with `--changed-only`. |
+| `--tags` | `--tags=TODO,FIXME,...` | Override marker tags for marker detection. |
+| `--help`, `-h` | flag | Print comments checker help and exit `0`. |
+
+### Four enforced policies
+
+1. Marker detection: tags like `TODO`, `FIXME`, `BUG`, `HACK`, `SECURITY`, `REVIEW`, `DEPRECATED`.
+2. Commented-out code requires directly attached tagged reason.
+3. Long commented-out blocks require an issue reference.
+4. Oversized commented-out blocks are always reported.
+
+Default thresholds:
+
+- `min_reason_length = 12`
+- `require_issue_for_blocks_longer_than = 3`
+- `max_allowed_block_lines = 10`
+
+Policy-to-finding mapping:
+
+| Policy | Finding types |
+| --- | --- |
+| Marker detection | `comment_marker` |
+| Tagged reason required for commented-out code | `commented_out_code_without_reason`, `commented_out_code_without_valid_tag`, `commented_out_code_without_valid_reason`, `commented_out_code_with_weak_reason` |
+| Issue reference required for long blocks | `commented_out_code_requires_issue_reference` |
+| Oversized block disallowed | `commented_out_code_block_too_large` |
+| PHPDoc code without clear example label | `commented_out_code_in_phpdoc_without_example_label` |
+| Invalid suppression directive | `invalid_suppression_rule` |
+| Explicitly valid tagged reason (informational) | `commented_out_code_with_valid_reason` |
+
+Output and exits:
+
+| Condition | Stream | Exit |
+| --- | --- | --- |
+| No failing findings at threshold | `stdout`: summary (or JSON/markdown/SARIF) | `0` |
+| Findings at or above threshold | `stderr`: text report (or JSON on `stdout`) | `1` |
+| Unknown option or runtime config error | `stderr`: error | `2` |
 
 ## Public API Snapshot Checker
 
-The API checker parses PHP files with `nikic/php-parser`, extracts the package-visible surface, and can compare it with a saved snapshot. It is intended for library BC drift checks, not type analysis.
+The API checker parses PHP files with `nikic/php-parser`, extracts the package-visible surface and can compare it with a saved snapshot. It is intended for library BC drift checks, not type analysis.
 
 Command:
 
@@ -257,7 +336,12 @@ Options:
 | `--include-protected` | flag | Include protected members. This is the default. |
 | `--baseline` | `--baseline=FILE` | Compare the current API against a snapshot file. |
 | `--write-baseline` | `--write-baseline`, `--write-baseline=FILE` | Write the current API snapshot and exit `0`. Bare flag writes `.phpprobe-api-baseline.json`. |
-| `--json` | flag | Emit machine-readable JSON to `stdout`. |
+| `--format` | `--format=text|json|markdown|sarif` | Output format. Default is `text`. |
+| `--json` | flag | Alias for `--format=json`. |
+| `--fail-on` | `--fail-on=error|warning|info` | Failure threshold for API drift. Default is `warning`. |
+| `--summary-json` | `--summary-json=FILE` | Write a machine-readable run summary JSON. |
+| `--changed-only` | flag | Scan only changed PHP files from Git diff. |
+| `--changed-base` | `--changed-base=REF` | Base ref used with `--changed-only`. |
 | `--help`, `-h` | flag | Print API checker help and exit `0`. |
 
 Path behavior:
@@ -269,12 +353,12 @@ Path behavior:
 
 Snapshot contents:
 
-- named classes, interfaces, traits, and enums
+- named classes, interfaces, traits and enums
 - top-level namespaced functions
 - top-level namespaced constants
 - public members always
 - protected members unless `--public-only` is used
-- class modifiers, inheritance, implemented interfaces, method signatures, property signatures, constants, enum cases, function signatures, and stable fingerprints
+- class modifiers, inheritance, implemented interfaces, method signatures, property signatures, constants, enum cases, function signatures and stable fingerprints
 
 Output and exits:
 
@@ -282,14 +366,15 @@ Output and exits:
 | --- | --- | --- |
 | No baseline passed | `stdout`: `Public API snapshot OK: N symbol(s) scanned.` | `0` |
 | Baseline matches | `stdout`: `Public API unchanged: N symbol(s) scanned.` | `0` |
-| Baseline differs | `stderr`: added/removed/changed symbol list | `1` |
-| `--json` | `stdout`: JSON result | `0` or `1`, depending on drift |
+| Baseline differs | `stderr`: added/removed/changed symbol list | `1` by default, `0` when `--fail-on=error` |
+| `--format=json|markdown|sarif` | `stdout`: selected format payload | `0` or `1`, depending on drift and fail-on |
 | `--write-baseline` | `stdout`: baseline message or JSON result | `0` |
+| Unknown option or runtime config/baseline error | `stderr`: error | `2` |
 | Unknown preset | `stderr`: preset error | `2` |
 
 ## Duplicate Checker
 
-The duplicate checker combines token fingerprints, AST block structure, statement windows, near-miss similarity, grouping, pruning, ranking, and optional baseline suppression.
+The duplicate checker combines token fingerprints, AST block structure, statement windows, near-miss similarity, grouping, pruning, ranking and optional baseline suppression.
 
 Command:
 
@@ -315,10 +400,18 @@ Options:
 | `--no-fuzzy` | flag | Disable fuzzy identifier/call normalization. |
 | `--baseline` | `--baseline=FILE` | Suppress clone groups whose fingerprints are already in a baseline file. |
 | `--write-baseline` | `--write-baseline`, `--write-baseline=FILE` | Write current clone fingerprints to a baseline and exit `0`. Bare flag writes `.phpprobe-duplicates-baseline.json`. |
-| `--json` | flag | Emit machine-readable JSON to `stdout`. |
+| `--format` | `--format=text|json|markdown|sarif` | Output format. Default is `text`. |
+| `--json` | flag | Alias for `--format=json`. |
+| `--fail-on` | `--fail-on=error|warning|info` | Failure threshold. Default is `warning`. |
+| `--error-duplicate-percentage` | `--error-duplicate-percentage=N` | Error threshold used when `--fail-on=error`. Default `20`. |
+| `--summary-json` | `--summary-json=FILE` | Write a machine-readable run summary JSON. |
+| `--changed-only` | flag | Scan only changed PHP files from Git diff. |
+| `--changed-base` | `--changed-base=REF` | Base ref used with `--changed-only`. |
+| `--no-cache` | flag | Disable duplicate result cache. |
+| `--cache-file` | `--cache-file=FILE` | Duplicate result cache path. |
 | `--help`, `-h` | flag | Print duplicate checker help and exit `0`. |
 
-Exact accepted forms matter: numeric options, `--mode`, `--baseline`, and valued `--write-baseline=FILE` are parsed in equals form. `--config`, `--preset`, and `--exclude` also accept split form. `--write-baseline` may also be passed as a bare flag.
+Exact accepted forms matter: numeric options, `--mode`, `--baseline` and valued `--write-baseline=FILE` are parsed in equals form. `--config`, `--preset` and `--exclude` also accept split form. `--write-baseline` may also be passed as a bare flag.
 
 Path behavior:
 
@@ -330,17 +423,17 @@ Path behavior:
 Mode behavior:
 
 - `gate`: token-window duplicate detection only, unless `--near-miss` is explicitly passed.
-- `audit`: token-window matching plus statement-window matching, and near-miss matching is enabled automatically.
+- `audit`: token-window matching plus statement-window matching and near-miss matching is enabled automatically.
 
 Output and exits:
 
 | Condition | Stream | Exit |
 | --- | --- | --- |
-| No clone groups after baseline suppression | `stdout`: `No new duplicated code found (...)` | `0` |
-| Clone groups found | `stderr`: text report | `1` |
-| `--json` with no clones | `stdout`: JSON result | `0` |
-| `--json` with clones | `stdout`: JSON result | `1` |
+| No clone groups after baseline suppression | `stdout`: `No new duplicated code found (...)` plus summary | `0` |
+| Clone groups found | `stderr`: text report plus summary | `1` by default |
+| `--format=json|markdown|sarif` | `stdout`: selected format payload | depends on clone findings and fail-on |
 | `--write-baseline` | `stdout`: baseline message or JSON result | `0` |
+| Unknown option or runtime config/baseline error | `stderr`: error | `2` |
 | Unknown preset | `stderr`: preset error | `2` |
 
 ## Duplicate Detection Details
@@ -350,11 +443,11 @@ File discovery:
 - PHPProbe first tries `git ls-files -z --cached --others --exclude-standard`.
 - It filters discovered PHP files with `git check-ignore -z --stdin --no-index`.
 - If Git discovery is unavailable, it recursively scans the selected paths.
-- Recursive fallback skips common infrastructure directories such as `.git`, `.idea`, `.phpunit.cache`, `.psalm-cache`, `.vscode`, `coverage`, `node_modules`, and `vendor`.
+- Recursive fallback skips common infrastructure directories such as `.git`, `.idea`, `.phpunit.cache`, `.psalm-cache`, `.vscode`, `coverage`, `node_modules` and `vendor`.
 
 Token normalization:
 
-- Whitespace, comments, doc comments, PHP open tags, and close tags are ignored.
+- Whitespace, comments, doc comments, PHP open tags and close tags are ignored.
 - With `normalize=true`, variables become `VAR`, numbers become `NUM`, strings become `STR`.
 - With `fuzzy=true`, identifiers and names become `ID`.
 - With `--exact`, token values include token names and original text.
@@ -370,7 +463,7 @@ Token clones:
 AST and statement matching:
 
 - PHPProbe uses `nikic/php-parser` to index structural blocks.
-- Indexed blocks include functions, methods, closures, arrow functions, loops, branches, match arms, and try/catch/finally blocks.
+- Indexed blocks include functions, methods, closures, arrow functions, loops, branches, match arms and try/catch/finally blocks.
 - Statement hashes are built from AST shape.
 - In `audit` mode, matching statement windows of `min_statements` statements are reported as statement clones.
 
@@ -381,12 +474,12 @@ Near-miss matching:
 - Similarity is based on longest-common-subsequence ratio.
 - Matches below `min_similarity` are ignored.
 
-Grouping, pruning, and scoring:
+Grouping, pruning and scoring:
 
 - Duplicate pairs are grouped into clone families.
 - Contained/weaker clones are pruned.
-- Results are ranked by score, line span, and similarity.
-- Scoring rewards larger clones, more occurrences, higher similarity, structural completeness, and near-miss signal; small trivial clones are penalized.
+- Results are ranked by score, line span and similarity.
+- Scoring rewards larger clones, more occurrences, higher similarity, structural completeness and near-miss signal; small trivial clones are penalized.
 
 ## Duplicate JSON Result Shape
 
@@ -488,6 +581,8 @@ php vendor/bin/phpprobe duplicates --baseline=.phpprobe-duplicates-baseline.json
 php vendor/bin/phpprobe api --baseline=.phpprobe-api-baseline.json
 ```
 
+This repository uses `resources/.phpprobe-duplicates-baseline.json` in `composer duplicates` so CI fails only on newly introduced clone groups.
+
 Duplicate baseline files contain:
 
 ```json
@@ -504,7 +599,39 @@ Duplicate baseline files contain:
 }
 ```
 
-API baseline files use the same top-level `version`, `generated_at`, and `symbols` shape emitted under the `snapshot` JSON key. When a baseline file is missing or unreadable, PHPProbe treats it as empty.
+API baseline files use the same top-level `version`, `generated_at` and `symbols` shape emitted under the `snapshot` JSON key. Missing, unreadable, or invalid baseline files now fail with exit code `2`.
+Duplicate baseline files follow the same strict behavior: missing, unreadable, or invalid baselines fail with exit code `2`.
+
+## Colored Output
+
+Checker text output is colorized on interactive terminals:
+
+- green: successful summaries
+- yellow: warning/medium severity lines
+- red: error/high/critical summaries
+- cyan: baseline write notifications
+
+Color output is automatically disabled for non-TTY streams and when `NO_COLOR` is set (or `TERM=dumb`), so CI logs and JSON output stay clean.
+
+## CI / Cloud
+
+Workflow: [.github/workflows/ci.yml](.github/workflows/ci.yml)
+
+CI runs:
+
+1. PHPProbe matrix on PHP `8.2`, `8.3`, `8.4`, `8.5`:
+   - `composer validate --strict`
+   - `composer test`
+   - `composer lint`
+   - `composer duplicates`
+   - `composer api`
+   - `composer comments`
+2. PHPForge integration:
+   - checks out `infocyph/phpforge`
+   - injects local `phpprobe` via Composer `path` repository
+   - runs PHPForge tests
+
+`workflow_dispatch` supports `phpforge_ref` to test a specific PHPForge branch/tag/SHA.
 
 ## Development
 
@@ -514,8 +641,9 @@ Composer scripts:
 | --- | --- |
 | `composer test` | `vendor/bin/pest -c pest.xml` |
 | `composer lint` | `php bin/phpprobe syntax src tests` |
-| `composer duplicates` | `php bin/phpprobe duplicates --preset=standard --config=resources/phpprobe.json src tests` |
+| `composer duplicates` | `php bin/phpprobe duplicates --preset=standard --config=resources/phpprobe.json --baseline=resources/.phpprobe-duplicates-baseline.json src tests` |
 | `composer api` | `php bin/phpprobe api --config=resources/phpprobe.json src tests` |
+| `composer comments` | `php bin/phpprobe comments --config=resources/phpprobe.json src tests` |
 
 Useful local checks:
 
@@ -525,7 +653,6 @@ composer test
 composer lint
 composer duplicates
 composer api
+composer comments
 git diff --check
 ```
-
-The repository does not need a committed `composer.lock`; it is a library-style tool package, so dev dependencies can resolve for the active PHP version.

@@ -70,6 +70,51 @@ PHP);
         ->and($run['stdout'])->toContain('Syntax OK: 1 PHP files checked.');
 });
 
+it('supports parallel syntax linting with json output', function (): void {
+    $root = makeSyntaxCheckerFixture();
+    $src = $root.DIRECTORY_SEPARATOR.'src';
+
+    mkdir($src, 0755, true);
+    file_put_contents($src.DIRECTORY_SEPARATOR.'One.php', <<<'PHP'
+<?php
+
+final class One
+{
+}
+PHP);
+    file_put_contents($src.DIRECTORY_SEPARATOR.'Two.php', <<<'PHP'
+<?php
+
+final class Two
+{
+PHP);
+
+    try {
+        $run = runSyntaxCheckerCommand($root, ['--json', '--parallel=2', 'src']);
+    } finally {
+        removeSyntaxCheckerFixture($root);
+    }
+
+    $result = json_decode($run['stdout'], true);
+
+    expect($run['exitCode'])->toBe(1)
+        ->and($result['files_checked'])->toBe(2)
+        ->and($result['failures'])->toHaveCount(1);
+});
+
+it('rejects unknown syntax command options', function (): void {
+    $root = makeSyntaxCheckerFixture();
+
+    try {
+        $run = runSyntaxCheckerCommand($root, ['--does-not-exist']);
+    } finally {
+        removeSyntaxCheckerFixture($root);
+    }
+
+    expect($run['exitCode'])->toBe(2)
+        ->and($run['stderr'])->toContain('Unknown option for syntax command: --does-not-exist');
+});
+
 /**
  * @return array{exitCode:int,stdout:string,stderr:string}
  */

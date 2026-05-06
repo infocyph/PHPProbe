@@ -12,17 +12,45 @@ final class PhpFileFinder
     /**
      * @param list<string> $paths
      * @param list<string> $excludes
+     * @param array{changedOnly?:bool,changedBase?:string} $options
      * @return list<string>
      */
-    public function find(array $paths, array $excludes = []): array
+    public function find(array $paths, array $excludes = [], array $options = []): array
     {
         $files = $this->gitAwarePhpFiles($paths);
+
+        if (($options['changedOnly'] ?? false) === true) {
+            $files = $this->changedFilesSubset($files, $paths, (string) ($options['changedBase'] ?? ''));
+        }
+
         $files = $this->withoutExcludedPaths($files, $excludes);
 
         $files = array_values(array_unique($files));
         sort($files);
 
         return $files;
+    }
+
+    /**
+     * @param list<string> $files
+     * @param list<string> $paths
+     * @return list<string>
+     */
+    private function changedFilesSubset(array $files, array $paths, string $base): array
+    {
+        $changed = $this->gitChangedPhpFiles($paths, $base);
+
+        if ($changed === null) {
+            return $files;
+        }
+
+        if ($changed === []) {
+            return [];
+        }
+
+        $changedLookup = array_fill_keys($changed, true);
+
+        return array_values(array_filter($files, static fn(string $file): bool => isset($changedLookup[$file])));
     }
 
     private function absolutePath(string $path): string
@@ -78,6 +106,54 @@ final class PhpFileFinder
         }
 
         return $this->recursivePhpFiles($paths === [] ? ['.'] : $paths);
+    }
+
+    /**
+     * @param list<string> $paths
+     * @return list<string>|null
+     */
+    private function gitChangedPhpFiles(array $paths, string $base): ?array
+    {
+        $command = ['git', 'diff', '--name-only', '--diff-filter=ACMRTUXB'];
+        $baseRef = trim($base);
+
+        if ($baseRef !== '') {
+            $command[] = $baseRef . '...HEAD';
+        } else {
+            $command[] = 'HEAD~1...HEAD';
+        }
+
+        if ($paths !== []) {
+            $command[] = '--';
+
+            foreach ($paths as $path) {
+                if ($path !== '') {
+                    $command[] = $path;
+                }
+            }
+        }
+
+        $result = (new ProcRunner())->run($command);
+
+        if (!$result instanceof ProcessResult || !$result->successful()) {
+            return null;
+        }
+
+        $files = [];
+
+        foreach (preg_split('/\R/', trim($result->stdout)) ?: [] as $path) {
+            if ($path === '' || !str_ends_with($path, '.php')) {
+                continue;
+            }
+
+            $absolute = $this->absolutePath($path);
+
+            if (is_file($absolute)) {
+                $files[] = $absolute;
+            }
+        }
+
+        return array_values(array_unique($files));
     }
 
     /**
