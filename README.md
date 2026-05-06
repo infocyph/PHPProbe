@@ -58,7 +58,7 @@ php vendor/bin/phpprobe comments --fail-on=warning src
 php vendor/bin/phpprobe comments --strict --json src
 php vendor/bin/phpprobe comments --policy=strict --format=markdown src
 php vendor/bin/phpprobe presets
-php vendor/bin/phpprobe preset phpstorm
+php vendor/bin/phpprobe preset standard
 ```
 
 ## Public API
@@ -129,7 +129,7 @@ The bundled `resources/phpprobe.json` is intentionally small:
 
 ```json
 {
-  "preset": "phpstorm"
+  "preset": "standard"
 }
 ```
 
@@ -137,7 +137,7 @@ A full project config may override any part of the selected preset:
 
 ```json
 {
-  "preset": "phpstorm",
+  "preset": "standard",
   "syntax": {
     "paths": ["src"],
     "exclude": ["src/generated"]
@@ -170,7 +170,7 @@ A full project config may override any part of the selected preset:
 
 Config keys accept snake case, kebab case and camel case. For example, `min_tokens`, `min-tokens` and `minTokens` are equivalent. Excludes can be configured as either `exclude` or `exclude_paths`.
 
-Internal duplicate defaults, before the bundled `phpstorm` config is applied, are `mode=gate`, `normalize=true`, `fuzzy=false`, `near_miss=false`, `min_lines=5`, `min_tokens=70`, `min_statements=4`, `min_similarity=0.85`, no baseline, no JSON output and no configured paths or excludes.
+Internal duplicate defaults, before any preset is applied, are `mode=gate`, `normalize=true`, `fuzzy=false`, `near_miss=false`, `min_lines=5`, `min_tokens=70`, `min_statements=4`, `min_similarity=0.85`, no baseline, no JSON output and no configured paths or excludes.
 
 Internal API defaults are `include_protected=true`, no baseline, no JSON output and no configured paths or excludes.
 
@@ -190,13 +190,14 @@ Preset templates live in `resources/presets/` and are loaded by `Infocyph\PHPPro
 
 Available presets:
 
-| Preset | Duplicate policy | API policy |
-| --- | --- | --- |
-| `phpstorm` | PhpStorm-aligned default. `audit` mode, normalized tokens, fuzzy identifiers, near-miss matching, `min_lines=5`, `min_tokens=90`, `min_statements=4`, `min_similarity=0.85`. | Includes protected members. |
-| `standard` | Quieter CI gate. `gate` mode, normalized tokens, fuzzy identifiers, no near-miss matching, `min_lines=6`, `min_tokens=100`, `min_statements=5`, `min_similarity=0.9`. | Includes protected members. |
-| `strict` | Sensitive audit. `audit` mode, normalized tokens, fuzzy identifiers, near-miss matching, `min_lines=4`, `min_tokens=70`, `min_statements=3`, `min_similarity=0.8`. | Includes protected members. |
+| Preset | Duplicate policy | API policy | Comment policy |
+| --- | --- | --- | --- |
+| `default` | Raw engine defaults. `gate` mode, normalized tokens, no fuzzy identifiers, no near-miss matching, `min_lines=5`, `min_tokens=70`, `min_statements=4`, `min_similarity=0.85`. | Includes protected members. | `policy=standard`, baseline thresholds (`min_reason_length=12`, `max_allowed_block_lines=10`, `require_issue_for_blocks_longer_than=3`). |
+| `standard` | Recommended balanced preset. `audit` mode, normalized tokens, fuzzy identifiers, near-miss matching, `min_lines=5`, `min_tokens=90`, `min_statements=4`, `min_similarity=0.85`. | Includes protected members. | `policy=standard`, baseline thresholds (`12`, `10`, `3`). |
+| `ci` | Quieter CI gate. `gate` mode, normalized tokens, fuzzy identifiers, no near-miss matching, `min_lines=6`, `min_tokens=100`, `min_statements=5`, `min_similarity=0.9`. | Includes protected members. | `policy=standard`, baseline thresholds (`12`, `10`, `3`). |
+| `strict` | Sensitive audit. `audit` mode, normalized tokens, fuzzy identifiers, near-miss matching, `min_lines=4`, `min_tokens=70`, `min_statements=3`, `min_similarity=0.8`. | Includes protected members. | `policy=strict`, strict thresholds (`16`, `6`, `2`). |
 
-All presets include the same default syntax, duplicate and API excludes:
+The `standard`, `ci`, and `strict` presets include the same default syntax, duplicate, API and comment excludes:
 
 ```text
 tests, vendor, node_modules, .git, .idea, .vscode, coverage,
@@ -204,16 +205,16 @@ tests, vendor, node_modules, .git, .idea, .vscode, coverage,
 bootstrap/cache, var/cache
 ```
 
-Duplicate presets also exclude `storage/framework/views`.
+Their duplicate sections also exclude `storage/framework/views`.
 
 Preset commands:
 
 ```bash
 php vendor/bin/phpprobe presets
-php vendor/bin/phpprobe preset phpstorm
+php vendor/bin/phpprobe preset standard
 ```
 
-`presets` prints one preset name per line. `preset <name>` prints the bundled JSON template. Unknown preset names print an error and exit `2`.
+`presets` prints one preset name per line. `preset <name>` prints the bundled JSON template. Unknown preset names print an error and exit `2`. Legacy alias `phpstorm` is still accepted and resolves to `standard`.
 
 ## Syntax Checker
 
@@ -234,7 +235,7 @@ Options:
 | Option | Form | Meaning |
 | --- | --- | --- |
 | `--config` | `--config=FILE` or `--config FILE` | Read checker settings from a specific config file. |
-| `--preset` | `--preset=NAME` or `--preset NAME` | Apply `phpstorm`, `standard`, or `strict` as a run-level preset. |
+| `--preset` | `--preset=NAME` or `--preset NAME` | Apply `default`, `standard`, `ci`, or `strict` as a run-level preset. |
 | `--exclude` | `--exclude=PATH` or `--exclude PATH` | Exclude a path. Repeatable. |
 | `--format` | `--format=text|json|markdown|sarif` | Output format. Default is `text`. |
 | `--json` | flag | Alias for `--format=json`. |
@@ -276,7 +277,7 @@ Options:
 | Option | Form | Meaning |
 | --- | --- | --- |
 | `--config` | `--config=FILE` or `--config FILE` | Read checker settings from a specific config file. |
-| `--preset` | `--preset=NAME` or `--preset NAME` | Apply `phpstorm`, `standard`, or `strict` as a run-level preset. |
+| `--preset` | `--preset=NAME` or `--preset NAME` | Apply `default`, `standard`, `ci`, or `strict` as a run-level preset. |
 | `--exclude` | `--exclude=PATH` or `--exclude PATH` | Exclude a path. Repeatable. |
 | `--format` | `--format=text|json|markdown|sarif` | Output format. Default is `text`. |
 | `--json` | flag | Alias for `--format=json`. |
@@ -337,7 +338,7 @@ Options:
 | Option | Form | Meaning |
 | --- | --- | --- |
 | `--config` | `--config=FILE` or `--config FILE` | Read checker settings from a specific config file. |
-| `--preset` | `--preset=NAME` or `--preset NAME` | Apply `phpstorm`, `standard`, or `strict` as a run-level preset. |
+| `--preset` | `--preset=NAME` or `--preset NAME` | Apply `default`, `standard`, `ci`, or `strict` as a run-level preset. |
 | `--exclude` | `--exclude=PATH` or `--exclude PATH` | Exclude a path. Repeatable. |
 | `--public-only` | flag | Ignore protected class members. |
 | `--include-protected` | flag | Include protected members. This is the default. |
@@ -394,7 +395,7 @@ Options:
 | Option | Form | Meaning |
 | --- | --- | --- |
 | `--config` | `--config=FILE` or `--config FILE` | Read checker settings from a specific config file. |
-| `--preset` | `--preset=NAME` or `--preset NAME` | Apply `phpstorm`, `standard`, or `strict` as a run-level preset. |
+| `--preset` | `--preset=NAME` or `--preset NAME` | Apply `default`, `standard`, `ci`, or `strict` as a run-level preset. |
 | `--exclude` | `--exclude=PATH` or `--exclude PATH` | Exclude a path. Repeatable. |
 | `--mode` | `--mode=gate` or `--mode=audit` | `gate` runs token matching; `audit` also enables statement matching and near-miss matching. |
 | `--min-lines` | `--min-lines=N` | Minimum duplicated line span. Values below `1` become `1`. |
@@ -648,7 +649,7 @@ Composer scripts:
 | --- | --- |
 | `composer test` | `vendor/bin/pest -c pest.xml` |
 | `composer lint` | `php bin/phpprobe syntax src tests` |
-| `composer duplicates` | `php bin/phpprobe duplicates --preset=standard --config=resources/phpprobe.json --baseline=resources/.phpprobe-duplicates-baseline.json src tests` |
+| `composer duplicates` | `php bin/phpprobe duplicates --preset=ci --config=resources/phpprobe.json --baseline=resources/.phpprobe-duplicates-baseline.json src tests` |
 | `composer api` | `php bin/phpprobe api --config=resources/phpprobe.json src tests` |
 | `composer comments` | `php bin/phpprobe comments --config=resources/phpprobe.json src tests` |
 

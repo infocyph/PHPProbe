@@ -333,7 +333,7 @@ it('uses duplicate presets from config and CLI overrides', function (): void {
 
     mkdir($src, 0755, true);
     file_put_contents($root.DIRECTORY_SEPARATOR.'phpprobe.json', json_encode([
-        'preset' => 'standard',
+        'preset' => 'ci',
         'duplicates' => [
             'paths' => ['src'],
             'min_lines' => 5,

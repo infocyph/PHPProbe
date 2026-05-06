@@ -64,7 +64,7 @@ final class SyntaxChecker
             '',
             'Options:',
             '  --config=FILE                    read PHPProbe checker settings',
-            '  --preset=NAME                    apply preset: phpstorm, standard, or strict',
+            '  --preset=NAME                    apply preset: default, standard, ci, or strict',
             '  --exclude=PATH                   skip a path (repeatable)',
             '  --format=text|json|markdown|sarif output format (default: text)',
             '  --json                           alias for --format=json',

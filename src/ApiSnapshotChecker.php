@@ -94,7 +94,7 @@ final class ApiSnapshotChecker
             '',
             'Options:',
             '  --config=FILE                    read PHPProbe checker settings',
-            '  --preset=NAME                    apply preset: phpstorm, standard, or strict',
+            '  --preset=NAME                    apply preset: default, standard, ci, or strict',
             '  --exclude=PATH                   skip a path (repeatable)',
             '  --public-only                    ignore protected members',
             '  --include-protected              include protected members (default)',

@@ -11,7 +11,7 @@ final readonly class PresetRepository
      */
     public function names(): array
     {
-        return ['phpstorm', 'standard', 'strict'];
+        return ['default', 'standard', 'ci', 'strict'];
     }
 
     public function config(string $name): PhpProbeConfig
@@ -30,6 +30,14 @@ final readonly class PresetRepository
     private function normalize(string $name): string
     {
         $normalized = strtolower(trim($name));
+        $aliases = [
+            'phpstorm' => 'standard',
+            'legacy-standard' => 'ci',
+        ];
+
+        if (isset($aliases[$normalized])) {
+            $normalized = $aliases[$normalized];
+        }
 
         if (!in_array($normalized, $this->names(), true)) {
             throw new \InvalidArgumentException(sprintf(

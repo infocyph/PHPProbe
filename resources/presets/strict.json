@@ -18,7 +18,13 @@
       "storage",
       "bootstrap/cache",
       "var/cache"
-    ]
+    ],
+    "format": "text",
+    "json": false,
+    "summary_json": "",
+    "changed_only": false,
+    "changed_base": "",
+    "parallel": 1
   },
   "duplicates": {
     "paths": [],
@@ -51,7 +57,16 @@
     "min_similarity": 0.8,
     "baseline": "",
     "write_baseline": "",
-    "json": false
+    "format": "text",
+    "json": false,
+    "fail_on": "warning",
+    "summary_json": "",
+    "changed_only": false,
+    "changed_base": "",
+    "cache": {
+      "enabled": true,
+      "file": ".phpprobe-duplicates-cache.json"
+    }
   },
   "api": {
     "paths": [],
@@ -76,6 +91,137 @@
     "include_protected": true,
     "baseline": "",
     "write_baseline": "",
-    "json": false
+    "format": "text",
+    "json": false,
+    "fail_on": "warning",
+    "summary_json": "",
+    "changed_only": false,
+    "changed_base": ""
+  },
+  "comments": {
+    "paths": [],
+    "exclude": [
+      "tests",
+      "vendor",
+      "node_modules",
+      ".git",
+      ".idea",
+      ".vscode",
+      "coverage",
+      ".phpunit.cache",
+      ".psalm-cache",
+      "build",
+      "dist",
+      "tmp",
+      ".tmp",
+      "storage",
+      "bootstrap/cache",
+      "var/cache"
+    ],
+    "format": "text",
+    "json": false,
+    "fail_on": "error",
+    "summary_json": "",
+    "changed_only": false,
+    "changed_base": "",
+    "scan_markers": true,
+    "marker_tags": [
+      "TODO",
+      "FIXME",
+      "BUG",
+      "HACK",
+      "XXX",
+      "NOTE",
+      "OPTIMIZE",
+      "REFACTOR",
+      "DEPRECATED",
+      "SECURITY",
+      "REVIEW",
+      "QUESTION",
+      "WARNING"
+    ],
+    "marker_severity": {
+      "SECURITY": "critical",
+      "BUG": "high",
+      "FIXME": "high",
+      "HACK": "medium",
+      "XXX": "medium",
+      "WARNING": "medium",
+      "TODO": "low",
+      "OPTIMIZE": "low",
+      "REFACTOR": "low",
+      "DEPRECATED": "low",
+      "REVIEW": "info",
+      "QUESTION": "info",
+      "NOTE": "info"
+    }
+  },
+  "commented_out_code": {
+    "enabled": true,
+    "policy": "strict",
+    "allowed_reason_tags": [
+      "TODO",
+      "FIXME",
+      "BUG",
+      "HACK",
+      "SECURITY",
+      "REVIEW",
+      "DEPRECATED"
+    ],
+    "optional_reason_tags": [
+      "TEMP",
+      "DEBUG",
+      "EXPERIMENTAL"
+    ],
+    "allow_optional_reason_tags_in_strict_mode": false,
+    "ignore_paths": [],
+    "suppression": {
+      "enabled": true,
+      "directive": "@phpprobe-ignore"
+    },
+    "min_reason_length": 16,
+    "max_allowed_block_lines": 6,
+    "require_issue_for_blocks_longer_than": 2,
+    "allowed_issue_patterns": [
+      "/#\\d+/",
+      "/[A-Z]+-\\d+/"
+    ],
+    "single_line_comments": {
+      "allow_blank_line_between_reason_and_code": false
+    },
+    "block_comments": {
+      "allow_reason_before_block_comment": true,
+      "allow_blank_line_between_reason_and_code": true
+    },
+    "phpdoc_comments": {
+      "allow_documentation_examples": true,
+      "example_labels": [
+        "Example:",
+        "Examples:",
+        "Usage:",
+        "Snippet:",
+        "Code sample:"
+      ]
+    },
+    "finding_severity": {
+      "comment_marker": "info",
+      "commented_out_code_without_reason": "warning",
+      "commented_out_code_without_valid_tag": "warning",
+      "commented_out_code_without_valid_reason": "warning",
+      "commented_out_code_with_weak_reason": "warning",
+      "commented_out_code_with_valid_reason": "info",
+      "commented_out_code_block_too_large": "error",
+      "commented_out_code_requires_issue_reference": "warning",
+      "commented_out_code_in_phpdoc_without_example_label": "warning",
+      "invalid_suppression_rule": "warning"
+    },
+    "finding_severity_strict": {
+      "commented_out_code_without_reason": "error",
+      "commented_out_code_without_valid_tag": "error",
+      "commented_out_code_without_valid_reason": "error",
+      "commented_out_code_with_weak_reason": "error",
+      "commented_out_code_block_too_large": "error",
+      "invalid_suppression_rule": "error"
+    }
   }
 }

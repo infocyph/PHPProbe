@@ -101,7 +101,7 @@ final class DuplicateChecker
             'Options:',
             '  --mode=gate|audit                gate is deterministic; audit enables structural matching',
             '  --config=FILE                    read PHPProbe checker settings',
-            '  --preset=NAME                    apply preset: phpstorm, standard, or strict',
+            '  --preset=NAME                    apply preset: default, standard, ci, or strict',
             '  --exclude=PATH                   skip a path (repeatable)',
             '  --min-lines=N                    minimum duplicated lines (default: 5)',
             '  --min-tokens=N                   token fingerprint window size (default: 70)',
