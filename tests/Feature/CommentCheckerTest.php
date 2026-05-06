@@ -201,6 +201,84 @@ PHP);
         ->and($types)->not()->toContain('commented_out_code_in_phpdoc_without_example_label');
 });
 
+it('supports disabling comment rules from config', function (): void {
+    $root = makeCommentCheckerFixture();
+    $src = $root.DIRECTORY_SEPARATOR.'src';
+
+    mkdir($src, 0755, true);
+    file_put_contents($root.DIRECTORY_SEPARATOR.'phpprobe.json', json_encode([
+        'comments' => [
+            'paths' => ['src'],
+            'rules' => [
+                'comment_marker' => [
+                    'enabled' => false,
+                ],
+            ],
+        ],
+    ], JSON_PRETTY_PRINT));
+    file_put_contents($src.DIRECTORY_SEPARATOR.'Marker.php', <<<'PHP'
+<?php
+
+// SECURITY(auth): inspect token logging before release
+final class Marker
+{
+}
+PHP);
+
+    try {
+        $run = runCommentCheckerCommand($root, ['--json', '--fail-on=info']);
+    } finally {
+        removeCommentCheckerFixture($root);
+    }
+
+    $result = json_decode($run['stdout'], true);
+
+    expect($run['exitCode'])->toBe(0)
+        ->and($result['findings'])->toBe([]);
+});
+
+it('supports overriding comment rule severity from config', function (): void {
+    $root = makeCommentCheckerFixture();
+    $src = $root.DIRECTORY_SEPARATOR.'src';
+
+    mkdir($src, 0755, true);
+    file_put_contents($root.DIRECTORY_SEPARATOR.'phpprobe.json', json_encode([
+        'comments' => [
+            'paths' => ['src'],
+            'rules' => [
+                'commented_out_code_with_weak_reason' => [
+                    'severity' => 'info',
+                ],
+            ],
+        ],
+    ], JSON_PRETTY_PRINT));
+    file_put_contents($src.DIRECTORY_SEPARATOR.'WeakReason.php', <<<'PHP'
+<?php
+
+// TODO: later
+// $legacy = $service->oldMethod();
+final class WeakReason
+{
+}
+PHP);
+
+    try {
+        $run = runCommentCheckerCommand($root, ['--json', '--fail-on=warning']);
+    } finally {
+        removeCommentCheckerFixture($root);
+    }
+
+    $result = json_decode($run['stdout'], true);
+    $weak = array_values(array_filter(
+        $result['findings'],
+        static fn(array $finding): bool => $finding['type'] === 'commented_out_code_with_weak_reason',
+    ));
+
+    expect($run['exitCode'])->toBe(0)
+        ->and($weak)->toHaveCount(1)
+        ->and($weak[0]['severity'])->toBe('info');
+});
+
 it('rejects unknown comment checker options', function (): void {
     $root = makeCommentCheckerFixture();
 

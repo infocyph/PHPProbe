@@ -71,6 +71,31 @@ it('supports fail-on=error to report drift without failing exit code', function 
         ->and($result['changed'])->toBeTrue();
 });
 
+it('includes impact classification for changed symbols', function (): void {
+    $root = makeApiSnapshotCheckerFixture();
+    $src = $root.DIRECTORY_SEPARATOR.'src';
+    $baseline = $root.DIRECTORY_SEPARATOR.'api-baseline.json';
+
+    mkdir($src, 0755, true);
+    file_put_contents($src.DIRECTORY_SEPARATOR.'Contract.php', apiContractFixture('string'));
+
+    try {
+        runApiSnapshotCheckerCommand($root, ['--write-baseline='.$baseline, 'src']);
+        file_put_contents($src.DIRECTORY_SEPARATOR.'Contract.php', apiContractFixture('int'));
+        $run = runApiSnapshotCheckerCommand($root, ['--json', '--baseline='.$baseline, 'src']);
+    } finally {
+        removeApiSnapshotCheckerFixture($root);
+    }
+
+    $result = json_decode($run['stdout'], true);
+    $changed = $result['classifications']['changed'][0] ?? null;
+
+    expect($run['exitCode'])->toBe(1)
+        ->and($result['impact']['breaking'])->toBeGreaterThanOrEqual(1)
+        ->and($changed['impact'] ?? null)->toBe('breaking')
+        ->and((string) ($changed['reason'] ?? ''))->toContain('Member signature changed');
+});
+
 it('can ignore protected members for public-only snapshots', function (): void {
     $root = makeApiSnapshotCheckerFixture();
     $src = $root.DIRECTORY_SEPARATOR.'src';

@@ -56,7 +56,7 @@ final readonly class PhpProbeConfig
         $values = $this->duplicateSectionValues($bundle['section']);
         [$mode, $normalize, $fuzzy, $nearMiss, $baseline, $writeBaseline] = $values['scalars'];
         [$minLines, $minTokens, $minStatements] = $values['thresholds'];
-        [$minSimilarity, $cacheEnabled, $cacheFile] = $values['optional'];
+        [$minSimilarity, $cacheEnabled, $cacheFile, $ignoreFingerprints] = $values['optional'];
 
         $this->applyDuplicateScalarOptions(
             $options,
@@ -71,6 +71,7 @@ final readonly class PhpProbeConfig
         $this->applyDuplicateThresholdOptions($options, $minLines, $minTokens, $minStatements);
         $this->applyControlsFromBundle($options, $bundle);
         $this->applyDuplicateCacheAndSimilarity($options, $minSimilarity, $cacheEnabled, $cacheFile);
+        $this->assignIfListNotEmpty($options, 'ignoreFingerprints', $ignoreFingerprints);
 
         return $options;
     }
@@ -137,6 +138,7 @@ final readonly class PhpProbeConfig
         $phpdoc = ArrayShape::stringKeyed($this->value($commentedOut, 'phpdoc_comments'));
         $typeSeverity = $this->stringMap($this->value($commentedOut, 'finding_severity'));
         $strictSeverity = $this->stringMap($this->value($commentedOut, 'finding_severity_strict'));
+        ['enabled' => $ruleEnabled, 'severity' => $ruleSeverity] = $this->commentRules($comments);
 
         $this->applyControlsFromBundle($options, $bundle);
 
@@ -197,9 +199,11 @@ final readonly class PhpProbeConfig
         foreach ([
             'typeSeverity' => $typeSeverity,
             'strictSeverity' => $strictSeverity,
+            'ruleSeverity' => $ruleSeverity,
         ] as $key => $value) {
             $this->assignIfMapNotEmpty($options, $key, $value);
         }
+        $this->assignIfMapNotEmpty($options, 'ruleEnabled', $ruleEnabled);
 
         return $options;
     }
@@ -549,7 +553,7 @@ final readonly class PhpProbeConfig
 
     /**
      * @param array<string, mixed> $section
-     * @return array{scalars:array{?string,?bool,?bool,?bool,?string,?string},thresholds:array{?int,?int,?int},optional:array{?float,?bool,?string}}
+     * @return array{scalars:array{?string,?bool,?bool,?bool,?string,?string},thresholds:array{?int,?int,?int},optional:array{?float,?bool,?string,list<string>}}
      */
     private function duplicateSectionValues(array $section): array
     {
@@ -573,8 +577,40 @@ final readonly class PhpProbeConfig
                 $this->floatValue($section, 'min_similarity'),
                 $this->boolValue($cache, 'enabled'),
                 $this->stringValue($cache, 'file'),
+                $this->stringList($this->value($section, 'ignore_fingerprints')),
             ],
         ];
+    }
+
+    /**
+     * @param array<string, mixed> $comments
+     * @return array{enabled:array<string,bool>,severity:array<string,string>}
+     */
+    private function commentRules(array $comments): array
+    {
+        $rules = ArrayShape::stringKeyed($this->value($comments, 'rules'));
+        $enabled = [];
+        $severity = [];
+
+        foreach ($rules as $rule => $config) {
+            if (!is_string($rule)) {
+                continue;
+            }
+
+            $entry = ArrayShape::stringKeyed($config);
+            $ruleEnabled = $this->boolValue($entry, 'enabled');
+            $ruleSeverity = $this->stringValue($entry, 'severity');
+
+            if ($ruleEnabled !== null) {
+                $enabled[$rule] = $ruleEnabled;
+            }
+
+            if (is_string($ruleSeverity) && trim($ruleSeverity) !== '') {
+                $severity[$rule] = strtolower(trim($ruleSeverity));
+            }
+        }
+
+        return ['enabled' => $enabled, 'severity' => $severity];
     }
 
     /**

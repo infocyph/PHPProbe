@@ -23,12 +23,16 @@ if (!class_exists(Cli::class)) {
     require __DIR__ . '/../src/Util/ProjectPath.php';
     require __DIR__ . '/../src/Util/Sarif.php';
     require __DIR__ . '/../src/Util/SummaryJson.php';
+    require __DIR__ . '/../src/Util/BaselineJson.php';
+    require __DIR__ . '/../src/Util/CheckerRuntime.php';
+    require __DIR__ . '/../src/Util/GithubAnnotation.php';
     require __DIR__ . '/../src/Console/Ansi.php';
     require __DIR__ . '/../src/Process/ProcessResult.php';
     require __DIR__ . '/../src/Process/ProcRunner.php';
     require __DIR__ . '/../src/Config/Paths.php';
     require __DIR__ . '/../src/Config/PhpProbeConfig.php';
     require __DIR__ . '/../src/Config/CliOptions.php';
+    require __DIR__ . '/../src/Config/ConfigValidator.php';
     require __DIR__ . '/../src/Config/PresetRepository.php';
     require __DIR__ . '/../src/Filesystem/PhpFileFinder.php';
     require __DIR__ . '/../src/Comment/CommentFinding.php';
@@ -43,6 +47,9 @@ if (!class_exists(Cli::class)) {
     require __DIR__ . '/../src/ApiSnapshotChecker.php';
     require __DIR__ . '/../src/CommentChecker.php';
     require __DIR__ . '/../src/SyntaxChecker.php';
+    require __DIR__ . '/../src/Console/CheckCommand.php';
+    require __DIR__ . '/../src/Console/ConfigCommand.php';
+    require __DIR__ . '/../src/Console/InitCommand.php';
     require __DIR__ . '/../src/Console/Cli.php';
 }
 

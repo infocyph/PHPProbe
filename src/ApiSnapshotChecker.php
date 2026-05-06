@@ -11,6 +11,7 @@ use Infocyph\PHPProbe\Config\PhpProbeConfig;
 use Infocyph\PHPProbe\Console\Ansi;
 use Infocyph\PHPProbe\Util\BaselineJson;
 use Infocyph\PHPProbe\Util\CheckerRuntime;
+use Infocyph\PHPProbe\Util\GithubAnnotation;
 use Infocyph\PHPProbe\Util\Sarif;
 use Infocyph\PHPProbe\Util\SummaryJson;
 
@@ -93,7 +94,7 @@ final class ApiSnapshotChecker
             '  --include-protected              include protected members (default)',
             '  --baseline=FILE                  compare against a public API snapshot',
             '  --write-baseline[=FILE]          write the current public API snapshot and exit 0',
-            '  --format=text|json|markdown|sarif output format (default: text)',
+            '  --format=text|json|markdown|sarif|github output format (default: text)',
             '  --json                           alias for --format=json',
             '  --fail-on=error|warning|info     failure threshold (default: warning)',
             '  --summary-json=FILE              write machine-readable run summary',
@@ -186,7 +187,18 @@ final class ApiSnapshotChecker
     }
 
     /**
-     * @return array{snapshot:array<string, mixed>,baseline:array<string, mixed>,changed:bool,changes:array{added:list<string>,removed:list<string>,changed:list<string>}}
+     * @return array{
+     *     snapshot:array<string, mixed>,
+     *     baseline:array<string, mixed>,
+     *     changed:bool,
+     *     changes:array{added:list<string>,removed:list<string>,changed:list<string>},
+     *     classifications:array{
+     *         added:list<array{id:string,impact:string,reason:string}>,
+     *         removed:list<array{id:string,impact:string,reason:string}>,
+     *         changed:list<array{id:string,impact:string,reason:string}>
+     *     },
+     *     impact:array{breaking:int,additive:int,internal:int}
+     * }
      */
     private function result(array $snapshot, string $baselinePath): array
     {
@@ -220,6 +232,25 @@ final class ApiSnapshotChecker
         sort($added);
         sort($removed);
         sort($changed);
+        $classifications = [
+            'added' => array_map(static fn(string $id): array => ['id' => $id, 'impact' => 'additive', 'reason' => 'New symbol added.'], $added),
+            'removed' => array_map(static fn(string $id): array => ['id' => $id, 'impact' => 'breaking', 'reason' => 'Symbol removed.'], $removed),
+            'changed' => [],
+        ];
+
+        foreach ($changed as $id) {
+            $impact = $this->classifyChangedSymbol($currentSymbols[$id] ?? [], $baselineSymbols[$id] ?? []);
+            $classifications['changed'][] = ['id' => $id, ...$impact];
+        }
+
+        $impactCounts = ['breaking' => 0, 'additive' => 0, 'internal' => 0];
+
+        foreach (['added', 'removed', 'changed'] as $type) {
+            foreach ($classifications[$type] as $item) {
+                $level = $item['impact'];
+                $impactCounts[$level] = ($impactCounts[$level] ?? 0) + 1;
+            }
+        }
 
         return [
             'snapshot' => $snapshot,
@@ -230,7 +261,70 @@ final class ApiSnapshotChecker
                 'removed' => $removed,
                 'changed' => $changed,
             ],
+            'classifications' => $classifications,
+            'impact' => $impactCounts,
         ];
+    }
+
+    /**
+     * @param array<string, mixed> $current
+     * @param array<string, mixed> $baseline
+     * @return array{impact:string,reason:string}
+     */
+    private function classifyChangedSymbol(array $current, array $baseline): array
+    {
+        $kind = (string) ($current['kind'] ?? $baseline['kind'] ?? '');
+
+        if (in_array($kind, ['class', 'interface', 'trait', 'enum'], true)) {
+            $currentMembers = $this->membersById($current['members'] ?? []);
+            $baselineMembers = $this->membersById($baseline['members'] ?? []);
+
+            foreach ($baselineMembers as $id => $baselineMember) {
+                if (!isset($currentMembers[$id])) {
+                    return ['impact' => 'breaking', 'reason' => 'Member removed: ' . $id];
+                }
+
+                if (json_encode($currentMembers[$id], JSON_UNESCAPED_SLASHES) !== json_encode($baselineMember, JSON_UNESCAPED_SLASHES)) {
+                    return ['impact' => 'breaking', 'reason' => 'Member signature changed: ' . $id];
+                }
+            }
+
+            foreach ($currentMembers as $id => $_currentMember) {
+                if (!isset($baselineMembers[$id])) {
+                    return ['impact' => 'additive', 'reason' => 'New member added: ' . $id];
+                }
+            }
+
+            return ['impact' => 'internal', 'reason' => 'Class-like symbol changed without member-level drift.'];
+        }
+
+        if ($kind === 'function' || $kind === 'constant') {
+            return ['impact' => 'breaking', 'reason' => 'Callable/constant signature changed.'];
+        }
+
+        return ['impact' => 'internal', 'reason' => 'Symbol changed.'];
+    }
+
+    /**
+     * @return array<string, array<string, mixed>>
+     */
+    private function membersById(mixed $members): array
+    {
+        if (!is_array($members)) {
+            return [];
+        }
+
+        $index = [];
+
+        foreach ($members as $member) {
+            if (is_array($member) && is_string($member['id'] ?? null)) {
+                $index[$member['id']] = $member;
+            }
+        }
+
+        ksort($index);
+
+        return $index;
     }
 
     private function shouldFail(array $result, array $options): bool
@@ -265,6 +359,12 @@ final class ApiSnapshotChecker
 
         if ($options['format'] === 'sarif') {
             $this->writeSarif($result);
+
+            return;
+        }
+
+        if ($options['format'] === 'github') {
+            $this->writeGithub($result);
 
             return;
         }
@@ -391,6 +491,27 @@ final class ApiSnapshotChecker
         }
 
         fwrite(STDOUT, json_encode(Sarif::payload($results), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL);
+    }
+
+    /**
+     * @param array{snapshot:array<string, mixed>,baseline:array<string, mixed>,changed:bool,changes:array{added:list<string>,removed:list<string>,changed:list<string>},classifications:array{added:list<array{id:string,impact:string,reason:string}>,removed:list<array{id:string,impact:string,reason:string}>,changed:list<array{id:string,impact:string,reason:string}>},impact:array{breaking:int,additive:int,internal:int}} $result
+     */
+    private function writeGithub(array $result): void
+    {
+        foreach (['added', 'removed', 'changed'] as $type) {
+            foreach ($result['classifications'][$type] as $item) {
+                $level = $item['impact'] === 'breaking' ? 'error' : ($item['impact'] === 'additive' ? 'warning' : 'notice');
+                fwrite(STDOUT, GithubAnnotation::emit(
+                    $level,
+                    'PHPProbe api',
+                    sprintf('%s: %s (%s)', ucfirst($type), $item['id'], $item['reason']),
+                ) . PHP_EOL);
+            }
+        }
+
+        if (($result['changed'] ?? false) !== true) {
+            fwrite(STDOUT, GithubAnnotation::emit('notice', 'PHPProbe api', 'Public API unchanged.') . PHP_EOL);
+        }
     }
 
     /**

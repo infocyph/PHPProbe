@@ -35,14 +35,58 @@ php vendor/bin/phpprobe syntax [options] [paths...]
 php vendor/bin/phpprobe duplicates [options] [paths...]
 php vendor/bin/phpprobe api [options] [paths...]
 php vendor/bin/phpprobe comments [options] [paths...]
+php vendor/bin/phpprobe check [options] [paths...]
+php vendor/bin/phpprobe config validate [options]
+php vendor/bin/phpprobe init [options]
 php vendor/bin/phpprobe presets
 php vendor/bin/phpprobe preset <name>
 ```
 
 Unknown commands print the top-level usage and exit `0`. There is no separate `--version` command.
-For checker subcommands (`syntax`, `duplicates`, `api`, `comments`), unknown options fail with exit `2`.
+For checker subcommands (`syntax`, `duplicates`, `api`, `comments`, `check`), unknown options fail with exit `2`.
+
+## Onboarding (5 Minutes)
+
+Use this flow for a fresh project:
+
+1. Initialize config:
+
+```bash
+php vendor/bin/phpprobe init --preset=standard
+```
+
+2. Run all 4 tools together:
+
+```bash
+php vendor/bin/phpprobe check src tests
+```
+
+3. Add CI reports (optional):
+
+```bash
+php vendor/bin/phpprobe check --preset=standard --report-dir=build/reports src tests
+```
+
+4. If your project is a library, start API baseline flow:
+
+```bash
+php vendor/bin/phpprobe api --write-baseline=.phpprobe-api-baseline.json src
+php vendor/bin/phpprobe api --baseline=.phpprobe-api-baseline.json src
+```
+
+## Tool Map
+
+| Tool | Purpose | Typical command |
+| --- | --- | --- |
+| `syntax` | PHP parse/lint errors | `php vendor/bin/phpprobe syntax src` |
+| `duplicates` | clone and copy-paste detection | `php vendor/bin/phpprobe duplicates src` |
+| `api` | public API drift / BC checks | `php vendor/bin/phpprobe api --baseline=.phpprobe-api-baseline.json src` |
+| `comments` | TODO/FIXME markers and commented-out-code policy | `php vendor/bin/phpprobe comments src` |
+| `check` | run all four together | `php vendor/bin/phpprobe check src tests` |
 
 ## Quick Start
+
+Common examples:
 
 ```bash
 php vendor/bin/phpprobe syntax
@@ -57,9 +101,14 @@ php vendor/bin/phpprobe api --fail-on=error --format=markdown --baseline=.phppro
 php vendor/bin/phpprobe comments --fail-on=warning src
 php vendor/bin/phpprobe comments --strict --json src
 php vendor/bin/phpprobe comments --policy=strict --format=markdown src
+php vendor/bin/phpprobe check --preset=standard --report-dir=build/reports src tests
+php vendor/bin/phpprobe config validate --config=phpprobe.json
+php vendor/bin/phpprobe init --preset=standard --with-ci
 php vendor/bin/phpprobe presets
 php vendor/bin/phpprobe preset standard
 ```
+
+Detailed options and output contracts for each tool are documented in the sections below.
 
 ## Public API
 
@@ -155,6 +204,7 @@ A full project config may override any part of the selected preset:
     "min_similarity": 0.85,
     "baseline": "",
     "write_baseline": "",
+    "ignore_fingerprints": [],
     "json": false
   },
   "api": {
@@ -164,11 +214,26 @@ A full project config may override any part of the selected preset:
     "baseline": "",
     "write_baseline": "",
     "json": false
+  },
+  "comments": {
+    "paths": ["src"],
+    "exclude": ["src/generated"],
+    "scan_markers": true,
+    "fail_on": "error",
+    "rules": {
+      "comment_marker": {
+        "enabled": true
+      },
+      "commented_out_code_with_weak_reason": {
+        "severity": "warning"
+      }
+    }
   }
 }
 ```
 
 Config keys accept snake case, kebab case and camel case. For example, `min_tokens`, `min-tokens` and `minTokens` are equivalent. Excludes can be configured as either `exclude` or `exclude_paths`.
+`duplicates.ignore_fingerprints` suppresses known clone fingerprints without a baseline file. `comments.rules` lets you toggle rule `enabled` and override per-rule `severity`.
 
 Internal duplicate defaults, before any preset is applied, are `mode=gate`, `normalize=true`, `fuzzy=false`, `near_miss=false`, `min_lines=5`, `min_tokens=70`, `min_statements=4`, `min_similarity=0.85`, no baseline, no JSON output and no configured paths or excludes.
 
@@ -216,6 +281,62 @@ php vendor/bin/phpprobe preset standard
 
 `presets` prints one preset name per line. `preset <name>` prints the bundled JSON template. Unknown preset names print an error and exit `2`. Legacy alias `phpstorm` is still accepted and resolves to `standard`.
 
+## Combined Check Command
+
+`check` runs `syntax`, `duplicates`, `api`, and `comments` in sequence and returns a combined exit code.
+
+```bash
+php vendor/bin/phpprobe check [options] [paths...]
+```
+
+Options:
+
+| Option | Form | Meaning |
+| --- | --- | --- |
+| `--config` | `--config=FILE` | Read checker settings from a specific config file. |
+| `--preset` | `--preset=NAME` | Apply `default`, `standard`, `ci`, or `strict`. |
+| `--format` | `--format=text|json|markdown|sarif|github` | Combined output format. |
+| `--summary-json` | `--summary-json=FILE` | Write combined run summary JSON. |
+| `--report-dir` | `--report-dir=DIR` | Write per-checker `text/json/markdown/sarif` reports plus `summary.json`. |
+| `--changed-only` | flag | Scan only changed PHP files from Git diff. |
+| `--changed-base` | `--changed-base=REF` | Base ref used with `--changed-only`. |
+| `--fail-on` | `--fail-on=error|warning|info` | Passed to duplicates, api, and comments. |
+| `--help` | flag | Print command help. |
+
+Exit behavior:
+
+- If any checker exits `2`, combined exit is `2`.
+- Else if any checker exits non-zero, combined exit is `1`.
+- Otherwise combined exit is `0`.
+
+## Config Validate Command
+
+```bash
+php vendor/bin/phpprobe config validate [options]
+```
+
+Options:
+
+- `--config=FILE` (default `./phpprobe.json`)
+- `--json` (machine-readable result)
+- `--help`
+
+Returns `0` for valid config, `1` for schema/key/type validation errors, and `2` for missing/unreadable/invalid JSON files.
+
+## Init Command
+
+```bash
+php vendor/bin/phpprobe init [options]
+```
+
+Options:
+
+- `--preset=NAME` (`default`, `standard`, `ci`, `strict`; default `standard`)
+- `--path=FILE` (default `./phpprobe.json`)
+- `--with-ci` (also writes `.github/workflows/phpprobe.yml`)
+- `--force` (overwrite existing files)
+- `--help`
+
 ## Syntax Checker
 
 The syntax checker discovers PHP files, then runs PHP's native lint command against each file:
@@ -237,7 +358,7 @@ Options:
 | `--config` | `--config=FILE` or `--config FILE` | Read checker settings from a specific config file. |
 | `--preset` | `--preset=NAME` or `--preset NAME` | Apply `default`, `standard`, `ci`, or `strict` as a run-level preset. |
 | `--exclude` | `--exclude=PATH` or `--exclude PATH` | Exclude a path. Repeatable. |
-| `--format` | `--format=text|json|markdown|sarif` | Output format. Default is `text`. |
+| `--format` | `--format=text|json|markdown|sarif|github` | Output format. Default is `text`. |
 | `--json` | flag | Alias for `--format=json`. |
 | `--summary-json` | `--summary-json=FILE` | Write a machine-readable run summary JSON. |
 | `--changed-only` | flag | Scan only changed PHP files from Git diff. |
@@ -279,7 +400,7 @@ Options:
 | `--config` | `--config=FILE` or `--config FILE` | Read checker settings from a specific config file. |
 | `--preset` | `--preset=NAME` or `--preset NAME` | Apply `default`, `standard`, `ci`, or `strict` as a run-level preset. |
 | `--exclude` | `--exclude=PATH` or `--exclude PATH` | Exclude a path. Repeatable. |
-| `--format` | `--format=text|json|markdown|sarif` | Output format. Default is `text`. |
+| `--format` | `--format=text|json|markdown|sarif|github` | Output format. Default is `text`. |
 | `--json` | flag | Alias for `--format=json`. |
 | `--strict` | flag | Escalate commented-out-code policy severities. |
 | `--policy` | `--policy=relaxed|standard|strict` | Comment policy profile. |
@@ -289,6 +410,8 @@ Options:
 | `--changed-base` | `--changed-base=REF` | Base ref used with `--changed-only`. |
 | `--tags` | `--tags=TODO,FIXME,...` | Override marker tags for marker detection. |
 | `--help`, `-h` | flag | Print comments checker help and exit `0`. |
+
+Config-only option: `comments.rules` allows per-finding overrides such as `{ "comment_marker": { "enabled": false } }` or `{ "commented_out_code_with_weak_reason": { "severity": "info" } }`.
 
 ### Four enforced policies
 
@@ -344,7 +467,7 @@ Options:
 | `--include-protected` | flag | Include protected members. This is the default. |
 | `--baseline` | `--baseline=FILE` | Compare the current API against a snapshot file. |
 | `--write-baseline` | `--write-baseline`, `--write-baseline=FILE` | Write the current API snapshot and exit `0`. Bare flag writes `.phpprobe-api-baseline.json`. |
-| `--format` | `--format=text|json|markdown|sarif` | Output format. Default is `text`. |
+| `--format` | `--format=text|json|markdown|sarif|github` | Output format. Default is `text`. |
 | `--json` | flag | Alias for `--format=json`. |
 | `--fail-on` | `--fail-on=error|warning|info` | Failure threshold for API drift. Default is `warning`. |
 | `--summary-json` | `--summary-json=FILE` | Write a machine-readable run summary JSON. |
@@ -375,7 +498,7 @@ Output and exits:
 | No baseline passed | `stdout`: `Public API snapshot OK: N symbol(s) scanned.` | `0` |
 | Baseline matches | `stdout`: `Public API unchanged: N symbol(s) scanned.` | `0` |
 | Baseline differs | `stderr`: added/removed/changed symbol list | `1` by default, `0` when `--fail-on=error` |
-| `--format=json|markdown|sarif` | `stdout`: selected format payload | `0` or `1`, depending on drift and fail-on |
+| `--format=json|markdown|sarif|github` | `stdout`: selected format payload | `0` or `1`, depending on drift and fail-on |
 | `--write-baseline` | `stdout`: baseline message or JSON result | `0` |
 | Unknown option or runtime config/baseline error | `stderr`: error | `2` |
 | Unknown preset | `stderr`: preset error | `2` |
@@ -408,7 +531,7 @@ Options:
 | `--no-fuzzy` | flag | Disable fuzzy identifier/call normalization. |
 | `--baseline` | `--baseline=FILE` | Suppress clone groups whose fingerprints are already in a baseline file. |
 | `--write-baseline` | `--write-baseline`, `--write-baseline=FILE` | Write current clone fingerprints to a baseline and exit `0`. Bare flag writes `.phpprobe-duplicates-baseline.json`. |
-| `--format` | `--format=text|json|markdown|sarif` | Output format. Default is `text`. |
+| `--format` | `--format=text|json|markdown|sarif|github` | Output format. Default is `text`. |
 | `--json` | flag | Alias for `--format=json`. |
 | `--fail-on` | `--fail-on=error|warning|info` | Failure threshold. Default is `warning`. |
 | `--error-duplicate-percentage` | `--error-duplicate-percentage=N` | Error threshold used when `--fail-on=error`. Default `20`. |
@@ -418,6 +541,8 @@ Options:
 | `--no-cache` | flag | Disable duplicate result cache. |
 | `--cache-file` | `--cache-file=FILE` | Duplicate result cache path. |
 | `--help`, `-h` | flag | Print duplicate checker help and exit `0`. |
+
+Config-only option: `duplicates.ignore_fingerprints` accepts a list of clone fingerprints to suppress without using a baseline file.
 
 Exact accepted forms matter: numeric options, `--mode`, `--baseline` and valued `--write-baseline=FILE` are parsed in equals form. `--config`, `--preset` and `--exclude` also accept split form. `--write-baseline` may also be passed as a bare flag.
 
@@ -439,7 +564,7 @@ Output and exits:
 | --- | --- | --- |
 | No clone groups after baseline suppression | `stdout`: `No new duplicated code found (...)` plus summary | `0` |
 | Clone groups found | `stderr`: text report plus summary | `1` by default |
-| `--format=json|markdown|sarif` | `stdout`: selected format payload | depends on clone findings and fail-on |
+| `--format=json|markdown|sarif|github` | `stdout`: selected format payload | depends on clone findings and fail-on |
 | `--write-baseline` | `stdout`: baseline message or JSON result | `0` |
 | Unknown option or runtime config/baseline error | `stderr`: error | `2` |
 | Unknown preset | `stderr`: preset error | `2` |
@@ -567,6 +692,22 @@ Clone `source` is one of:
     "added": [],
     "removed": [],
     "changed": []
+  },
+  "classifications": {
+    "added": [],
+    "removed": [],
+    "changed": [
+      {
+        "id": "class App\\Service",
+        "impact": "breaking",
+        "reason": "Member signature changed: method App\\Service::run()"
+      }
+    ]
+  },
+  "impact": {
+    "breaking": 1,
+    "additive": 0,
+    "internal": 0
   }
 }
 ```
@@ -648,6 +789,7 @@ Composer scripts:
 | Script | Command |
 | --- | --- |
 | `composer test` | `vendor/bin/pest -c pest.xml` |
+| `composer check` | `php bin/phpprobe check --preset=standard --config=resources/phpprobe.json src tests` |
 | `composer lint` | `php bin/phpprobe syntax src tests` |
 | `composer duplicates` | `php bin/phpprobe duplicates --preset=standard --config=resources/phpprobe.json src tests` |
 | `composer api` | `php bin/phpprobe api --config=resources/phpprobe.json src tests` |
@@ -658,6 +800,7 @@ Useful local checks:
 ```bash
 composer validate --strict
 composer test
+composer check
 composer lint
 composer duplicates
 composer api

@@ -11,6 +11,7 @@ use Infocyph\PHPProbe\Config\Paths;
 use Infocyph\PHPProbe\Config\PhpProbeConfig;
 use Infocyph\PHPProbe\Console\Ansi;
 use Infocyph\PHPProbe\Util\CheckerRuntime;
+use Infocyph\PHPProbe\Util\GithubAnnotation;
 use Infocyph\PHPProbe\Util\Sarif;
 use Infocyph\PHPProbe\Util\SummaryJson;
 
@@ -130,6 +131,8 @@ final class CommentChecker
                 'commented_out_code_block_too_large' => 'error',
                 'invalid_suppression_rule' => 'error',
             ],
+            'ruleEnabled' => [],
+            'ruleSeverity' => [],
         ];
     }
 
@@ -142,7 +145,7 @@ final class CommentChecker
             '  --config=FILE                    read PHPProbe checker settings',
             '  --preset=NAME                    apply preset: default, standard, ci, or strict',
             '  --exclude=PATH                   skip a path (repeatable)',
-            '  --format=text|json|markdown|sarif output format (default: text)',
+            '  --format=text|json|markdown|sarif|github output format (default: text)',
             '  --json                           alias for --format=json',
             '  --summary-json=FILE              write machine-readable run summary',
             '  --strict                         enforce strict policy severities',
@@ -315,6 +318,7 @@ final class CommentChecker
             'json' => $this->writeJson($result),
             'markdown' => $this->writeMarkdown($result, $options, $failed),
             'sarif' => $this->writeSarif($result),
+            'github' => $this->writeGithub($result),
             default => $this->writeText($result, $options, $failed),
         };
     }
@@ -447,6 +451,32 @@ final class CommentChecker
         }
 
         fwrite(STDOUT, json_encode(Sarif::payload($results), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL);
+    }
+
+    /**
+     * @param array{files:int,findings:list<CommentFinding>,suppressed_count:int} $result
+     */
+    private function writeGithub(array $result): void
+    {
+        foreach ($result['findings'] as $finding) {
+            $level = match (strtolower($finding->severity)) {
+                'error', 'critical', 'high' => 'error',
+                'warning', 'medium' => 'warning',
+                default => 'notice',
+            };
+
+            fwrite(STDOUT, GithubAnnotation::emit(
+                $level,
+                'PHPProbe comments',
+                sprintf('%s (%s)', $finding->message, $finding->type),
+                $finding->file,
+                $finding->line,
+            ) . PHP_EOL);
+        }
+
+        if ($result['findings'] === []) {
+            fwrite(STDOUT, GithubAnnotation::emit('notice', 'PHPProbe comments', 'No comment policy findings.') . PHP_EOL);
+        }
     }
 
     private function sarifLevel(string $severity): string

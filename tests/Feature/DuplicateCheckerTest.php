@@ -182,6 +182,41 @@ it('can write and use a duplicate baseline', function (): void {
         ->and($checkResult['clones'])->toBe([]);
 });
 
+it('supports ignoring duplicate fingerprints from config', function (): void {
+    $root = makeDuplicateCheckerFixture();
+    $src = $root.DIRECTORY_SEPARATOR.'src';
+    $fingerprint = '';
+
+    mkdir($src, 0755, true);
+    file_put_contents($src.DIRECTORY_SEPARATOR.'One.php', duplicateBaselineFixture('One'));
+    file_put_contents($src.DIRECTORY_SEPARATOR.'Two.php', duplicateBaselineFixture('Two'));
+
+    try {
+        $first = runDuplicateCheckerCommand($root, ['--json', '--fuzzy', '--min-lines=5', '--min-tokens=20', 'src']);
+        $initial = json_decode($first['stdout'], true);
+        $fingerprint = $initial['clones'][0]['fingerprint'] ?? '';
+        file_put_contents($root.DIRECTORY_SEPARATOR.'phpprobe.json', json_encode([
+            'duplicates' => [
+                'paths' => ['src'],
+                'fuzzy' => true,
+                'min_lines' => 5,
+                'min_tokens' => 20,
+                'ignore_fingerprints' => [$fingerprint],
+            ],
+        ], JSON_PRETTY_PRINT));
+        $second = runDuplicateCheckerCommand($root, ['--json']);
+    } finally {
+        removeDuplicateCheckerFixture($root);
+    }
+
+    $result = json_decode($second['stdout'], true);
+
+    expect($first['exitCode'])->toBe(1)
+        ->and($fingerprint)->not()->toBe('')
+        ->and($second['exitCode'])->toBe(0)
+        ->and($result['clones'])->toBe([]);
+});
+
 it('loads duplicate options and paths from phpprobe config', function (): void {
     $root = makeDuplicateCheckerFixture();
     $configured = $root.DIRECTORY_SEPARATOR.'configured';

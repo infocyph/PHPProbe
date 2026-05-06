@@ -31,7 +31,9 @@ final class CommentScanner
      *     suppressionDirective?:string,
      *     strict:bool,
      *     typeSeverity:array<string,string>,
-     *     strictSeverity:array<string,string>
+     *     strictSeverity:array<string,string>,
+     *     ruleEnabled?:array<string,bool>,
+     *     ruleSeverity?:array<string,string>
      * } $options
      * @return array{files:int,findings:list<CommentFinding>,suppressed_count:int}
      */
@@ -48,12 +50,53 @@ final class CommentScanner
             $findings = [...$findings, ...$activeFindings];
         }
 
-        usort(
-            $findings,
-            static fn(CommentFinding $left, CommentFinding $right): int => [$left->file, $left->line, $left->endLine, $left->type] <=> [$right->file, $right->line, $right->endLine, $right->type],
-        );
+        $findings = $this->applyRuleOverrides($findings, $options);
+        usort($findings, static fn(CommentFinding $left, CommentFinding $right): int => [$left->file, $left->line, $left->endLine, $left->type] <=> [$right->file, $right->line, $right->endLine, $right->type]);
 
         return ['files' => count($files), 'findings' => $findings, 'suppressed_count' => $suppressedCount];
+    }
+
+    /**
+     * @param list<CommentFinding> $findings
+     * @param array{ruleEnabled?:array<string,bool>,ruleSeverity?:array<string,string>} $options
+     * @return list<CommentFinding>
+     */
+    private function applyRuleOverrides(array $findings, array $options): array
+    {
+        $enabled = is_array($options['ruleEnabled'] ?? null) ? $options['ruleEnabled'] : [];
+        $severity = is_array($options['ruleSeverity'] ?? null) ? $options['ruleSeverity'] : [];
+        $normalized = [];
+
+        foreach ($findings as $finding) {
+            if (($enabled[$finding->type] ?? true) !== true) {
+                continue;
+            }
+
+            $override = $severity[$finding->type] ?? null;
+
+            if (!is_string($override) || trim($override) === '') {
+                $normalized[] = $finding;
+
+                continue;
+            }
+
+            $normalized[] = new CommentFinding(
+                file: $finding->file,
+                line: $finding->line,
+                endLine: $finding->endLine,
+                type: $finding->type,
+                severity: strtolower(trim($override)),
+                message: $finding->message,
+                tag: $finding->tag,
+                scope: $finding->scope,
+                issue: $finding->issue,
+                owner: $finding->owner,
+                reason: $finding->reason,
+                raw: $finding->raw,
+            );
+        }
+
+        return $normalized;
     }
 
     /**

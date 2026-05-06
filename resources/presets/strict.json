@@ -57,6 +57,7 @@
     "min_similarity": 0.8,
     "baseline": "",
     "write_baseline": "",
+    "ignore_fingerprints": [],
     "format": "text",
     "json": false,
     "fail_on": "warning",
@@ -154,7 +155,8 @@
       "REVIEW": "info",
       "QUESTION": "info",
       "NOTE": "info"
-    }
+    },
+    "rules": {}
   },
   "commented_out_code": {
     "enabled": true,

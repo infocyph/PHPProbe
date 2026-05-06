@@ -11,6 +11,7 @@ use Infocyph\PHPProbe\Console\Ansi;
 use Infocyph\PHPProbe\Process\ProcessResult;
 use Infocyph\PHPProbe\Process\ProcRunner;
 use Infocyph\PHPProbe\Util\CheckerRuntime;
+use Infocyph\PHPProbe\Util\GithubAnnotation;
 use Infocyph\PHPProbe\Util\Sarif;
 use Infocyph\PHPProbe\Util\SummaryJson;
 
@@ -67,7 +68,7 @@ final class SyntaxChecker
             '  --config=FILE                    read PHPProbe checker settings',
             '  --preset=NAME                    apply preset: default, standard, ci, or strict',
             '  --exclude=PATH                   skip a path (repeatable)',
-            '  --format=text|json|markdown|sarif output format (default: text)',
+            '  --format=text|json|markdown|sarif|github output format (default: text)',
             '  --json                           alias for --format=json',
             '  --summary-json=FILE              write machine-readable run summary',
             '  --changed-only                   scan only changed PHP files from Git diff',
@@ -224,6 +225,7 @@ final class SyntaxChecker
             'json' => $this->writeJson($result),
             'markdown' => $this->writeMarkdown($result, $failed),
             'sarif' => $this->writeSarif($result),
+            'github' => $this->writeGithub($result),
             default => $this->writeText($result, $options, $failed),
         };
     }
@@ -324,6 +326,26 @@ final class SyntaxChecker
         }
 
         fwrite(STDOUT, json_encode(Sarif::payload($results), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL);
+    }
+
+    /**
+     * @param array{files_checked:int,failures:list<array{file:string,message:string}>} $result
+     */
+    private function writeGithub(array $result): void
+    {
+        foreach ($result['failures'] as $failure) {
+            fwrite(STDOUT, GithubAnnotation::emit(
+                'error',
+                'PHPProbe syntax',
+                trim($failure['message']),
+                $failure['file'],
+                1,
+            ) . PHP_EOL);
+        }
+
+        if ($result['failures'] === []) {
+            fwrite(STDOUT, GithubAnnotation::emit('notice', 'PHPProbe syntax', 'No syntax errors found.') . PHP_EOL);
+        }
     }
 
     /**

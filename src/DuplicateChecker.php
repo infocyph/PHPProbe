@@ -12,6 +12,7 @@ use Infocyph\PHPProbe\Detection\DuplicateCloneReducer;
 use Infocyph\PHPProbe\Detection\DuplicateDetectionEngine;
 use Infocyph\PHPProbe\Util\BaselineJson;
 use Infocyph\PHPProbe\Util\CheckerRuntime;
+use Infocyph\PHPProbe\Util\GithubAnnotation;
 use Infocyph\PHPProbe\Util\Sarif;
 use Infocyph\PHPProbe\Util\SummaryJson;
 
@@ -59,11 +60,25 @@ final class DuplicateChecker
             $result = $this->withoutBaselineClones($result, $options['baseline']);
         }
 
+        if (($options['ignoreFingerprints'] ?? []) !== []) {
+            $result = $this->withoutIgnoredFingerprints($result, $options['ignoreFingerprints']);
+        }
+
         if ($options['writeBaseline'] !== '') {
             $this->writeBaseline($result, $options['writeBaseline']);
         }
 
         return $result;
+    }
+
+    /**
+     * @param array{files:int,total_lines:int,duplicated_lines:int,duplicate_percentage:float,known_clones:int,new_clones:int,cache_hit:bool,clones:list<array{fingerprint:string,source:string,score:float,similarity:float,tokens:int,lines:int,statements:int,block_type:string,occurrences:list<array{file:string,start_line:int,end_line:int,lines:int,context:string}>}>} $result
+     * @param list<string> $fingerprints
+     * @return array{files:int,total_lines:int,duplicated_lines:int,duplicate_percentage:float,known_clones:int,new_clones:int,cache_hit:bool,clones:list<array{fingerprint:string,source:string,score:float,similarity:float,tokens:int,lines:int,statements:int,block_type:string,occurrences:list<array{file:string,start_line:int,end_line:int,lines:int,context:string}>}>}
+     */
+    private function withoutIgnoredFingerprints(array $result, array $fingerprints): array
+    {
+        return $this->withoutKnownFingerprints($result, array_fill_keys($fingerprints, true));
     }
 
     /**
@@ -92,6 +107,7 @@ final class DuplicateChecker
             'minSimilarity' => 0.85,
             'baseline' => '',
             'writeBaseline' => '',
+            'ignoreFingerprints' => [],
             'paths' => [],
             'excludes' => [],
         ];
@@ -116,7 +132,7 @@ final class DuplicateChecker
             '  --fuzzy                          also normalize identifiers/calls',
             '  --baseline=FILE                  suppress clone groups already in a baseline',
             '  --write-baseline[=FILE]          write current clone groups to a baseline and exit 0',
-            '  --format=text|json|markdown|sarif output format (default: text)',
+            '  --format=text|json|markdown|sarif|github output format (default: text)',
             '  --json                           alias for --format=json',
             '  --fail-on=error|warning|info     failure threshold (default: warning)',
             '  --summary-json=FILE              write machine-readable run summary',
@@ -416,8 +432,20 @@ final class DuplicateChecker
             return $result;
         }
 
-        $result['clones'] = array_values(array_filter($result['clones'], static fn(array $clone): bool => !isset($known[$clone['fingerprint']])));
+        $result = $this->withoutKnownFingerprints($result, $known);
         $result['known_clones'] = count($known);
+
+        return $result;
+    }
+
+    /**
+     * @param array{files:int,total_lines:int,duplicated_lines:int,duplicate_percentage:float,known_clones:int,new_clones:int,cache_hit:bool,clones:list<array{fingerprint:string,source:string,score:float,similarity:float,tokens:int,lines:int,statements:int,block_type:string,occurrences:list<array{file:string,start_line:int,end_line:int,lines:int,context:string}>}>} $result
+     * @param array<string, true> $known
+     * @return array{files:int,total_lines:int,duplicated_lines:int,duplicate_percentage:float,known_clones:int,new_clones:int,cache_hit:bool,clones:list<array{fingerprint:string,source:string,score:float,similarity:float,tokens:int,lines:int,statements:int,block_type:string,occurrences:list<array{file:string,start_line:int,end_line:int,lines:int,context:string}>}>}
+     */
+    private function withoutKnownFingerprints(array $result, array $known): array
+    {
+        $result['clones'] = array_values(array_filter($result['clones'], static fn(array $clone): bool => !isset($known[$clone['fingerprint']])));
         $result['new_clones'] = count($result['clones']);
         $result['duplicated_lines'] = (new DuplicateCloneReducer())->uniqueDuplicatedLines($result['clones']);
         $result['duplicate_percentage'] = $result['total_lines'] > 0
@@ -482,6 +510,12 @@ final class DuplicateChecker
 
         if ($options['format'] === 'sarif') {
             $this->writeSarif($result);
+
+            return;
+        }
+
+        if ($options['format'] === 'github') {
+            $this->writeGithub($result, $failed);
 
             return;
         }
@@ -619,6 +653,30 @@ final class DuplicateChecker
         }
 
         fwrite(STDOUT, json_encode(Sarif::payload($results), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL);
+    }
+
+    /**
+     * @param array{files:int,total_lines:int,duplicated_lines:int,duplicate_percentage:float,known_clones:int,new_clones:int,cache_hit:bool,clones:list<array{fingerprint:string,source:string,score:float,similarity:float,tokens:int,lines:int,statements:int,block_type:string,occurrences:list<array{file:string,start_line:int,end_line:int,lines:int,context:string}>}>} $result
+     */
+    private function writeGithub(array $result, bool $failed): void
+    {
+        $level = $failed ? 'error' : 'warning';
+
+        foreach ($result['clones'] as $clone) {
+            foreach ($clone['occurrences'] as $occurrence) {
+                fwrite(STDOUT, GithubAnnotation::emit(
+                    $level,
+                    'PHPProbe duplicates',
+                    sprintf('Duplicate clone (%s, %.0f%% similar)', $clone['source'], $clone['similarity'] * 100),
+                    $occurrence['file'],
+                    $occurrence['start_line'],
+                ) . PHP_EOL);
+            }
+        }
+
+        if ($result['clones'] === []) {
+            fwrite(STDOUT, GithubAnnotation::emit('notice', 'PHPProbe duplicates', 'No duplicate clone groups found.') . PHP_EOL);
+        }
     }
 
     /**

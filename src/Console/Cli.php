@@ -24,6 +24,9 @@ final class Cli
             'duplicates' => (new DuplicateChecker())->run(array_slice($argv, 2)),
             'api' => (new ApiSnapshotChecker())->run(array_slice($argv, 2)),
             'comments' => (new CommentChecker())->run(array_slice($argv, 2)),
+            'check' => (new CheckCommand())->run(array_slice($argv, 2)),
+            'init' => (new InitCommand())->run(array_slice($argv, 2)),
+            'config' => (new ConfigCommand())->run(array_slice($argv, 2)),
             'presets' => $this->presets(),
             'preset' => $this->preset((string) ($argv[2] ?? '')),
             default => $this->help(),
@@ -58,7 +61,7 @@ final class Cli
 
     private function help(): int
     {
-        fwrite(STDOUT, 'Usage: phpprobe syntax|duplicates|api|comments [options] [paths...] | presets | preset <name>' . PHP_EOL);
+        fwrite(STDOUT, 'Usage: phpprobe syntax|duplicates|api|comments|check [options] [paths...] | config validate | init [options] | presets | preset <name>' . PHP_EOL);
 
         return 0;
     }

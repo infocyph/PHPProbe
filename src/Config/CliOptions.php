@@ -63,7 +63,7 @@ final readonly class CliOptions
     /**
      * @param list<string> $allowed
      */
-    public function isAllowedFormat(string $format, array $allowed = ['text', 'json', 'markdown', 'sarif']): bool
+    public function isAllowedFormat(string $format, array $allowed = ['text', 'json', 'markdown', 'sarif', 'github']): bool
     {
         return in_array(strtolower(trim($format)), $allowed, true);
     }
@@ -71,7 +71,7 @@ final readonly class CliOptions
     /**
      * @param list<string> $allowed
      */
-    public function normalizeFormat(string $format, array $allowed = ['text', 'json', 'markdown', 'sarif']): string
+    public function normalizeFormat(string $format, array $allowed = ['text', 'json', 'markdown', 'sarif', 'github']): string
     {
         $normalized = strtolower(trim($format));
 
@@ -170,7 +170,7 @@ final readonly class CliOptions
      * @param array{format:string} $options
      * @param list<string> $allowed
      */
-    public function parseOutputFormat(array &$options, string $arg, array $allowed = ['text', 'json', 'markdown', 'sarif']): bool
+    public function parseOutputFormat(array &$options, string $arg, array $allowed = ['text', 'json', 'markdown', 'sarif', 'github']): bool
     {
         if ($arg === '--json') {
             $options['format'] = 'json';
