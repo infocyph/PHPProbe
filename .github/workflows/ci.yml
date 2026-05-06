@@ -108,12 +108,26 @@ jobs:
       - name: Run PHPForge tests
         working-directory: phpforge
         run: |
-          if composer run --list | grep -qE '^\s+test\s'; then
-            composer test
-          elif [ -x vendor/bin/pest ]; then
-            vendor/bin/pest --configuration=pest.xml
+          if [ -x vendor/bin/pest ]; then
+            if [ -f pest.xml ]; then
+              vendor/bin/pest --configuration=pest.xml
+            elif [ -f phpunit.xml ]; then
+              vendor/bin/pest --configuration=phpunit.xml
+            elif [ -f phpunit.xml.dist ]; then
+              vendor/bin/pest --configuration=phpunit.xml.dist
+            else
+              vendor/bin/pest
+            fi
           elif [ -x vendor/bin/phpunit ]; then
-            vendor/bin/phpunit
+            if [ -f phpunit.xml ]; then
+              vendor/bin/phpunit --configuration=phpunit.xml
+            elif [ -f phpunit.xml.dist ]; then
+              vendor/bin/phpunit --configuration=phpunit.xml.dist
+            else
+              vendor/bin/phpunit
+            fi
+          elif composer run --list | grep -qE '^\s+test\s'; then
+            composer test
           else
             echo "No supported PHPForge test command found." >&2
             exit 1
