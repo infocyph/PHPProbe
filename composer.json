@@ -47,7 +47,7 @@
     "scripts": {
         "test": "vendor/bin/pest --configuration=pest.xml",
         "lint": "@php bin/phpprobe syntax src tests",
-        "duplicates": "@php bin/phpprobe duplicates --preset=ci --config=resources/phpprobe.json --baseline=resources/.phpprobe-duplicates-baseline.json src tests",
+        "duplicates": "@php bin/phpprobe duplicates --preset=ci --config=resources/phpprobe.json src tests",
         "api": "@php bin/phpprobe api --config=resources/phpprobe.json src tests",
         "comments": "@php bin/phpprobe comments --config=resources/phpprobe.json src tests",
         "tests" : ["@test", "@lint", "@duplicates", "@api", "@comments"]
