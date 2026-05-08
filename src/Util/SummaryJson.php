@@ -7,6 +7,36 @@ namespace Infocyph\PHPProbe\Util;
 final class SummaryJson
 {
     /**
+     * @param array<string, mixed> $details
+     */
+    public static function writeCheckerSummary(
+        string $path,
+        string $checker,
+        int $exitCode,
+        string $failOn,
+        array $details,
+    ): void {
+        self::writeIfConfigured($path, [
+            'checker' => $checker,
+            'exit_code' => $exitCode,
+            'fail_on' => $failOn,
+            ...$details,
+        ]);
+    }
+
+    /**
+     * @param array<string, mixed> $summary
+     */
+    public static function writeIfConfigured(string $path, array $summary): void
+    {
+        if ($path === '') {
+            return;
+        }
+
+        self::write($path, $summary);
+    }
+
+    /**
      * @param array<string, mixed> $summary
      */
     public static function write(string $path, array $summary): void
@@ -22,9 +52,6 @@ final class SummaryJson
             );
         }
 
-        if (file_put_contents($path, $encoded) === false) {
-            throw new \RuntimeException(sprintf('Failed to write summary JSON file: %s', $path));
-        }
+        AtomicFileWriter::write($path, $encoded);
     }
 }
-

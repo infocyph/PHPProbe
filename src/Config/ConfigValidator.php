@@ -23,6 +23,24 @@ final class ConfigValidator
     ];
 
     /**
+     * @var array<string, list<string>>
+     */
+    private const ENUM_VALUES = [
+        'root.preset' => ['default', 'standard', 'ci', 'strict', 'phpstorm', 'legacy-standard'],
+        'syntax.format' => ['text', 'json', 'markdown', 'sarif', 'github'],
+        'duplicates.mode' => ['gate', 'audit'],
+        'duplicates.format' => ['text', 'json', 'markdown', 'sarif', 'github'],
+        'duplicates.fail_on' => ['error', 'warning', 'info'],
+        'api.format' => ['text', 'json', 'markdown', 'sarif', 'github'],
+        'api.fail_on' => ['error', 'warning', 'info'],
+        'comments.format' => ['text', 'json', 'markdown', 'sarif', 'github'],
+        'comments.fail_on' => ['error', 'warning', 'info'],
+        'comments.doc_mode' => ['heuristic', 'parser', 'hybrid'],
+        'comments.fail_confidence' => ['low', 'medium', 'high'],
+        'commented_out_code.policy' => ['relaxed', 'standard', 'strict'],
+    ];
+
+    /**
      * @return list<string>
      */
     public function validateFile(string $path): array
@@ -62,21 +80,28 @@ final class ConfigValidator
     }
 
     /**
-     * @param array<string, mixed> $root
-     * @param list<string> $errors
+     * @param array<string, string> $sectionSchema
+     * @return array<string, string>
      */
-    private function validateRoot(array $root, array &$errors): void
+    private function checkerSchema(array $sectionSchema): array
     {
-        $allowed = ['preset', 'syntax', 'duplicates', 'api', 'comments', 'commented_out_code'];
-        $this->validateUnknownKeys('root', $root, $allowed, $errors);
+        return [
+            ...self::CHECKER_SECTION_COMMON_SCHEMA,
+            ...$sectionSchema,
+        ];
+    }
 
-        if (isset($root['preset']) && !is_string($root['preset'])) {
-            $errors[] = 'root.preset must be a string.';
-        }
-
-        foreach ($this->sectionSchemas() as $name => $schema) {
-            $this->validateSection($name, $root[$name] ?? null, $schema, $errors);
-        }
+    private function matchesType(mixed $value, string $type): bool
+    {
+        return match ($type) {
+            'bool' => is_bool($value),
+            'string' => is_string($value),
+            'int' => is_int($value),
+            'number' => is_int($value) || is_float($value) || (is_string($value) && is_numeric($value)),
+            'object' => is_array($value) && ($value === [] || !array_is_list($value)),
+            'list' => is_string($value) || (is_array($value) && array_is_list($value)),
+            default => false,
+        };
     }
 
     /**
@@ -111,9 +136,18 @@ final class ConfigValidator
             ]),
             'comments' => $this->checkerSchema([
                 'scan_markers' => 'bool',
+                'doc_mode' => 'string',
+                'fail_confidence' => 'string',
+                'explain' => 'bool',
+                'doc_signature_consistency' => 'bool',
+                'doc_type_hygiene' => 'bool',
+                'baseline' => 'string',
+                'write_baseline' => 'string',
                 'marker_tags' => 'list',
                 'marker_severity' => 'object',
                 'rules' => 'object',
+                'custom_rules' => 'list',
+                'doc_cache' => 'object',
                 'fail_on' => 'string',
             ]),
             'commented_out_code' => [
@@ -137,30 +171,152 @@ final class ConfigValidator
         ];
     }
 
-    /**
-     * @param array<string, string> $sectionSchema
-     * @return array<string, string>
-     */
-    private function checkerSchema(array $sectionSchema): array
+    private function typeLabel(string $type): string
     {
-        return [
-            ...self::CHECKER_SECTION_COMMON_SCHEMA,
-            ...$sectionSchema,
+        /** @var array<string, string> $labels */
+        $labels = [
+            'bool' => 'a boolean',
+            'string' => 'a string',
+            'int' => 'an integer',
+            'number' => 'a number',
+            'object' => 'an object',
+            'list' => 'a string or list of strings',
         ];
+
+        return $labels[$type] ?? $type;
     }
 
     /**
-     * @param array<string, mixed> $section
-     * @param list<string> $allowed
+     * @param array<string, mixed> $comments
      * @param list<string> $errors
      */
-    private function validateUnknownKeys(string $name, array $section, array $allowed, array &$errors): void
+    private function validateCommentCustomRules(array $comments, array &$errors): void
     {
-        foreach ($section as $key => $_value) {
-            if (!in_array($key, $allowed, true)) {
-                $errors[] = sprintf('%s.%s is not a supported key.', $name, $key);
+        $rules = $comments['custom_rules'] ?? null;
+
+        if ($rules === null) {
+            return;
+        }
+
+        if (!is_array($rules) || !array_is_list($rules)) {
+            $errors[] = 'comments.custom_rules must be a list.';
+
+            return;
+        }
+
+        foreach ($rules as $index => $rule) {
+            if (!is_array($rule) || array_is_list($rule)) {
+                $errors[] = sprintf('comments.custom_rules[%d] must be an object.', $index);
+
+                continue;
+            }
+
+            $entry = ArrayShape::stringKeyed($rule);
+
+            if (!is_string($entry['id'] ?? null) || trim($entry['id']) === '') {
+                $errors[] = sprintf('comments.custom_rules[%d].id must be a non-empty string.', $index);
+            }
+
+            if (!is_string($entry['pattern'] ?? null) || trim($entry['pattern']) === '') {
+                $errors[] = sprintf('comments.custom_rules[%d].pattern must be a non-empty string.', $index);
+            }
+
+            if (isset($entry['severity']) && (!is_string($entry['severity']) || !in_array(strtolower(trim($entry['severity'])), ['error', 'critical', 'high', 'warning', 'medium', 'low', 'info'], true))) {
+                $errors[] = sprintf('comments.custom_rules[%d].severity must be one of: error, critical, high, warning, medium, low, info.', $index);
+            }
+
+            if (isset($entry['scope']) && (!is_string($entry['scope']) || !in_array(strtolower(trim($entry['scope'])), ['all', 'line', 'block', 'doc'], true))) {
+                $errors[] = sprintf('comments.custom_rules[%d].scope must be one of: all, line, block, doc.', $index);
+            }
+
+            if (isset($entry['enabled']) && !is_bool($entry['enabled'])) {
+                $errors[] = sprintf('comments.custom_rules[%d].enabled must be a boolean.', $index);
             }
         }
+    }
+
+    /**
+     * @param array<string, mixed> $comments
+     * @param list<string> $errors
+     */
+    private function validateCommentDocCache(array $comments, array &$errors): void
+    {
+        $cache = $comments['doc_cache'] ?? null;
+
+        if ($cache === null) {
+            return;
+        }
+
+        if (!is_array($cache) || array_is_list($cache)) {
+            $errors[] = 'comments.doc_cache must be an object.';
+
+            return;
+        }
+
+        $entry = ArrayShape::stringKeyed($cache);
+        $allowed = ['enabled', 'file'];
+        $this->validateUnknownKeys('comments.doc_cache', $entry, $allowed, $errors);
+
+        if (isset($entry['enabled']) && !is_bool($entry['enabled'])) {
+            $errors[] = 'comments.doc_cache.enabled must be a boolean.';
+        }
+
+        if (isset($entry['file']) && !is_string($entry['file'])) {
+            $errors[] = 'comments.doc_cache.file must be a string.';
+        }
+    }
+
+    /**
+     * @param list<string> $errors
+     */
+    private function validateEnumValue(string $section, string $key, mixed $value, array &$errors): void
+    {
+        if (!is_string($value)) {
+            return;
+        }
+
+        $enumKey = $section . '.' . $key;
+        $allowed = self::ENUM_VALUES[$enumKey] ?? null;
+
+        if (!is_array($allowed)) {
+            return;
+        }
+
+        $normalized = strtolower(trim($value));
+
+        if (in_array($normalized, $allowed, true)) {
+            return;
+        }
+
+        $errors[] = sprintf(
+            '%s.%s must be one of: %s.',
+            $section,
+            $key,
+            implode(', ', $allowed),
+        );
+    }
+
+    /**
+     * @param array<string, mixed> $root
+     * @param list<string> $errors
+     */
+    private function validateRoot(array $root, array &$errors): void
+    {
+        $allowed = ['preset', 'syntax', 'duplicates', 'api', 'comments', 'commented_out_code'];
+        $this->validateUnknownKeys('root', $root, $allowed, $errors);
+
+        if (isset($root['preset']) && !is_string($root['preset'])) {
+            $errors[] = 'root.preset must be a string.';
+        } elseif (is_string($root['preset'] ?? null)) {
+            $this->validateEnumValue('root', 'preset', $root['preset'], $errors);
+        }
+
+        foreach ($this->sectionSchemas() as $name => $schema) {
+            $this->validateSection($name, $root[$name] ?? null, $schema, $errors);
+        }
+
+        $this->validateCommentCustomRules(ArrayShape::stringKeyed($root['comments'] ?? []), $errors);
+        $this->validateCommentDocCache(ArrayShape::stringKeyed($root['comments'] ?? []), $errors);
     }
 
     /**
@@ -189,35 +345,25 @@ final class ConfigValidator
 
             if (!$this->matchesType($section[$key], $type)) {
                 $errors[] = sprintf('%s.%s must be %s.', $name, $key, $this->typeLabel($type));
+
+                continue;
             }
+
+            $this->validateEnumValue($name, $key, $section[$key], $errors);
         }
     }
 
-    private function matchesType(mixed $value, string $type): bool
+    /**
+     * @param array<string, mixed> $section
+     * @param list<string> $allowed
+     * @param list<string> $errors
+     */
+    private function validateUnknownKeys(string $name, array $section, array $allowed, array &$errors): void
     {
-        return match ($type) {
-            'bool' => is_bool($value),
-            'string' => is_string($value),
-            'int' => is_int($value),
-            'number' => is_int($value) || is_float($value) || (is_string($value) && is_numeric($value)),
-            'object' => is_array($value) && ($value === [] || !array_is_list($value)),
-            'list' => is_string($value) || (is_array($value) && array_is_list($value)),
-            default => false,
-        };
-    }
-
-    private function typeLabel(string $type): string
-    {
-        /** @var array<string, string> $labels */
-        $labels = [
-            'bool' => 'a boolean',
-            'string' => 'a string',
-            'int' => 'an integer',
-            'number' => 'a number',
-            'object' => 'an object',
-            'list' => 'a string or list of strings',
-        ];
-
-        return $labels[$type] ?? $type;
+        foreach ($section as $key => $_value) {
+            if (!in_array($key, $allowed, true)) {
+                $errors[] = sprintf('%s.%s is not a supported key.', $name, $key);
+            }
+        }
     }
 }

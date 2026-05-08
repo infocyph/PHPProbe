@@ -48,4 +48,3 @@ final class PhpCommentExtractor
         return 'line_comment';
     }
 }
-

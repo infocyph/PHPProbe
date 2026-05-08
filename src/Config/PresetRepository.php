@@ -6,14 +6,6 @@ namespace Infocyph\PHPProbe\Config;
 
 final readonly class PresetRepository
 {
-    /**
-     * @return non-empty-list<string>
-     */
-    public function names(): array
-    {
-        return ['default', 'standard', 'ci', 'strict'];
-    }
-
     public function config(string $name): PhpProbeConfig
     {
         return PhpProbeConfig::fromFile(Paths::preset($this->normalize($name)));
@@ -25,6 +17,14 @@ final readonly class PresetRepository
         $contents = file_get_contents($path);
 
         return is_string($contents) ? $contents : '{}';
+    }
+
+    /**
+     * @return non-empty-list<string>
+     */
+    public function names(): array
+    {
+        return ['default', 'standard', 'ci', 'strict'];
     }
 
     private function normalize(string $name): string

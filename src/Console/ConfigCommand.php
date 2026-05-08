@@ -21,6 +21,13 @@ final class ConfigCommand
         };
     }
 
+    private function help(): int
+    {
+        fwrite(STDOUT, 'Usage: phpprobe config validate [options]' . PHP_EOL);
+
+        return 0;
+    }
+
     /**
      * @param list<string> $args
      */
@@ -88,13 +95,6 @@ final class ConfigCommand
             '  --json           emit JSON result',
             '  --help           show this help',
         ]) . PHP_EOL);
-
-        return 0;
-    }
-
-    private function help(): int
-    {
-        fwrite(STDOUT, 'Usage: phpprobe config validate [options]' . PHP_EOL);
 
         return 0;
     }

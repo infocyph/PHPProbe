@@ -31,6 +31,15 @@ final class PhpFileFinder
         return $files;
     }
 
+    private function absolutePath(string $path): string
+    {
+        if (preg_match('/^[A-Za-z]:[\/\\\\]/', $path) === 1 || str_starts_with($path, DIRECTORY_SEPARATOR)) {
+            return $path;
+        }
+
+        return (getcwd() ?: '.') . DIRECTORY_SEPARATOR . $path;
+    }
+
     /**
      * @param list<string> $files
      * @param list<string> $paths
@@ -51,15 +60,6 @@ final class PhpFileFinder
         $changedLookup = array_fill_keys($changed, true);
 
         return array_values(array_filter($files, static fn(string $file): bool => isset($changedLookup[$file])));
-    }
-
-    private function absolutePath(string $path): string
-    {
-        if (preg_match('/^[A-Za-z]:[\/\\\\]/', $path) === 1 || str_starts_with($path, DIRECTORY_SEPARATOR)) {
-            return $path;
-        }
-
-        return (getcwd() ?: '.') . DIRECTORY_SEPARATOR . $path;
     }
 
     /**

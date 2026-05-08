@@ -13,6 +13,7 @@ use Infocyph\PHPProbe\Detection\DuplicateDetectionEngine;
 use Infocyph\PHPProbe\Util\BaselineJson;
 use Infocyph\PHPProbe\Util\CheckerRuntime;
 use Infocyph\PHPProbe\Util\GithubAnnotation;
+use Infocyph\PHPProbe\Util\ScopedTempFile;
 use Infocyph\PHPProbe\Util\Sarif;
 use Infocyph\PHPProbe\Util\SummaryJson;
 
@@ -36,16 +37,48 @@ final class DuplicateChecker
 
     /**
      * @param array<string, mixed> $options
-     * @param array{files:int,total_lines:int,duplicated_lines:int,duplicate_percentage:float,known_clones:int,new_clones:int,cache_hit:bool,clones:list<array{fingerprint:string,source:string,score:float,similarity:float,tokens:int,lines:int,statements:int,block_type:string,occurrences:list<array{file:string,start_line:int,end_line:int,lines:int,context:string}>}>} $result
+     * @return array{files:int,total_lines:int,duplicated_lines:int,duplicate_percentage:float,known_clones:int,new_clones:int,cache_hit:bool,clones:list<array{fingerprint:string,source:string,score:float,similarity:float,tokens:int,lines:int,statements:int,block_type:string,occurrences:list<array{file:string,start_line:int,end_line:int,lines:int,context:string}>}>}
      */
-    private function finishRun(array $result, array $options): int
+    private function analyzeWithCache(array $files, array $options): array
     {
-        $failed = $this->shouldFail($result, $options);
-        $exitCode = $options['writeBaseline'] === '' && $failed ? 1 : 0;
-        $this->writeResult($result, $options, $failed);
-        $this->writeSummaryJson($result, $options, $exitCode);
+        $engineOptions = [
+            'mode' => $options['mode'],
+            'normalize' => $options['normalize'],
+            'fuzzy' => $options['fuzzy'],
+            'nearMiss' => $options['nearMiss'],
+            'minLines' => $options['minLines'],
+            'minTokens' => $options['minTokens'],
+            'minStatements' => $options['minStatements'],
+            'minSimilarity' => $options['minSimilarity'],
+        ];
+        $cacheKey = $this->cacheKey($files, $engineOptions);
 
-        return $exitCode;
+        if ($options['cacheEnabled']) {
+            $cache = $this->loadCache($options['cacheFile']);
+
+            if (isset($cache[$cacheKey]) && is_array($cache[$cacheKey])) {
+                $hit = $cache[$cacheKey];
+
+                return [
+                    ...$hit,
+                    'cache_hit' => true,
+                ];
+            }
+        }
+
+        $result = (new DuplicateDetectionEngine())->analyze($files, $engineOptions);
+        $result['cache_hit'] = false;
+
+        if ($options['cacheEnabled']) {
+            $cache = $this->loadCache($options['cacheFile']);
+            $cache[$cacheKey] = [
+                ...$result,
+                'cache_hit' => false,
+            ];
+            $this->saveCache($options['cacheFile'], $cache);
+        }
+
+        return $result;
     }
 
     /**
@@ -72,13 +105,22 @@ final class DuplicateChecker
     }
 
     /**
-     * @param array{files:int,total_lines:int,duplicated_lines:int,duplicate_percentage:float,known_clones:int,new_clones:int,cache_hit:bool,clones:list<array{fingerprint:string,source:string,score:float,similarity:float,tokens:int,lines:int,statements:int,block_type:string,occurrences:list<array{file:string,start_line:int,end_line:int,lines:int,context:string}>}>} $result
-     * @param list<string> $fingerprints
-     * @return array{files:int,total_lines:int,duplicated_lines:int,duplicate_percentage:float,known_clones:int,new_clones:int,cache_hit:bool,clones:list<array{fingerprint:string,source:string,score:float,similarity:float,tokens:int,lines:int,statements:int,block_type:string,occurrences:list<array{file:string,start_line:int,end_line:int,lines:int,context:string}>}>}
+     * @param array<string, mixed> $engineOptions
      */
-    private function withoutIgnoredFingerprints(array $result, array $fingerprints): array
+    private function cacheKey(array $files, array $engineOptions): string
     {
-        return $this->withoutKnownFingerprints($result, array_fill_keys($fingerprints, true));
+        $fingerprint = [];
+
+        foreach ($files as $file) {
+            $fingerprint[] = [$file, $this->safeFilesize($file), $this->safeFilemtime($file)];
+        }
+
+        return hash('sha256', json_encode([$engineOptions, $fingerprint], JSON_UNESCAPED_SLASHES) ?: '');
+    }
+
+    private function defaultCacheFile(): string
+    {
+        return ScopedTempFile::forProject('.phpprobe-duplicates-cache.json', '.phpprobe-duplicates-cache');
     }
 
     /**
@@ -94,7 +136,7 @@ final class DuplicateChecker
             'changedOnly' => false,
             'changedBase' => '',
             'cacheEnabled' => true,
-            'cacheFile' => '.phpprobe-duplicates-cache.json',
+            'cacheFile' => $this->defaultCacheFile(),
             'errorDuplicatePercentage' => 20.0,
             'config' => Paths::config('phpprobe.json'),
             'mode' => 'gate',
@@ -111,6 +153,20 @@ final class DuplicateChecker
             'paths' => [],
             'excludes' => [],
         ];
+    }
+
+    /**
+     * @param array<string, mixed> $options
+     * @param array{files:int,total_lines:int,duplicated_lines:int,duplicate_percentage:float,known_clones:int,new_clones:int,cache_hit:bool,clones:list<array{fingerprint:string,source:string,score:float,similarity:float,tokens:int,lines:int,statements:int,block_type:string,occurrences:list<array{file:string,start_line:int,end_line:int,lines:int,context:string}>}>} $result
+     */
+    private function finishRun(array $result, array $options): int
+    {
+        $failed = $this->shouldFail($result, $options);
+        $exitCode = $options['writeBaseline'] === '' && $failed ? 1 : 0;
+        $this->writeResult($result, $options, $failed);
+        $this->writeSummaryJson($result, $options, $exitCode);
+
+        return $exitCode;
     }
 
     private function help(): int
@@ -152,23 +208,31 @@ final class DuplicateChecker
      */
     private function knownFingerprints(string $baselinePath): array
     {
-        $decoded = BaselineJson::readObject($baselinePath, 'Duplicate');
+        return BaselineJson::knownFingerprints($baselinePath, 'Duplicate', 'clones');
+    }
 
-        $clones = $decoded['clones'] ?? null;
-
-        if (!is_array($clones)) {
-            throw new \RuntimeException(sprintf('Duplicate baseline is missing a valid "clones" array: %s', $baselinePath));
+    /**
+     * @return array<string, array<string, mixed>>
+     */
+    private function loadCache(string $path): array
+    {
+        if ($path === '' || !is_file($path) || !is_readable($path)) {
+            return [];
         }
 
-        $known = [];
+        $contents = file_get_contents($path);
 
-        foreach ($clones as $clone) {
-            if (is_array($clone) && is_string($clone['fingerprint'] ?? null)) {
-                $known[$clone['fingerprint']] = true;
-            }
+        if (!is_string($contents) || trim($contents) === '') {
+            return [];
         }
 
-        return $known;
+        try {
+            $decoded = json_decode($contents, true, 512, JSON_THROW_ON_ERROR);
+        } catch (\JsonException) {
+            return [];
+        }
+
+        return is_array($decoded) ? $decoded : [];
     }
 
     /**
@@ -318,88 +382,41 @@ final class DuplicateChecker
         return true;
     }
 
-    /**
-     * @param array<string, mixed> $options
-     * @return array{files:int,total_lines:int,duplicated_lines:int,duplicate_percentage:float,known_clones:int,new_clones:int,cache_hit:bool,clones:list<array{fingerprint:string,source:string,score:float,similarity:float,tokens:int,lines:int,statements:int,block_type:string,occurrences:list<array{file:string,start_line:int,end_line:int,lines:int,context:string}>}>}
-     */
-    private function analyzeWithCache(array $files, array $options): array
+    private function safeFilemtime(string $file): int
     {
-        $engineOptions = [
-            'mode' => $options['mode'],
-            'normalize' => $options['normalize'],
-            'fuzzy' => $options['fuzzy'],
-            'nearMiss' => $options['nearMiss'],
-            'minLines' => $options['minLines'],
-            'minTokens' => $options['minTokens'],
-            'minStatements' => $options['minStatements'],
-            'minSimilarity' => $options['minSimilarity'],
-        ];
-        $cacheKey = $this->cacheKey($files, $engineOptions);
-
-        if ($options['cacheEnabled']) {
-            $cache = $this->loadCache($options['cacheFile']);
-
-            if (isset($cache[$cacheKey]) && is_array($cache[$cacheKey])) {
-                $hit = $cache[$cacheKey];
-
-                return [
-                    ...$hit,
-                    'cache_hit' => true,
-                ];
-            }
-        }
-
-        $result = (new DuplicateDetectionEngine())->analyze($files, $engineOptions);
-        $result['cache_hit'] = false;
-
-        if ($options['cacheEnabled']) {
-            $cache = $this->loadCache($options['cacheFile']);
-            $cache[$cacheKey] = [
-                ...$result,
-                'cache_hit' => false,
-            ];
-            $this->saveCache($options['cacheFile'], $cache);
-        }
-
-        return $result;
-    }
-
-    /**
-     * @param array<string, mixed> $engineOptions
-     */
-    private function cacheKey(array $files, array $engineOptions): string
-    {
-        $fingerprint = [];
-
-        foreach ($files as $file) {
-            $fingerprint[] = [$file, @filesize($file) ?: 0, @filemtime($file) ?: 0];
-        }
-
-        return hash('sha256', json_encode([$engineOptions, $fingerprint], JSON_UNESCAPED_SLASHES) ?: '');
-    }
-
-    /**
-     * @return array<string, array<string, mixed>>
-     */
-    private function loadCache(string $path): array
-    {
-        if ($path === '' || !is_file($path) || !is_readable($path)) {
-            return [];
-        }
-
-        $contents = file_get_contents($path);
-
-        if (!is_string($contents) || trim($contents) === '') {
-            return [];
-        }
+        set_error_handler(static fn(): bool => true);
 
         try {
-            $decoded = json_decode($contents, true, 512, JSON_THROW_ON_ERROR);
-        } catch (\JsonException) {
-            return [];
+            $value = filemtime($file);
+        } finally {
+            restore_error_handler();
         }
 
-        return is_array($decoded) ? $decoded : [];
+        return is_int($value) ? $value : 0;
+    }
+
+    private function safeFilePutContents(string $path, string $contents): void
+    {
+        set_error_handler(static fn(): bool => true);
+
+        try {
+            file_put_contents($path, $contents);
+        } finally {
+            restore_error_handler();
+        }
+    }
+
+    private function safeFilesize(string $file): int
+    {
+        set_error_handler(static fn(): bool => true);
+
+        try {
+            $value = filesize($file);
+        } finally {
+            restore_error_handler();
+        }
+
+        return is_int($value) ? $value : 0;
     }
 
     /**
@@ -417,7 +434,42 @@ final class DuplicateChecker
             return;
         }
 
-        @file_put_contents($path, $encoded);
+        $this->safeFilePutContents($path, $encoded);
+    }
+
+    /**
+     * @param array{files:int,total_lines:int,duplicated_lines:int,duplicate_percentage:float,known_clones:int,new_clones:int,cache_hit:bool,clones:list<array{fingerprint:string,source:string,score:float,similarity:float,tokens:int,lines:int,statements:int,block_type:string,occurrences:list<array{file:string,start_line:int,end_line:int,lines:int,context:string}>}>} $result
+     * @param array<string, mixed> $options
+     */
+    private function shouldFail(array $result, array $options): bool
+    {
+        if ($result['clones'] === []) {
+            return false;
+        }
+
+        return match ($options['failOn']) {
+            'error' => $result['duplicate_percentage'] >= $options['errorDuplicatePercentage'],
+            'warning', 'info' => true,
+            default => true,
+        };
+    }
+
+    /**
+     * @param array{files:int,total_lines:int,duplicated_lines:int,duplicate_percentage:float,known_clones:int,new_clones:int,cache_hit:bool,clones:list<array{fingerprint:string,source:string,score:float,similarity:float,tokens:int,lines:int,statements:int,block_type:string,occurrences:list<array{file:string,start_line:int,end_line:int,lines:int,context:string}>}>} $result
+     * @param array{failOn:string} $options
+     */
+    private function summaryFooter(array $result, array $options, bool $failed): string
+    {
+        return sprintf(
+            'Summary: files=%d clone-groups=%d duplicated-lines=%d duplicate%%=%.2f fail-on=%s cache=%s status=%s',
+            $result['files'],
+            count($result['clones']),
+            $result['duplicated_lines'],
+            $result['duplicate_percentage'],
+            $options['failOn'],
+            $result['cache_hit'] ? 'HIT' : 'MISS',
+            $failed ? 'FAIL' : 'PASS',
+        );
     }
 
     /**
@@ -436,6 +488,16 @@ final class DuplicateChecker
         $result['known_clones'] = count($known);
 
         return $result;
+    }
+
+    /**
+     * @param array{files:int,total_lines:int,duplicated_lines:int,duplicate_percentage:float,known_clones:int,new_clones:int,cache_hit:bool,clones:list<array{fingerprint:string,source:string,score:float,similarity:float,tokens:int,lines:int,statements:int,block_type:string,occurrences:list<array{file:string,start_line:int,end_line:int,lines:int,context:string}>}>} $result
+     * @param list<string> $fingerprints
+     * @return array{files:int,total_lines:int,duplicated_lines:int,duplicate_percentage:float,known_clones:int,new_clones:int,cache_hit:bool,clones:list<array{fingerprint:string,source:string,score:float,similarity:float,tokens:int,lines:int,statements:int,block_type:string,occurrences:list<array{file:string,start_line:int,end_line:int,lines:int,context:string}>}>}
+     */
+    private function withoutIgnoredFingerprints(array $result, array $fingerprints): array
+    {
+        return $this->withoutKnownFingerprints($result, array_fill_keys($fingerprints, true));
     }
 
     /**
@@ -475,19 +537,78 @@ final class DuplicateChecker
 
     /**
      * @param array{files:int,total_lines:int,duplicated_lines:int,duplicate_percentage:float,known_clones:int,new_clones:int,cache_hit:bool,clones:list<array{fingerprint:string,source:string,score:float,similarity:float,tokens:int,lines:int,statements:int,block_type:string,occurrences:list<array{file:string,start_line:int,end_line:int,lines:int,context:string}>}>} $result
-     * @param array<string, mixed> $options
      */
-    private function shouldFail(array $result, array $options): bool
+    private function writeGithub(array $result, bool $failed): void
     {
-        if ($result['clones'] === []) {
-            return false;
+        $level = $failed ? 'error' : 'warning';
+
+        foreach ($result['clones'] as $clone) {
+            foreach ($clone['occurrences'] as $occurrence) {
+                fwrite(STDOUT, GithubAnnotation::emit(
+                    $level,
+                    'PHPProbe duplicates',
+                    sprintf('Duplicate clone (%s, %.0f%% similar)', $clone['source'], $clone['similarity'] * 100),
+                    $occurrence['file'],
+                    $occurrence['start_line'],
+                ) . PHP_EOL);
+            }
         }
 
-        return match ($options['failOn']) {
-            'error' => $result['duplicate_percentage'] >= $options['errorDuplicatePercentage'],
-            'warning', 'info' => true,
-            default => true,
-        };
+        if ($result['clones'] === []) {
+            fwrite(STDOUT, GithubAnnotation::emit('notice', 'PHPProbe duplicates', 'No duplicate clone groups found.') . PHP_EOL);
+        }
+    }
+
+    /**
+     * @param array{files:int,total_lines:int,duplicated_lines:int,duplicate_percentage:float,known_clones:int,new_clones:int,cache_hit:bool,clones:list<array{fingerprint:string,source:string,score:float,similarity:float,tokens:int,lines:int,statements:int,block_type:string,occurrences:list<array{file:string,start_line:int,end_line:int,lines:int,context:string}>}>} $result
+     */
+    private function writeJson(array $result): void
+    {
+        fwrite(STDOUT, json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL);
+    }
+
+    /**
+     * @param array{files:int,total_lines:int,duplicated_lines:int,duplicate_percentage:float,known_clones:int,new_clones:int,cache_hit:bool,clones:list<array{fingerprint:string,source:string,score:float,similarity:float,tokens:int,lines:int,statements:int,block_type:string,occurrences:list<array{file:string,start_line:int,end_line:int,lines:int,context:string}>}>} $result
+     * @param array{failOn:string} $options
+     */
+    private function writeMarkdown(array $result, array $options, bool $failed): void
+    {
+        $lines = [
+            '# PHPProbe Duplicate Report',
+            '',
+            sprintf('- Files scanned: `%d`', $result['files']),
+            sprintf('- Total lines: `%d`', $result['total_lines']),
+            sprintf('- Duplicate lines: `%d`', $result['duplicated_lines']),
+            sprintf('- Duplicate percentage: `%.2f%%`', $result['duplicate_percentage']),
+            sprintf('- Clone groups: `%d`', count($result['clones'])),
+            sprintf('- Cache hit: `%s`', $result['cache_hit'] ? 'yes' : 'no'),
+            sprintf('- Fail-on: `%s`', $options['failOn']),
+            sprintf('- Status: `%s`', $failed ? 'FAIL' : 'PASS'),
+            '',
+        ];
+
+        if ($result['clones'] === []) {
+            $lines[] = 'No duplicate clone groups found.';
+        } else {
+            $lines[] = '| # | Source | Similarity | Lines | Location |';
+            $lines[] = '| --- | --- | --- | --- | --- |';
+
+            foreach ($result['clones'] as $index => $clone) {
+                $first = $clone['occurrences'][0];
+                $lines[] = sprintf(
+                    '| %d | `%s` | %.0f%% | %d | `%s:%d-%d` |',
+                    $index + 1,
+                    $clone['source'],
+                    $clone['similarity'] * 100,
+                    $clone['lines'],
+                    $first['file'],
+                    $first['start_line'],
+                    $first['end_line'],
+                );
+            }
+        }
+
+        fwrite(STDOUT, implode(PHP_EOL, $lines) . PHP_EOL);
     }
 
     /**
@@ -526,9 +647,49 @@ final class DuplicateChecker
     /**
      * @param array{files:int,total_lines:int,duplicated_lines:int,duplicate_percentage:float,known_clones:int,new_clones:int,cache_hit:bool,clones:list<array{fingerprint:string,source:string,score:float,similarity:float,tokens:int,lines:int,statements:int,block_type:string,occurrences:list<array{file:string,start_line:int,end_line:int,lines:int,context:string}>}>} $result
      */
-    private function writeJson(array $result): void
+    private function writeSarif(array $result): void
     {
-        fwrite(STDOUT, json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL);
+        $results = [];
+
+        foreach ($result['clones'] as $clone) {
+            foreach ($clone['occurrences'] as $occurrence) {
+                $results[] = [
+                    'ruleId' => 'duplicate_code_clone',
+                    'level' => 'warning',
+                    'message' => ['text' => sprintf('Duplicate clone group (%s, %.0f%% similar).', $clone['source'], $clone['similarity'] * 100)],
+                    'locations' => [[
+                        'physicalLocation' => [
+                            'artifactLocation' => ['uri' => $occurrence['file']],
+                            'region' => ['startLine' => $occurrence['start_line']],
+                        ],
+                    ]],
+                ];
+            }
+        }
+
+        fwrite(STDOUT, json_encode(Sarif::payload($results), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL);
+    }
+
+    /**
+     * @param array{files:int,total_lines:int,duplicated_lines:int,duplicate_percentage:float,known_clones:int,new_clones:int,cache_hit:bool,clones:list<array{fingerprint:string,source:string,score:float,similarity:float,tokens:int,lines:int,statements:int,block_type:string,occurrences:list<array{file:string,start_line:int,end_line:int,lines:int,context:string}>}>} $result
+     * @param array{summaryJson:string,failOn:string} $options
+     */
+    private function writeSummaryJson(array $result, array $options, int $exitCode): void
+    {
+        SummaryJson::writeCheckerSummary(
+            $options['summaryJson'],
+            'duplicates',
+            $exitCode,
+            $options['failOn'],
+            [
+            'files' => $result['files'],
+            'total_lines' => $result['total_lines'],
+            'duplicated_lines' => $result['duplicated_lines'],
+            'duplicate_percentage' => $result['duplicate_percentage'],
+            'clone_groups' => count($result['clones']),
+            'cache_hit' => $result['cache_hit'],
+            ],
+        );
     }
 
     /**
@@ -583,140 +744,5 @@ final class DuplicateChecker
 
         fwrite(STDERR, Ansi::color(sprintf('%.2f%% duplicated lines.', $result['duplicate_percentage']), 'yellow', STDERR) . PHP_EOL);
         fwrite(STDERR, $this->summaryFooter($result, $options, $failed) . PHP_EOL);
-    }
-
-    /**
-     * @param array{files:int,total_lines:int,duplicated_lines:int,duplicate_percentage:float,known_clones:int,new_clones:int,cache_hit:bool,clones:list<array{fingerprint:string,source:string,score:float,similarity:float,tokens:int,lines:int,statements:int,block_type:string,occurrences:list<array{file:string,start_line:int,end_line:int,lines:int,context:string}>}>} $result
-     * @param array{failOn:string} $options
-     */
-    private function writeMarkdown(array $result, array $options, bool $failed): void
-    {
-        $lines = [
-            '# PHPProbe Duplicate Report',
-            '',
-            sprintf('- Files scanned: `%d`', $result['files']),
-            sprintf('- Total lines: `%d`', $result['total_lines']),
-            sprintf('- Duplicate lines: `%d`', $result['duplicated_lines']),
-            sprintf('- Duplicate percentage: `%.2f%%`', $result['duplicate_percentage']),
-            sprintf('- Clone groups: `%d`', count($result['clones'])),
-            sprintf('- Cache hit: `%s`', $result['cache_hit'] ? 'yes' : 'no'),
-            sprintf('- Fail-on: `%s`', $options['failOn']),
-            sprintf('- Status: `%s`', $failed ? 'FAIL' : 'PASS'),
-            '',
-        ];
-
-        if ($result['clones'] === []) {
-            $lines[] = 'No duplicate clone groups found.';
-        } else {
-            $lines[] = '| # | Source | Similarity | Lines | Location |';
-            $lines[] = '| --- | --- | --- | --- | --- |';
-
-            foreach ($result['clones'] as $index => $clone) {
-                $first = $clone['occurrences'][0];
-                $lines[] = sprintf(
-                    '| %d | `%s` | %.0f%% | %d | `%s:%d-%d` |',
-                    $index + 1,
-                    $clone['source'],
-                    $clone['similarity'] * 100,
-                    $clone['lines'],
-                    $first['file'],
-                    $first['start_line'],
-                    $first['end_line'],
-                );
-            }
-        }
-
-        fwrite(STDOUT, implode(PHP_EOL, $lines) . PHP_EOL);
-    }
-
-    /**
-     * @param array{files:int,total_lines:int,duplicated_lines:int,duplicate_percentage:float,known_clones:int,new_clones:int,cache_hit:bool,clones:list<array{fingerprint:string,source:string,score:float,similarity:float,tokens:int,lines:int,statements:int,block_type:string,occurrences:list<array{file:string,start_line:int,end_line:int,lines:int,context:string}>}>} $result
-     */
-    private function writeSarif(array $result): void
-    {
-        $results = [];
-
-        foreach ($result['clones'] as $clone) {
-            foreach ($clone['occurrences'] as $occurrence) {
-                $results[] = [
-                    'ruleId' => 'duplicate_code_clone',
-                    'level' => 'warning',
-                    'message' => ['text' => sprintf('Duplicate clone group (%s, %.0f%% similar).', $clone['source'], $clone['similarity'] * 100)],
-                    'locations' => [[
-                        'physicalLocation' => [
-                            'artifactLocation' => ['uri' => $occurrence['file']],
-                            'region' => ['startLine' => $occurrence['start_line']],
-                        ],
-                    ]],
-                ];
-            }
-        }
-
-        fwrite(STDOUT, json_encode(Sarif::payload($results), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL);
-    }
-
-    /**
-     * @param array{files:int,total_lines:int,duplicated_lines:int,duplicate_percentage:float,known_clones:int,new_clones:int,cache_hit:bool,clones:list<array{fingerprint:string,source:string,score:float,similarity:float,tokens:int,lines:int,statements:int,block_type:string,occurrences:list<array{file:string,start_line:int,end_line:int,lines:int,context:string}>}>} $result
-     */
-    private function writeGithub(array $result, bool $failed): void
-    {
-        $level = $failed ? 'error' : 'warning';
-
-        foreach ($result['clones'] as $clone) {
-            foreach ($clone['occurrences'] as $occurrence) {
-                fwrite(STDOUT, GithubAnnotation::emit(
-                    $level,
-                    'PHPProbe duplicates',
-                    sprintf('Duplicate clone (%s, %.0f%% similar)', $clone['source'], $clone['similarity'] * 100),
-                    $occurrence['file'],
-                    $occurrence['start_line'],
-                ) . PHP_EOL);
-            }
-        }
-
-        if ($result['clones'] === []) {
-            fwrite(STDOUT, GithubAnnotation::emit('notice', 'PHPProbe duplicates', 'No duplicate clone groups found.') . PHP_EOL);
-        }
-    }
-
-    /**
-     * @param array{files:int,total_lines:int,duplicated_lines:int,duplicate_percentage:float,known_clones:int,new_clones:int,cache_hit:bool,clones:list<array{fingerprint:string,source:string,score:float,similarity:float,tokens:int,lines:int,statements:int,block_type:string,occurrences:list<array{file:string,start_line:int,end_line:int,lines:int,context:string}>}>} $result
-     * @param array{failOn:string} $options
-     */
-    private function summaryFooter(array $result, array $options, bool $failed): string
-    {
-        return sprintf(
-            'Summary: files=%d clone-groups=%d duplicated-lines=%d duplicate%%=%.2f fail-on=%s cache=%s status=%s',
-            $result['files'],
-            count($result['clones']),
-            $result['duplicated_lines'],
-            $result['duplicate_percentage'],
-            $options['failOn'],
-            $result['cache_hit'] ? 'HIT' : 'MISS',
-            $failed ? 'FAIL' : 'PASS',
-        );
-    }
-
-    /**
-     * @param array{files:int,total_lines:int,duplicated_lines:int,duplicate_percentage:float,known_clones:int,new_clones:int,cache_hit:bool,clones:list<array{fingerprint:string,source:string,score:float,similarity:float,tokens:int,lines:int,statements:int,block_type:string,occurrences:list<array{file:string,start_line:int,end_line:int,lines:int,context:string}>}>} $result
-     * @param array{summaryJson:string,failOn:string} $options
-     */
-    private function writeSummaryJson(array $result, array $options, int $exitCode): void
-    {
-        if ($options['summaryJson'] === '') {
-            return;
-        }
-
-        SummaryJson::write($options['summaryJson'], [
-            'checker' => 'duplicates',
-            'exit_code' => $exitCode,
-            'fail_on' => $options['failOn'],
-            'files' => $result['files'],
-            'total_lines' => $result['total_lines'],
-            'duplicated_lines' => $result['duplicated_lines'],
-            'duplicate_percentage' => $result['duplicate_percentage'],
-            'clone_groups' => count($result['clones']),
-            'cache_hit' => $result['cache_hit'],
-        ]);
     }
 }

@@ -10,12 +10,14 @@ use Infocyph\PHPProbe\Config\CliOptions;
 use Infocyph\PHPProbe\Config\Paths;
 use Infocyph\PHPProbe\Config\PhpProbeConfig;
 use Infocyph\PHPProbe\Console\Ansi;
+use Infocyph\PHPProbe\Util\BaselineJson;
 use Infocyph\PHPProbe\Util\CheckerRuntime;
 use Infocyph\PHPProbe\Util\GithubAnnotation;
+use Infocyph\PHPProbe\Util\ScopedTempFile;
 use Infocyph\PHPProbe\Util\Sarif;
 use Infocyph\PHPProbe\Util\SummaryJson;
 
-final class CommentChecker
+final readonly class CommentChecker
 {
     private CliOptions $cli;
 
@@ -38,14 +40,67 @@ final class CommentChecker
 
             $files = CheckerRuntime::phpFiles($options);
             $result = (new CommentScanner())->scan($files, $options);
-            $failed = $this->shouldFail($result['findings'], $options['failOn']);
-            $exitCode = $failed ? 1 : 0;
+            $rawFindings = $result['findings'];
+
+            if ($options['baseline'] !== '') {
+                $result = $this->withoutBaselineFindings($result, $options['baseline']);
+            }
+
+            if ($options['writeBaseline'] !== '') {
+                $this->writeBaseline($rawFindings, $options['writeBaseline']);
+            }
+
+            $failed = $this->shouldFail($result['findings'], $options['failOn'], $options['failConfidence']);
+            $exitCode = $options['writeBaseline'] !== '' ? 0 : ($failed ? 1 : 0);
 
             $this->writeResult($result, $options, $failed);
             $this->writeSummaryJson($result, $options, $exitCode);
 
             return $exitCode;
         });
+    }
+
+    /**
+     * @param array<string, mixed> $options
+     * @return array<string, mixed>
+     */
+    private function applyPolicyPreset(array $options): array
+    {
+        return match ($options['policy']) {
+            'relaxed' => [
+                ...$options,
+                'minReasonLength' => max(8, (int) $options['minReasonLength']),
+                'maxAllowedBlockLines' => max(15, (int) $options['maxAllowedBlockLines']),
+                'requireIssueForBlocksLongerThan' => max(5, (int) $options['requireIssueForBlocksLongerThan']),
+            ],
+            'standard' => $options,
+            'strict' => [
+                ...$options,
+                'strict' => true,
+                'allowOptionalReasonTagsInStrictMode' => false,
+                'minReasonLength' => max(16, (int) $options['minReasonLength']),
+                'maxAllowedBlockLines' => min(6, (int) $options['maxAllowedBlockLines']),
+                'requireIssueForBlocksLongerThan' => min(2, (int) $options['requireIssueForBlocksLongerThan']),
+            ],
+            default => throw new \InvalidArgumentException(sprintf(
+                'Invalid --policy value "%s". Expected: relaxed, standard, strict.',
+                (string) $options['policy'],
+            )),
+        };
+    }
+
+    private function confidenceRank(string $confidence): int
+    {
+        return match (strtolower($confidence)) {
+            'high' => 3,
+            'medium' => 2,
+            default => 1,
+        };
+    }
+
+    private function defaultDocCacheFile(): string
+    {
+        return ScopedTempFile::forProject('.phpprobe-comments-doc-cache.json', '.phpprobe-comments-doc-cache');
     }
 
     /**
@@ -58,6 +113,7 @@ final class CommentChecker
             'format' => 'text',
             'strict' => false,
             'failOn' => 'error',
+            'failConfidence' => 'low',
             'summaryJson' => '',
             'changedOnly' => false,
             'changedBase' => '',
@@ -65,6 +121,14 @@ final class CommentChecker
             'paths' => [],
             'excludes' => [],
             'policy' => 'standard',
+            'docMode' => 'hybrid',
+            'explain' => false,
+            'baseline' => '',
+            'writeBaseline' => '',
+            'docCacheEnabled' => true,
+            'docCacheFile' => $this->defaultDocCacheFile(),
+            'docSignatureConsistency' => true,
+            'docTypeHygiene' => true,
             'suppressionEnabled' => true,
             'suppressionDirective' => '@phpprobe-ignore',
             'scanMarkers' => true,
@@ -122,6 +186,12 @@ final class CommentChecker
                 'commented_out_code_requires_issue_reference' => 'warning',
                 'commented_out_code_in_phpdoc_without_example_label' => 'warning',
                 'invalid_suppression_rule' => 'warning',
+                'expired_suppression_rule' => 'warning',
+                'dead_suppression_rule' => 'warning',
+                'phpdoc_signature_mismatch' => 'warning',
+                'phpdoc_unknown_param' => 'warning',
+                'phpdoc_missing_param' => 'info',
+                'phpdoc_invalid_tag_value' => 'warning',
             ],
             'strictSeverity' => [
                 'commented_out_code_without_reason' => 'error',
@@ -130,10 +200,51 @@ final class CommentChecker
                 'commented_out_code_with_weak_reason' => 'error',
                 'commented_out_code_block_too_large' => 'error',
                 'invalid_suppression_rule' => 'error',
+                'expired_suppression_rule' => 'error',
+                'dead_suppression_rule' => 'error',
+                'phpdoc_signature_mismatch' => 'error',
+                'phpdoc_unknown_param' => 'error',
+                'phpdoc_invalid_tag_value' => 'error',
             ],
             'ruleEnabled' => [],
             'ruleSeverity' => [],
+            'customRules' => [],
         ];
+    }
+
+    private function findingFingerprint(CommentFinding $finding): string
+    {
+        return hash('sha256', json_encode([
+            'type' => $finding->type,
+            'file' => $finding->file,
+            'line' => $finding->line,
+            'end_line' => $finding->endLine,
+            'subtype' => $finding->subtype,
+            'message' => $finding->message,
+        ], JSON_UNESCAPED_SLASHES) ?: '');
+    }
+
+    private function findingTitle(string $type): string
+    {
+        return match ($type) {
+            'comment_marker' => 'Comment Marker',
+            'commented_out_code_without_reason' => 'Commented-out Code Without Reason',
+            'commented_out_code_without_valid_tag' => 'Commented-out Code Uses Invalid Reason Tag',
+            'commented_out_code_without_valid_reason' => 'Commented-out Code Without Valid Reason',
+            'commented_out_code_with_weak_reason' => 'Commented-out Code With Weak Reason',
+            'commented_out_code_with_valid_reason' => 'Commented-out Code With Valid Reason',
+            'commented_out_code_block_too_large' => 'Commented-out Code Block Too Large',
+            'commented_out_code_requires_issue_reference' => 'Commented-out Code Requires Issue Reference',
+            'commented_out_code_in_phpdoc_without_example_label' => 'PHPDoc Code Without Example Label',
+            'invalid_suppression_rule' => 'Invalid Suppression Rule',
+            'expired_suppression_rule' => 'Expired Suppression Rule',
+            'dead_suppression_rule' => 'Unused Suppression Rule',
+            'phpdoc_signature_mismatch' => 'PHPDoc Signature Mismatch',
+            'phpdoc_unknown_param' => 'PHPDoc Unknown Parameter',
+            'phpdoc_missing_param' => 'PHPDoc Missing Parameter',
+            'phpdoc_invalid_tag_value' => 'Invalid PHPDoc Tag Value',
+            default => str_replace('_', ' ', ucfirst($type)),
+        };
     }
 
     private function help(): int
@@ -150,7 +261,12 @@ final class CommentChecker
             '  --summary-json=FILE              write machine-readable run summary',
             '  --strict                         enforce strict policy severities',
             '  --policy=relaxed|standard|strict comment policy profile',
+            '  --doc-mode=heuristic|parser|hybrid doc-comment analysis mode (default: hybrid)',
+            '  --baseline=FILE                  suppress findings already present in a baseline',
+            '  --write-baseline[=FILE]          write current findings to a baseline and exit 0',
             '  --fail-on=error|warning|info     minimum severity level to fail',
+            '  --fail-confidence=low|medium|high minimum confidence level to fail',
+            '  --explain                        include finding explanations and suggestions',
             '  --changed-only                   scan only changed PHP files from Git diff',
             '  --changed-base=REF               Git base ref used with --changed-only',
             '  --tags=TODO,FIXME,...            override marker tags',
@@ -158,6 +274,44 @@ final class CommentChecker
         ]) . PHP_EOL);
 
         return 0;
+    }
+
+    /**
+     * @return array<string, true>
+     */
+    private function knownFindingFingerprints(string $baselinePath): array
+    {
+        return BaselineJson::knownFingerprints($baselinePath, 'Comment', 'findings');
+    }
+
+    /**
+     * @param array<string, mixed> $options
+     * @return array<string, mixed>
+     */
+    private function normalizeCommentOptions(array $options): array
+    {
+        $docMode = strtolower(trim((string) ($options['docMode'] ?? 'hybrid')));
+
+        if (!in_array($docMode, ['heuristic', 'parser', 'hybrid'], true)) {
+            throw new \InvalidArgumentException(sprintf(
+                'Invalid doc mode "%s". Expected: heuristic, parser, hybrid.',
+                (string) ($options['docMode'] ?? ''),
+            ));
+        }
+
+        $failConfidence = strtolower(trim((string) ($options['failConfidence'] ?? 'low')));
+
+        if (!in_array($failConfidence, ['low', 'medium', 'high'], true)) {
+            throw new \InvalidArgumentException(sprintf(
+                'Invalid fail confidence "%s". Expected: low, medium, high.',
+                (string) ($options['failConfidence'] ?? ''),
+            ));
+        }
+
+        $options['docMode'] = $docMode;
+        $options['failConfidence'] = $failConfidence;
+
+        return $options;
     }
 
     /**
@@ -181,7 +335,7 @@ final class CommentChecker
 
         $options = $this->applyPolicyPreset($options);
 
-        return $options;
+        return $this->normalizeCommentOptions($options);
     }
 
     /**
@@ -200,10 +354,41 @@ final class CommentChecker
             return true;
         }
 
-        $policy = $this->cli->optionValue($arg, '--policy');
+        if ($this->cli->parseEnumOption(
+            $options,
+            $arg,
+            '--policy',
+            'policy',
+            ['relaxed', 'standard', 'strict'],
+            'Invalid --policy value "%s". Expected: relaxed, standard, strict.',
+        )) {
+            return true;
+        }
 
-        if ($policy !== null) {
-            $options['policy'] = strtolower(trim($policy));
+        if ($this->cli->parseEnumOption(
+            $options,
+            $arg,
+            '--doc-mode',
+            'docMode',
+            ['heuristic', 'parser', 'hybrid'],
+            'Invalid --doc-mode value "%s". Expected: heuristic, parser, hybrid.',
+        )) {
+            return true;
+        }
+
+        if ($this->cli->parseEnumOption(
+            $options,
+            $arg,
+            '--fail-confidence',
+            'failConfidence',
+            ['low', 'medium', 'high'],
+            'Invalid --fail-confidence value "%s". Expected: low, medium, high.',
+        )) {
+            return true;
+        }
+
+        if ($arg === '--explain') {
+            $options['explain'] = true;
 
             return true;
         }
@@ -222,56 +407,16 @@ final class CommentChecker
             return true;
         }
 
-        return false;
+        return $this->cli->parseSnapshotFileOptions($options, $arg, '.phpprobe-comments-baseline.json');
     }
 
-    /**
-     * @param array<string, mixed> $options
-     * @return array<string, mixed>
-     */
-    private function applyPolicyPreset(array $options): array
+    private function sarifLevel(string $severity): string
     {
-        return match ($options['policy']) {
-            'relaxed' => [
-                ...$options,
-                'minReasonLength' => max(8, (int) $options['minReasonLength']),
-                'maxAllowedBlockLines' => max(15, (int) $options['maxAllowedBlockLines']),
-                'requireIssueForBlocksLongerThan' => max(5, (int) $options['requireIssueForBlocksLongerThan']),
-            ],
-            'standard' => $options,
-            'strict' => [
-                ...$options,
-                'strict' => true,
-                'allowOptionalReasonTagsInStrictMode' => false,
-                'minReasonLength' => max(16, (int) $options['minReasonLength']),
-                'maxAllowedBlockLines' => min(6, (int) $options['maxAllowedBlockLines']),
-                'requireIssueForBlocksLongerThan' => min(2, (int) $options['requireIssueForBlocksLongerThan']),
-            ],
-            default => throw new \InvalidArgumentException(sprintf(
-                'Invalid --policy value "%s". Expected: relaxed, standard, strict.',
-                (string) $options['policy'],
-            )),
+        return match (strtolower($severity)) {
+            'error', 'critical', 'high' => 'error',
+            'warning', 'medium' => 'warning',
+            default => 'note',
         };
-    }
-
-    /**
-     * @param list<CommentFinding> $findings
-     */
-    private function shouldFail(array $findings, string $failOn): bool
-    {
-        $threshold = match ($failOn) {
-            'info' => 1,
-            'warning' => 4,
-            default => 6,
-        };
-
-        foreach ($findings as $finding) {
-            if ($this->severityRank($finding->severity) >= $threshold) {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     private function severityRank(string $severity): int
@@ -288,29 +433,203 @@ final class CommentChecker
     }
 
     /**
-     * @param array{files:int,findings:list<CommentFinding>,suppressed_count:int} $result
-     * @param array{summaryJson:string,format:string,failOn:string} $options
+     * @param list<CommentFinding> $findings
      */
-    private function writeSummaryJson(array $result, array $options, int $exitCode): void
+    private function shouldFail(array $findings, string $failOn, string $failConfidence): bool
     {
-        if ($options['summaryJson'] === '') {
-            return;
+        $severityThreshold = match ($failOn) {
+            'info' => 1,
+            'warning' => 4,
+            default => 6,
+        };
+        $confidenceThreshold = $this->confidenceRank($failConfidence);
+
+        foreach ($findings as $finding) {
+            if ($this->severityRank($finding->severity) >= $severityThreshold
+                && $this->confidenceRank($finding->confidence) >= $confidenceThreshold) {
+                return true;
+            }
         }
 
-        SummaryJson::write($options['summaryJson'], [
-            'checker' => 'comments',
-            'exit_code' => $exitCode,
-            'fail_on' => $options['failOn'],
-            'files' => $result['files'],
-            'findings' => count($result['findings']),
-            'format' => $options['format'],
-            'suppressed_count' => $result['suppressed_count'],
-        ]);
+        return false;
     }
 
     /**
      * @param array{files:int,findings:list<CommentFinding>,suppressed_count:int} $result
-     * @param array{format:string,failOn:string} $options
+     * @param array{failOn:string,failConfidence:string,docMode:string,explain:bool} $options
+     */
+    private function summaryFooter(array $result, array $options, bool $failed): string
+    {
+        return sprintf(
+            'Summary: files=%d findings=%d suppressed=%d fail-on=%s fail-confidence=%s doc-mode=%s baseline=%s status=%s',
+            $result['files'],
+            count($result['findings']),
+            $result['suppressed_count'],
+            $options['failOn'],
+            $options['failConfidence'],
+            $options['docMode'],
+            $options['baseline'] !== '' ? 'on' : 'off',
+            $failed ? 'FAIL' : 'PASS',
+        );
+    }
+
+    /**
+     * @param array{files:int,findings:list<CommentFinding>,suppressed_count:int} $result
+     * @return array{files:int,findings:list<CommentFinding>,suppressed_count:int}
+     */
+    private function withoutBaselineFindings(array $result, string $baselinePath): array
+    {
+        $known = $this->knownFindingFingerprints($baselinePath);
+
+        if ($known === []) {
+            return $result;
+        }
+
+        $filtered = array_values(array_filter(
+            $result['findings'],
+            fn(CommentFinding $finding): bool => !isset($known[$this->findingFingerprint($finding)]),
+        ));
+
+        $suppressedByBaseline = count($result['findings']) - count($filtered);
+
+        return [
+            ...$result,
+            'findings' => $filtered,
+            'suppressed_count' => $result['suppressed_count'] + $suppressedByBaseline,
+        ];
+    }
+
+    /**
+     * @param list<CommentFinding> $findings
+     */
+    private function writeBaseline(array $findings, string $path): void
+    {
+        $payload = [
+            'version' => 1,
+            'generated_at' => gmdate('c'),
+            'findings' => array_map(fn(CommentFinding $finding): array => [
+                'fingerprint' => $this->findingFingerprint($finding),
+                'type' => $finding->type,
+                'file' => $finding->file,
+                'line' => $finding->line,
+                'end_line' => $finding->endLine,
+                'severity' => $finding->severity,
+                'confidence' => $finding->confidence,
+                'subtype' => $finding->subtype,
+                'message' => $finding->message,
+            ], $findings),
+        ];
+
+        BaselineJson::writeObject($path, $payload, 'comment');
+    }
+
+    /**
+     * @param array{files:int,findings:list<CommentFinding>,suppressed_count:int} $result
+     */
+    private function writeGithub(array $result): void
+    {
+        foreach ($result['findings'] as $finding) {
+            $level = match (strtolower($finding->severity)) {
+                'error', 'critical', 'high' => 'error',
+                'warning', 'medium' => 'warning',
+                default => 'notice',
+            };
+
+            fwrite(STDOUT, GithubAnnotation::emit(
+                $level,
+                'PHPProbe comments',
+                sprintf('%s (%s)', $finding->message, $finding->type),
+                $finding->file,
+                $finding->line,
+            ) . PHP_EOL);
+        }
+
+        if ($result['findings'] === []) {
+            fwrite(STDOUT, GithubAnnotation::emit('notice', 'PHPProbe comments', 'No comment policy findings.') . PHP_EOL);
+        }
+    }
+
+    /**
+     * @param array{files:int,findings:list<CommentFinding>,suppressed_count:int} $result
+     */
+    private function writeJson(array $result): void
+    {
+        fwrite(STDOUT, json_encode([
+            'files' => $result['files'],
+            'suppressed_count' => $result['suppressed_count'],
+            'findings' => array_map(
+                static function (CommentFinding $finding): array {
+                    $payload = $finding->toArray();
+
+                    if ($finding->suggestion !== null && trim($finding->suggestion) !== '') {
+                        $payload['autofix'] = [
+                            'kind' => 'suggestion',
+                            'text' => $finding->suggestion,
+                            'rule' => $finding->type,
+                        ];
+                    }
+
+                    return $payload;
+                },
+                $result['findings'],
+            ),
+        ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL);
+    }
+
+    /**
+     * @param array{files:int,findings:list<CommentFinding>,suppressed_count:int} $result
+     * @param array{failOn:string,failConfidence:string,docMode:string,explain:bool} $options
+     */
+    private function writeMarkdown(array $result, array $options, bool $failed): void
+    {
+        $lines = [
+            '# PHPProbe Comment Report',
+            '',
+            sprintf('- Files scanned: `%d`', $result['files']),
+            sprintf('- Findings: `%d`', count($result['findings'])),
+            sprintf('- Suppressed: `%d`', $result['suppressed_count']),
+            sprintf('- Fail-on: `%s`', $options['failOn']),
+            sprintf('- Fail-confidence: `%s`', $options['failConfidence']),
+            sprintf('- Doc mode: `%s`', $options['docMode']),
+            sprintf('- Baseline: `%s`', $options['baseline'] !== '' ? $options['baseline'] : '(none)'),
+            sprintf('- Status: `%s`', $failed ? 'FAIL' : 'PASS'),
+            '',
+        ];
+
+        if ($result['findings'] === []) {
+            $lines[] = 'No comment policy findings.';
+        } else {
+            $lines[] = '| Severity | Confidence | Type | Subtype | Location | Message |';
+            $lines[] = '| --- | --- | --- | --- | --- | --- |';
+
+            foreach ($result['findings'] as $finding) {
+                $lines[] = sprintf(
+                    '| %s | %s | `%s` | `%s` | `%s:%d` | %s |',
+                    strtoupper($finding->severity),
+                    strtoupper($finding->confidence),
+                    $finding->type,
+                    $finding->subtype ?? '-',
+                    $finding->file,
+                    $finding->line,
+                    str_replace('|', '\|', $finding->message),
+                );
+
+                if ($options['explain'] && $finding->explanation !== null && trim($finding->explanation) !== '') {
+                    $lines[] = sprintf('|  |  |  |  |  | Why: %s |', str_replace('|', '\|', $finding->explanation));
+                }
+
+                if ($options['explain'] && $finding->suggestion !== null && trim($finding->suggestion) !== '') {
+                    $lines[] = sprintf('|  |  |  |  |  | Suggestion: %s |', str_replace('|', '\|', $finding->suggestion));
+                }
+            }
+        }
+
+        fwrite(STDOUT, implode(PHP_EOL, $lines) . PHP_EOL);
+    }
+
+    /**
+     * @param array{files:int,findings:list<CommentFinding>,suppressed_count:int} $result
+     * @param array{format:string,failOn:string,failConfidence:string,docMode:string,explain:bool} $options
      */
     private function writeResult(array $result, array $options, bool $failed): void
     {
@@ -326,24 +645,88 @@ final class CommentChecker
     /**
      * @param array{files:int,findings:list<CommentFinding>,suppressed_count:int} $result
      */
-    private function writeJson(array $result): void
+    private function writeSarif(array $result): void
     {
-        fwrite(STDOUT, json_encode([
-            'files' => $result['files'],
-            'suppressed_count' => $result['suppressed_count'],
-            'findings' => array_map(
-                static fn(CommentFinding $finding): array => $finding->toArray(),
-                $result['findings'],
-            ),
-        ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL);
+        $results = [];
+
+        foreach ($result['findings'] as $finding) {
+            $properties = [
+                'severity' => $finding->severity,
+                'confidence' => $finding->confidence,
+            ];
+
+            if ($finding->subtype !== null) {
+                $properties['subtype'] = $finding->subtype;
+            }
+
+            if ($finding->tag !== null) {
+                $properties['tag'] = $finding->tag;
+            }
+
+            if ($finding->scope !== null) {
+                $properties['scope'] = $finding->scope;
+            }
+
+            if ($finding->reason !== null) {
+                $properties['reason'] = $finding->reason;
+            }
+
+            if ($finding->suggestion !== null) {
+                $properties['suggestion'] = $finding->suggestion;
+            }
+
+            $results[] = [
+                'ruleId' => $finding->type,
+                'level' => $this->sarifLevel($finding->severity),
+                'message' => ['text' => $finding->message],
+                'properties' => $properties,
+                'locations' => [[
+                    'physicalLocation' => [
+                        'artifactLocation' => ['uri' => $finding->file],
+                        'region' => ['startLine' => $finding->line],
+                    ],
+                ]],
+            ];
+        }
+
+        fwrite(STDOUT, json_encode(Sarif::payload($results), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL);
     }
 
     /**
      * @param array{files:int,findings:list<CommentFinding>,suppressed_count:int} $result
-     * @param array{failOn:string} $options
+     * @param array{summaryJson:string,format:string,failOn:string,failConfidence:string,docMode:string,explain:bool} $options
+     */
+    private function writeSummaryJson(array $result, array $options, int $exitCode): void
+    {
+        SummaryJson::writeCheckerSummary(
+            $options['summaryJson'],
+            'comments',
+            $exitCode,
+            $options['failOn'],
+            [
+            'fail_confidence' => $options['failConfidence'],
+            'has_baseline' => $options['baseline'] !== '',
+            'wrote_baseline' => $options['writeBaseline'] !== '',
+            'files' => $result['files'],
+            'findings' => count($result['findings']),
+            'format' => $options['format'],
+            'suppressed_count' => $result['suppressed_count'],
+            'doc_mode' => $options['docMode'],
+            'explain' => $options['explain'],
+            ],
+        );
+    }
+
+    /**
+     * @param array{files:int,findings:list<CommentFinding>,suppressed_count:int} $result
+     * @param array{failOn:string,failConfidence:string,docMode:string,explain:bool} $options
      */
     private function writeText(array $result, array $options, bool $failed): void
     {
+        if ($options['writeBaseline'] !== '') {
+            fwrite(STDOUT, Ansi::color(sprintf('Comment baseline written: %s', $options['writeBaseline']), 'cyan', STDOUT) . PHP_EOL);
+        }
+
         if ($result['findings'] === []) {
             fwrite(STDOUT, Ansi::color(sprintf('No comment policy findings (%d PHP files scanned).', $result['files']), 'green', STDOUT) . PHP_EOL);
             fwrite(STDOUT, $this->summaryFooter($result, $options, $failed) . PHP_EOL);
@@ -377,147 +760,29 @@ final class CommentChecker
                 $lineLabel = $finding->line === $finding->endLine
                     ? (string) $finding->line
                     : sprintf('%d-%d', $finding->line, $finding->endLine);
+                $confidence = strtoupper($finding->confidence);
+                $subtype = $finding->subtype !== null ? sprintf(' [%s]', $finding->subtype) : '';
 
                 fwrite(STDERR, sprintf(
-                    '  %s  L%s  %s',
+                    '  %s  L%s  %s (%s)%s',
                     Ansi::severity($finding->severity, STDERR),
                     $lineLabel,
                     $this->findingTitle($finding->type),
+                    $confidence,
+                    $subtype,
                 ) . PHP_EOL);
                 fwrite(STDERR, '      ' . $finding->message . PHP_EOL);
+
+                if ($options['explain'] && $finding->explanation !== null && trim($finding->explanation) !== '') {
+                    fwrite(STDERR, '      Why: ' . $finding->explanation . PHP_EOL);
+                }
+
+                if ($options['explain'] && $finding->suggestion !== null && trim($finding->suggestion) !== '') {
+                    fwrite(STDERR, '      Suggestion: ' . $finding->suggestion . PHP_EOL);
+                }
             }
         }
 
         fwrite(STDERR, $this->summaryFooter($result, $options, $failed) . PHP_EOL);
-    }
-
-    /**
-     * @param array{files:int,findings:list<CommentFinding>,suppressed_count:int} $result
-     * @param array{failOn:string} $options
-     */
-    private function writeMarkdown(array $result, array $options, bool $failed): void
-    {
-        $lines = [
-            '# PHPProbe Comment Report',
-            '',
-            sprintf('- Files scanned: `%d`', $result['files']),
-            sprintf('- Findings: `%d`', count($result['findings'])),
-            sprintf('- Suppressed: `%d`', $result['suppressed_count']),
-            sprintf('- Fail-on: `%s`', $options['failOn']),
-            sprintf('- Status: `%s`', $failed ? 'FAIL' : 'PASS'),
-            '',
-        ];
-
-        if ($result['findings'] === []) {
-            $lines[] = 'No comment policy findings.';
-        } else {
-            $lines[] = '| Severity | Type | Location | Message |';
-            $lines[] = '| --- | --- | --- | --- |';
-
-            foreach ($result['findings'] as $finding) {
-                $lines[] = sprintf(
-                    '| %s | `%s` | `%s:%d` | %s |',
-                    strtoupper($finding->severity),
-                    $finding->type,
-                    $finding->file,
-                    $finding->line,
-                    str_replace('|', '\|', $finding->message),
-                );
-            }
-        }
-
-        fwrite(STDOUT, implode(PHP_EOL, $lines) . PHP_EOL);
-    }
-
-    /**
-     * @param array{files:int,findings:list<CommentFinding>,suppressed_count:int} $result
-     */
-    private function writeSarif(array $result): void
-    {
-        $results = [];
-
-        foreach ($result['findings'] as $finding) {
-            $results[] = [
-                'ruleId' => $finding->type,
-                'level' => $this->sarifLevel($finding->severity),
-                'message' => ['text' => $finding->message],
-                'locations' => [[
-                    'physicalLocation' => [
-                        'artifactLocation' => ['uri' => $finding->file],
-                        'region' => ['startLine' => $finding->line],
-                    ],
-                ]],
-            ];
-        }
-
-        fwrite(STDOUT, json_encode(Sarif::payload($results), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL);
-    }
-
-    /**
-     * @param array{files:int,findings:list<CommentFinding>,suppressed_count:int} $result
-     */
-    private function writeGithub(array $result): void
-    {
-        foreach ($result['findings'] as $finding) {
-            $level = match (strtolower($finding->severity)) {
-                'error', 'critical', 'high' => 'error',
-                'warning', 'medium' => 'warning',
-                default => 'notice',
-            };
-
-            fwrite(STDOUT, GithubAnnotation::emit(
-                $level,
-                'PHPProbe comments',
-                sprintf('%s (%s)', $finding->message, $finding->type),
-                $finding->file,
-                $finding->line,
-            ) . PHP_EOL);
-        }
-
-        if ($result['findings'] === []) {
-            fwrite(STDOUT, GithubAnnotation::emit('notice', 'PHPProbe comments', 'No comment policy findings.') . PHP_EOL);
-        }
-    }
-
-    private function sarifLevel(string $severity): string
-    {
-        return match (strtolower($severity)) {
-            'error', 'critical', 'high' => 'error',
-            'warning', 'medium' => 'warning',
-            default => 'note',
-        };
-    }
-
-    /**
-     * @param array{files:int,findings:list<CommentFinding>,suppressed_count:int} $result
-     * @param array{failOn:string} $options
-     */
-    private function summaryFooter(array $result, array $options, bool $failed): string
-    {
-        return sprintf(
-            'Summary: files=%d findings=%d suppressed=%d fail-on=%s status=%s',
-            $result['files'],
-            count($result['findings']),
-            $result['suppressed_count'],
-            $options['failOn'],
-            $failed ? 'FAIL' : 'PASS',
-        );
-    }
-
-    private function findingTitle(string $type): string
-    {
-        return match ($type) {
-            'comment_marker' => 'Comment Marker',
-            'commented_out_code_without_reason' => 'Commented-out Code Without Reason',
-            'commented_out_code_without_valid_tag' => 'Commented-out Code Uses Invalid Reason Tag',
-            'commented_out_code_without_valid_reason' => 'Commented-out Code Without Valid Reason',
-            'commented_out_code_with_weak_reason' => 'Commented-out Code With Weak Reason',
-            'commented_out_code_with_valid_reason' => 'Commented-out Code With Valid Reason',
-            'commented_out_code_block_too_large' => 'Commented-out Code Block Too Large',
-            'commented_out_code_requires_issue_reference' => 'Commented-out Code Requires Issue Reference',
-            'commented_out_code_in_phpdoc_without_example_label' => 'PHPDoc Code Without Example Label',
-            'invalid_suppression_rule' => 'Invalid Suppression Rule',
-            default => str_replace('_', ' ', ucfirst($type)),
-        };
     }
 }

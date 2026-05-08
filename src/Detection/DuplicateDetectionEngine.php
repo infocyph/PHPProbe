@@ -87,6 +87,18 @@ final class DuplicateDetectionEngine
     }
 
     /**
+     * @param array{id:string,type:string,file:string,start_line:int,end_line:int,token_start:int,token_end:int,statement_hashes:list<string>,shape:list<string>} $left
+     * @param array{id:string,type:string,file:string,start_line:int,end_line:int,token_start:int,token_end:int,statement_hashes:list<string>,shape:list<string>} $right
+     */
+    private function canReachNearMissSimilarity(array $left, array $right, float $minSimilarity): bool
+    {
+        $statementBound = $this->similarityUpperBound(count($left['statement_hashes']), count($right['statement_hashes']));
+        $shapeBound = $this->similarityUpperBound(count($left['shape']), count($right['shape']));
+
+        return round(($statementBound * 0.72) + ($shapeBound * 0.28), 4) >= $minSimilarity;
+    }
+
+    /**
      * @param list<array{value:string,exact:string,line:int,statement:int,shape:string}> $tokens
      */
     private function cloneSignature(array $tokens, int $start, int $tokenCount): string
@@ -524,17 +536,5 @@ final class DuplicateDetectionEngine
         }
 
         return $duplicateWindows;
-    }
-
-    /**
-     * @param array{id:string,type:string,file:string,start_line:int,end_line:int,token_start:int,token_end:int,statement_hashes:list<string>,shape:list<string>} $left
-     * @param array{id:string,type:string,file:string,start_line:int,end_line:int,token_start:int,token_end:int,statement_hashes:list<string>,shape:list<string>} $right
-     */
-    private function canReachNearMissSimilarity(array $left, array $right, float $minSimilarity): bool
-    {
-        $statementBound = $this->similarityUpperBound(count($left['statement_hashes']), count($right['statement_hashes']));
-        $shapeBound = $this->similarityUpperBound(count($left['shape']), count($right['shape']));
-
-        return round(($statementBound * 0.72) + ($shapeBound * 0.28), 4) >= $minSimilarity;
     }
 }

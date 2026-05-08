@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+require_once __DIR__ . DIRECTORY_SEPARATOR . 'FixtureSupport.php';
+
 it('runs check command and writes report artifacts', function (): void {
     $root = makeCliFixture();
     $src = $root.DIRECTORY_SEPARATOR.'src';
@@ -107,6 +109,30 @@ it('validates config files through config validate command', function (): void {
         ->and(implode(' ', $payload['errors']))->toContain('root.unknown');
 });
 
+it('validates enum values in config validate command', function (): void {
+    $root = makeCliFixture();
+    $bad = $root.DIRECTORY_SEPARATOR.'bad-enum-phpprobe.json';
+    file_put_contents($bad, json_encode([
+        'comments' => [
+            'doc_mode' => 'smart',
+            'fail_confidence' => 'certain',
+        ],
+    ], JSON_PRETTY_PRINT));
+
+    try {
+        $run = runCliCommand($root, ['config', 'validate', '--json', '--config=bad-enum-phpprobe.json']);
+    } finally {
+        removeCliFixture($root);
+    }
+
+    $payload = json_decode($run['stdout'], true);
+    $joined = implode(' ', $payload['errors'] ?? []);
+
+    expect($run['exitCode'])->toBe(1)
+        ->and($joined)->toContain('comments.doc_mode must be one of')
+        ->and($joined)->toContain('comments.fail_confidence must be one of');
+});
+
 it('initializes phpprobe config and ci workflow', function (): void {
     $root = makeCliFixture();
     $config = $root.DIRECTORY_SEPARATOR.'phpprobe.json';
@@ -125,51 +151,59 @@ it('initializes phpprobe config and ci workflow', function (): void {
         ->and($workflowContent)->toContain('php vendor/bin/phpprobe check --preset=ci');
 });
 
-function makeCliFixture(): string
+it('passes comment-specific options through check command', function (): void {
+    $root = makeCliFixture();
+    $src = $root.DIRECTORY_SEPARATOR.'src';
+
+    mkdir($src, 0755, true);
+    file_put_contents($src.DIRECTORY_SEPARATOR.'DocSnippet.php', <<<'PHP'
+<?php
+
+final class DocSnippet
 {
-    $root = sys_get_temp_dir().DIRECTORY_SEPARATOR.'phpprobe-cli-'.uniqid('', true);
-    $resources = $root.DIRECTORY_SEPARATOR.'vendor'.DIRECTORY_SEPARATOR.'infocyph'.DIRECTORY_SEPARATOR.'phpprobe'.DIRECTORY_SEPARATOR.'resources';
+    /**
+     * $token = $legacy->issue($payload);
+     */
+    public function issue(): void
+    {
+    }
+}
+PHP);
 
-    mkdir($root, 0755, true);
-    mkdir($resources, 0755, true);
-    copy(
-        dirname(__DIR__, 2).DIRECTORY_SEPARATOR.'resources'.DIRECTORY_SEPARATOR.'phpprobe.json',
-        $resources.DIRECTORY_SEPARATOR.'phpprobe.json',
-    );
-
-    $presetSource = dirname(__DIR__, 2).DIRECTORY_SEPARATOR.'resources'.DIRECTORY_SEPARATOR.'presets';
-    $presetTarget = $resources.DIRECTORY_SEPARATOR.'presets';
-    mkdir($presetTarget, 0755, true);
-
-    foreach (glob($presetSource.DIRECTORY_SEPARATOR.'*.json') ?: [] as $preset) {
-        copy($preset, $presetTarget.DIRECTORY_SEPARATOR.basename($preset));
+    try {
+        $failed = runCliCommand($root, ['check', '--fail-on=warning', 'src']);
+        $passed = runCliCommand($root, ['check', '--fail-on=warning', '--fail-confidence=high', '--doc-mode=hybrid', '--explain', 'src']);
+    } finally {
+        removeCliFixture($root);
     }
 
-    return $root;
+    expect($failed['exitCode'])->toBe(1)
+        ->and($passed['exitCode'])->toBe(0);
+});
+
+it('runs doctor command in json mode', function (): void {
+    $root = makeCliFixture();
+
+    try {
+        $run = runCliCommand($root, ['doctor', '--json']);
+    } finally {
+        removeCliFixture($root);
+    }
+
+    $payload = json_decode($run['stdout'], true);
+
+    expect($run['exitCode'])->toBeIn([0, 1])
+        ->and(is_array($payload['checks'] ?? null))->toBeTrue();
+});
+
+function makeCliFixture(): string
+{
+    return makeProbeFixture('phpprobe-cli');
 }
 
 function removeCliFixture(string $root): void
 {
-    if (!is_dir($root)) {
-        return;
-    }
-
-    $iterator = new RecursiveIteratorIterator(
-        new RecursiveDirectoryIterator($root, FilesystemIterator::SKIP_DOTS),
-        RecursiveIteratorIterator::CHILD_FIRST,
-    );
-
-    foreach ($iterator as $item) {
-        if ($item->isDir()) {
-            rmdir($item->getPathname());
-
-            continue;
-        }
-
-        unlink($item->getPathname());
-    }
-
-    rmdir($root);
+    removeProbeFixture($root);
 }
 
 /**

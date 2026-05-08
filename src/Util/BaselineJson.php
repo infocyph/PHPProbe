@@ -7,6 +7,31 @@ namespace Infocyph\PHPProbe\Util;
 final class BaselineJson
 {
     /**
+     * @return array<string, true>
+     */
+    public static function knownFingerprints(string $path, string $context, string $collection): array
+    {
+        $decoded = self::readObject($path, $context);
+        $items = $decoded[$collection] ?? null;
+
+        if (!is_array($items)) {
+            throw new \RuntimeException(sprintf('%s baseline is missing a valid "%s" array: %s', $context, $collection, $path));
+        }
+
+        $known = [];
+
+        foreach ($items as $item) {
+            if (!is_array($item) || !is_string($item['fingerprint'] ?? null)) {
+                continue;
+            }
+
+            $known[$item['fingerprint']] = true;
+        }
+
+        return $known;
+    }
+
+    /**
      * @return array<string, mixed>
      */
     public static function readObject(string $path, string $context): array
@@ -64,8 +89,6 @@ final class BaselineJson
             );
         }
 
-        if (file_put_contents($path, $encoded) === false) {
-            throw new \RuntimeException(sprintf('Failed to write %s baseline file: %s', $label, $path));
-        }
+        AtomicFileWriter::write($path, $encoded);
     }
 }

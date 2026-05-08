@@ -60,13 +60,13 @@
     "ignore_fingerprints": [],
     "format": "text",
     "json": false,
-    "fail_on": "warning",
+    "fail_on": "error",
     "summary_json": "",
     "changed_only": false,
     "changed_base": "",
     "cache": {
       "enabled": true,
-      "file": ".phpprobe-duplicates-cache.json"
+      "file": ""
     }
   },
   "api": {
@@ -122,6 +122,13 @@
     "format": "text",
     "json": false,
     "fail_on": "error",
+    "fail_confidence": "low",
+    "doc_mode": "hybrid",
+    "doc_signature_consistency": true,
+    "doc_type_hygiene": true,
+    "explain": false,
+    "baseline": "",
+    "write_baseline": "",
     "summary_json": "",
     "changed_only": false,
     "changed_base": "",
@@ -155,6 +162,11 @@
       "REVIEW": "info",
       "QUESTION": "info",
       "NOTE": "info"
+    },
+    "custom_rules": [],
+    "doc_cache": {
+      "enabled": true,
+      "file": ""
     },
     "rules": {}
   },
@@ -215,7 +227,13 @@
       "commented_out_code_block_too_large": "error",
       "commented_out_code_requires_issue_reference": "warning",
       "commented_out_code_in_phpdoc_without_example_label": "warning",
-      "invalid_suppression_rule": "warning"
+      "invalid_suppression_rule": "warning",
+      "expired_suppression_rule": "warning",
+      "dead_suppression_rule": "warning",
+      "phpdoc_signature_mismatch": "warning",
+      "phpdoc_unknown_param": "warning",
+      "phpdoc_missing_param": "info",
+      "phpdoc_invalid_tag_value": "warning"
     },
     "finding_severity_strict": {
       "commented_out_code_without_reason": "error",
@@ -223,7 +241,12 @@
       "commented_out_code_without_valid_reason": "error",
       "commented_out_code_with_weak_reason": "error",
       "commented_out_code_block_too_large": "error",
-      "invalid_suppression_rule": "error"
+      "invalid_suppression_rule": "error",
+      "expired_suppression_rule": "error",
+      "dead_suppression_rule": "error",
+      "phpdoc_signature_mismatch": "error",
+      "phpdoc_unknown_param": "error",
+      "phpdoc_invalid_tag_value": "error"
     }
   }
 }

@@ -4,11 +4,12 @@ declare(strict_types=1);
 
 namespace Infocyph\PHPProbe\Api;
 
+use Infocyph\PHPProbe\Util\PhpNodeTypeString;
 use PhpParser\Node;
 use PhpParser\ParserFactory;
 use PhpParser\PrettyPrinter\Standard;
 
-final class ApiSnapshotIndex
+final readonly class ApiSnapshotIndex
 {
     private Standard $printer;
 
@@ -87,7 +88,7 @@ final class ApiSnapshotIndex
         ];
 
         if ($node instanceof Node\Stmt\Enum_) {
-            $symbol['backing_type'] = $this->type($node->scalarType);
+            $symbol['backing_type'] = PhpNodeTypeString::fromNode($node->scalarType);
         }
 
         $symbol['fingerprint'] = $this->fingerprint($symbol);
@@ -155,6 +156,16 @@ final class ApiSnapshotIndex
         return $values;
     }
 
+    private function enumCase(Node\Stmt\EnumCase $node): array
+    {
+        return [
+            'id' => 'case ' . $node->name->toString(),
+            'kind' => 'case',
+            'name' => $node->name->toString(),
+            'value' => $this->expr($node->expr),
+        ];
+    }
+
     private function expr(?Node\Expr $expr): string
     {
         return $expr instanceof Node\Expr ? $this->printer->prettyPrintExpr($expr) : '';
@@ -197,7 +208,7 @@ final class ApiSnapshotIndex
             'line' => $node->getStartLine(),
             'by_reference' => $node->byRef,
             'parameters' => $this->parameters($node->getParams()),
-            'return_type' => $this->type($node->getReturnType()),
+            'return_type' => PhpNodeTypeString::fromNode($node->getReturnType()),
         ];
         $symbol['fingerprint'] = $this->fingerprint($symbol);
 
@@ -214,6 +225,18 @@ final class ApiSnapshotIndex
         }
 
         return $this->declaredNames($node->implements);
+    }
+
+    private function includedMemberVisibility(Node\Stmt\ClassMethod|Node\Stmt\Property|Node\Stmt\ClassConst $node, bool $includeProtected): ?string
+    {
+        $visibility = $this->visibility($node);
+
+        return $this->includedVisibility($visibility, $includeProtected) ? $visibility : null;
+    }
+
+    private function includedVisibility(string $visibility, bool $includeProtected): bool
+    {
+        return $visibility === 'public' || ($includeProtected && $visibility === 'protected');
     }
 
     private function member(Node\Stmt $node, bool $includeProtected): ?array
@@ -254,22 +277,34 @@ final class ApiSnapshotIndex
         ];
     }
 
-    private function enumCase(Node\Stmt\EnumCase $node): array
-    {
-        return [
-            'id' => 'case ' . $node->name->toString(),
-            'kind' => 'case',
-            'name' => $node->name->toString(),
-            'value' => $this->expr($node->expr),
-        ];
-    }
-
     /**
      * @param array<int, object> $items
      */
     private function memberItemId(string $kind, array $items): string
     {
         return $kind . ' ' . implode(',', array_column($this->namedExpressionItems($items), 'name'));
+    }
+
+    private function method(Node\Stmt\ClassMethod $node, bool $includeProtected): ?array
+    {
+        $visibility = $this->includedMemberVisibility($node, $includeProtected);
+
+        if ($visibility === null) {
+            return null;
+        }
+
+        return [
+            'id' => 'method ' . $node->name->toString(),
+            'kind' => 'method',
+            'name' => $node->name->toString(),
+            'visibility' => $visibility,
+            'abstract' => $node->isAbstract(),
+            'final' => $node->isFinal(),
+            'static' => $node->isStatic(),
+            'by_reference' => $node->byRef,
+            'parameters' => $this->parameters($node->getParams()),
+            'return_type' => PhpNodeTypeString::fromNode($node->getReturnType()),
+        ];
     }
 
     /**
@@ -290,27 +325,6 @@ final class ApiSnapshotIndex
 
         return $values;
     }
-    private function method(Node\Stmt\ClassMethod $node, bool $includeProtected): ?array
-    {
-        $visibility = $this->includedMemberVisibility($node, $includeProtected);
-
-        if ($visibility === null) {
-            return null;
-        }
-
-        return [
-            'id' => 'method ' . $node->name->toString(),
-            'kind' => 'method',
-            'name' => $node->name->toString(),
-            'visibility' => $visibility,
-            'abstract' => $node->isAbstract(),
-            'final' => $node->isFinal(),
-            'static' => $node->isStatic(),
-            'by_reference' => $node->byRef,
-            'parameters' => $this->parameters($node->getParams()),
-            'return_type' => $this->type($node->getReturnType()),
-        ];
-    }
 
     /**
      * @param list<Node\Param> $parameters
@@ -323,7 +337,7 @@ final class ApiSnapshotIndex
         foreach ($parameters as $parameter) {
             $items[] = [
                 'name' => $parameter->var instanceof Node\Expr\Variable && is_string($parameter->var->name) ? $parameter->var->name : '',
-                'type' => $this->type($parameter->type),
+                'type' => PhpNodeTypeString::fromNode($parameter->type),
                 'by_reference' => $parameter->byRef,
                 'variadic' => $parameter->variadic,
                 'optional' => $parameter->default instanceof Node\Expr,
@@ -348,21 +362,9 @@ final class ApiSnapshotIndex
             'visibility' => $visibility,
             'static' => $node->isStatic(),
             'readonly' => $node->isReadonly(),
-            'type' => $this->type($node->type),
+            'type' => PhpNodeTypeString::fromNode($node->type),
             'properties' => $this->namedExpressionItems($node->props),
         ];
-    }
-
-    private function includedMemberVisibility(Node\Stmt\ClassMethod|Node\Stmt\Property|Node\Stmt\ClassConst $node, bool $includeProtected): ?string
-    {
-        $visibility = $this->visibility($node);
-
-        return $this->includedVisibility($visibility, $includeProtected) ? $visibility : null;
-    }
-
-    private function includedVisibility(string $visibility, bool $includeProtected): bool
-    {
-        return $visibility === 'public' || ($includeProtected && $visibility === 'protected');
     }
 
     private function qualifiedName(string $namespace, string $name): string
@@ -442,31 +444,6 @@ final class ApiSnapshotIndex
         return $symbols;
     }
 
-    private function type(Node\Name|Node\Identifier|Node\ComplexType|null $type): string
-    {
-        if ($type === null) {
-            return '';
-        }
-
-        if ($type instanceof Node\NullableType) {
-            return '?' . $this->type($type->type);
-        }
-
-        if ($type instanceof Node\UnionType) {
-            return implode('|', array_map(fn(Node\Name|Node\Identifier|Node\ComplexType $item): string => $this->type($item), $type->types));
-        }
-
-        if ($type instanceof Node\IntersectionType) {
-            return implode('&', array_map(fn(Node\Name|Node\Identifier|Node\ComplexType $item): string => $this->type($item), $type->types));
-        }
-
-        if ($type instanceof Node\Name) {
-            return $type->toString();
-        }
-
-        return $type->toString();
-    }
-
     private function visibility(Node\Stmt\ClassMethod|Node\Stmt\Property|Node\Stmt\ClassConst $node): string
     {
         if ($node->isPrivate()) {
@@ -480,6 +457,3 @@ final class ApiSnapshotIndex
         return 'public';
     }
 }
-
-
-

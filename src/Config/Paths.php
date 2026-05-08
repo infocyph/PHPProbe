@@ -24,6 +24,25 @@ final class Paths
         ));
     }
 
+    public static function bundledConfigFileOrNull(string $file): ?string
+    {
+        $vendorResourceFile = self::vendorResourceFile($file);
+
+        if (is_file($vendorResourceFile)) {
+            return $vendorResourceFile;
+        }
+
+        if (self::isPhpprobeRootPackage()) {
+            $sourceResourceFile = self::phpprobeRootResourceFile($file);
+
+            if (is_file($sourceResourceFile)) {
+                return $sourceResourceFile;
+            }
+        }
+
+        return null;
+    }
+
     public static function config(string $file): string
     {
         $projectFile = self::projectRoot() . DIRECTORY_SEPARATOR . $file;
@@ -45,25 +64,6 @@ final class Paths
             self::vendorResourceFile($file),
             self::isPhpprobeRootPackage() ? sprintf(' or PHPProbe source config at "%s"', self::phpprobeRootResourceFile($file)) : '',
         ));
-    }
-
-    public static function bundledConfigFileOrNull(string $file): ?string
-    {
-        $vendorResourceFile = self::vendorResourceFile($file);
-
-        if (is_file($vendorResourceFile)) {
-            return $vendorResourceFile;
-        }
-
-        if (self::isPhpprobeRootPackage()) {
-            $sourceResourceFile = self::phpprobeRootResourceFile($file);
-
-            if (is_file($sourceResourceFile)) {
-                return $sourceResourceFile;
-            }
-        }
-
-        return null;
     }
 
     public static function preset(string $name): string
