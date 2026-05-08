@@ -96,12 +96,8 @@ final readonly class PhpProbeConfig
         ['enabled' => $ruleEnabled, 'severity' => $ruleSeverity] = $this->commentRules($comments);
 
         $this->applyControlsFromBundle($options, $bundle);
-
-        if ($ignorePaths !== []) {
-            $options['excludes'] = array_values(array_unique([...$options['excludes'], ...$ignorePaths]));
-        }
-
-        foreach ([
+        $this->appendIgnorePaths($options, $ignorePaths);
+        $this->applyCommentBooleanOptions($options, [
             'scanMarkers' => $scanMarkers,
             'commentedOutEnabled' => $commentedEnabled,
             'suppressionEnabled' => $suppressionEnabled,
@@ -109,41 +105,26 @@ final readonly class PhpProbeConfig
             'explain' => $explain,
             'docSignatureConsistency' => $docSignatureConsistency,
             'docTypeHygiene' => $docTypeHygiene,
-        ] as $key => $value) {
-            $this->assignIfNotNull($options, $key, $value);
-        }
-
-        foreach ([
+        ]);
+        $this->applyCommentListOptions($options, [
             'markerTags' => $markerTags,
             'allowedReasonTags' => $allowedReasonTags,
             'optionalReasonTags' => $optionalReasonTags,
             'allowedIssuePatterns' => $issuePatterns,
-        ] as $key => $value) {
-            $this->assignIfListNotEmpty($options, $key, $value);
-        }
-
-        foreach ([
-            'markerSeverity' => $markerSeverity,
-        ] as $key => $value) {
-            $this->assignIfMapNotEmpty($options, $key, $value);
-        }
-
-        $this->assignNormalizedIfNotBlank($options, 'suppressionDirective', $suppressionDirective);
-        $this->assignNormalizedIfNotBlank($options, 'policy', $policy, true);
-        $this->assignNormalizedIfNotBlank($options, 'docMode', $docMode, true);
-        $this->assignNormalizedIfNotBlank($options, 'failConfidence', $failConfidence, true);
-        $this->assignNormalizedIfNotBlank($options, 'baseline', $baseline);
-        $this->assignNormalizedIfNotBlank($options, 'writeBaseline', $writeBaseline);
-        $this->assignIfNotNull($options, 'docCacheEnabled', $docCacheEnabled);
-        $this->assignNormalizedIfNotBlank($options, 'docCacheFile', $docCacheFile);
-
-        foreach ([
-            'minReasonLength' => $minReasonLength,
-            'maxAllowedBlockLines' => $maxBlockLines,
-            'requireIssueForBlocksLongerThan' => $requireIssue,
-        ] as $key => $value) {
-            $this->assignPositiveIfNotNull($options, $key, $value);
-        }
+        ]);
+        $this->applyCommentMapOptions($options, ['markerSeverity' => $markerSeverity]);
+        $this->applyCommentStringOptions(
+            $options,
+            $suppressionDirective,
+            $policy,
+            $docMode,
+            $failConfidence,
+            $baseline,
+            $writeBaseline,
+            $docCacheEnabled,
+            $docCacheFile,
+        );
+        $this->applyCommentNumericOptions($options, $minReasonLength, $maxBlockLines, $requireIssue);
 
         $singleAllowBlank = $this->boolValue($singleLine, 'allow_blank_line_between_reason_and_code');
         $blockAllowBefore = $this->boolValue($block, 'allow_reason_before_block_comment');
@@ -151,22 +132,18 @@ final readonly class PhpProbeConfig
         $phpdocAllowExamples = $this->boolValue($phpdoc, 'allow_documentation_examples');
         $phpdocLabels = $this->stringList($this->value($phpdoc, 'example_labels'));
 
-        foreach ([
+        $this->applyCommentBooleanOptions($options, [
             'allowBlankLineBetweenReasonAndCode' => $singleAllowBlank,
             'allowReasonBeforeBlockComment' => $blockAllowBefore,
             'allowBlankLineBetweenReasonAndCodeInBlock' => $blockAllowBlank,
             'allowPhpdocExamples' => $phpdocAllowExamples,
-        ] as $key => $value) {
-            $this->assignIfNotNull($options, $key, $value);
-        }
+        ]);
         $this->assignIfListNotEmpty($options, 'phpdocExampleLabels', $phpdocLabels);
-        foreach ([
+        $this->applyCommentMapOptions($options, [
             'typeSeverity' => $typeSeverity,
             'strictSeverity' => $strictSeverity,
             'ruleSeverity' => $ruleSeverity,
-        ] as $key => $value) {
-            $this->assignIfMapNotEmpty($options, $key, $value);
-        }
+        ]);
         $this->assignIfMapNotEmpty($options, 'ruleEnabled', $ruleEnabled);
         if ($customRules !== []) {
             $options['customRules'] = $customRules;
@@ -272,6 +249,17 @@ final readonly class PhpProbeConfig
 
     /**
      * @param array<string, mixed> $options
+     * @param list<string> $ignorePaths
+     */
+    private function appendIgnorePaths(array &$options, array $ignorePaths): void
+    {
+        if ($ignorePaths !== []) {
+            $options['excludes'] = array_values(array_unique([...$options['excludes'], ...$ignorePaths]));
+        }
+    }
+
+    /**
+     * @param array<string, mixed> $options
      */
     private function applyApiBaselineValues(
         array &$options,
@@ -282,6 +270,84 @@ final readonly class PhpProbeConfig
         $this->assignIfNotNull($options, 'includeProtected', $includeProtected);
         $this->assignIfNotNull($options, 'baseline', $baseline);
         $this->assignIfNotNull($options, 'writeBaseline', $writeBaseline);
+    }
+
+    /**
+     * @param array<string, mixed> $options
+     * @param array<string, mixed> $values
+     */
+    private function applyCommentBooleanOptions(array &$options, array $values): void
+    {
+        foreach ($values as $key => $value) {
+            $this->assignIfNotNull($options, $key, $value);
+        }
+    }
+
+    /**
+     * @param array<string, mixed> $options
+     * @param array<string, list<string>> $values
+     */
+    private function applyCommentListOptions(array &$options, array $values): void
+    {
+        foreach ($values as $key => $value) {
+            $this->assignIfListNotEmpty($options, $key, $value);
+        }
+    }
+
+    /**
+     * @param array<string, mixed> $options
+     * @param array<string, array<string, string>> $values
+     */
+    private function applyCommentMapOptions(array &$options, array $values): void
+    {
+        foreach ($values as $key => $value) {
+            $this->assignIfMapNotEmpty($options, $key, $value);
+        }
+    }
+
+    /**
+     * @param array<string, mixed> $options
+     */
+    private function applyCommentNumericOptions(
+        array &$options,
+        ?int $minReasonLength,
+        ?int $maxBlockLines,
+        ?int $requireIssue,
+    ): void {
+        $this->assignPositiveMap($options, [
+            'minReasonLength' => $minReasonLength,
+            'maxAllowedBlockLines' => $maxBlockLines,
+            'requireIssueForBlocksLongerThan' => $requireIssue,
+        ]);
+    }
+
+    /**
+     * @param array<string, mixed> $options
+     */
+    private function applyCommentStringOptions(
+        array &$options,
+        ?string $suppressionDirective,
+        ?string $policy,
+        ?string $docMode,
+        ?string $failConfidence,
+        ?string $baseline,
+        ?string $writeBaseline,
+        ?bool $docCacheEnabled,
+        ?string $docCacheFile,
+    ): void {
+        foreach ([
+            'suppressionDirective' => [$suppressionDirective, false],
+            'policy' => [$policy, true],
+            'docMode' => [$docMode, true],
+            'failConfidence' => [$failConfidence, true],
+            'baseline' => [$baseline, false],
+            'writeBaseline' => [$writeBaseline, false],
+        ] as $key => [$value, $lowercase]) {
+            $this->assignNormalizedIfNotBlank($options, $key, $value, $lowercase);
+        }
+
+        $this->assignIfNotNull($options, 'docCacheEnabled', $docCacheEnabled);
+        $this->assignNormalizedIfNotBlank($options, 'docCacheFile', $docCacheFile);
     }
 
     /**
@@ -372,13 +438,11 @@ final readonly class PhpProbeConfig
         ?int $minTokens,
         ?int $minStatements,
     ): void {
-        foreach ([
+        $this->assignPositiveMap($options, [
             'minLines' => $minLines,
             'minTokens' => $minTokens,
             'minStatements' => $minStatements,
-        ] as $key => $value) {
-            $this->assignPositiveIfNotNull($options, $key, $value);
-        }
+        ]);
     }
 
     /**
@@ -467,6 +531,17 @@ final readonly class PhpProbeConfig
     {
         if ($value !== null) {
             $options[$key] = max(1, $value);
+        }
+    }
+
+    /**
+     * @param array<string, mixed> $options
+     * @param array<string, ?int> $values
+     */
+    private function assignPositiveMap(array &$options, array $values): void
+    {
+        foreach ($values as $key => $value) {
+            $this->assignPositiveIfNotNull($options, $key, $value);
         }
     }
 

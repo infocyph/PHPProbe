@@ -473,5 +473,4 @@ final class CommentAstAnalyzer
     {
         return $namespace === '' ? $name : $namespace . '\\' . $name;
     }
-
 }

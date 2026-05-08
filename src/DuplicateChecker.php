@@ -13,8 +13,8 @@ use Infocyph\PHPProbe\Detection\DuplicateDetectionEngine;
 use Infocyph\PHPProbe\Util\BaselineJson;
 use Infocyph\PHPProbe\Util\CheckerRuntime;
 use Infocyph\PHPProbe\Util\GithubAnnotation;
-use Infocyph\PHPProbe\Util\ScopedTempFile;
 use Infocyph\PHPProbe\Util\Sarif;
+use Infocyph\PHPProbe\Util\ScopedTempFile;
 use Infocyph\PHPProbe\Util\SummaryJson;
 
 final class DuplicateChecker
@@ -676,18 +676,24 @@ final class DuplicateChecker
      */
     private function writeSummaryJson(array $result, array $options, int $exitCode): void
     {
+        $cloneCount = count($result['clones']);
+        $lineRatio = $result['total_lines'] > 0
+            ? round($result['duplicated_lines'] / $result['total_lines'], 6)
+            : 0.0;
+
         SummaryJson::writeCheckerSummary(
             $options['summaryJson'],
             'duplicates',
             $exitCode,
             $options['failOn'],
             [
-            'files' => $result['files'],
-            'total_lines' => $result['total_lines'],
-            'duplicated_lines' => $result['duplicated_lines'],
-            'duplicate_percentage' => $result['duplicate_percentage'],
-            'clone_groups' => count($result['clones']),
-            'cache_hit' => $result['cache_hit'],
+                'files' => $result['files'],
+                'total_lines' => $result['total_lines'],
+                'duplicated_lines' => $result['duplicated_lines'],
+                'duplicate_percentage' => $result['duplicate_percentage'],
+                'clone_groups' => $cloneCount,
+                'duplicate_line_ratio' => $lineRatio,
+                'cache_hit' => $result['cache_hit'],
             ],
         );
     }

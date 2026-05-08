@@ -13,8 +13,8 @@ use Infocyph\PHPProbe\Console\Ansi;
 use Infocyph\PHPProbe\Util\BaselineJson;
 use Infocyph\PHPProbe\Util\CheckerRuntime;
 use Infocyph\PHPProbe\Util\GithubAnnotation;
-use Infocyph\PHPProbe\Util\ScopedTempFile;
 use Infocyph\PHPProbe\Util\Sarif;
+use Infocyph\PHPProbe\Util\ScopedTempFile;
 use Infocyph\PHPProbe\Util\SummaryJson;
 
 final readonly class CommentChecker
@@ -38,25 +38,7 @@ final readonly class CommentChecker
                 return $this->help();
             }
 
-            $files = CheckerRuntime::phpFiles($options);
-            $result = (new CommentScanner())->scan($files, $options);
-            $rawFindings = $result['findings'];
-
-            if ($options['baseline'] !== '') {
-                $result = $this->withoutBaselineFindings($result, $options['baseline']);
-            }
-
-            if ($options['writeBaseline'] !== '') {
-                $this->writeBaseline($rawFindings, $options['writeBaseline']);
-            }
-
-            $failed = $this->shouldFail($result['findings'], $options['failOn'], $options['failConfidence']);
-            $exitCode = $options['writeBaseline'] !== '' ? 0 : ($failed ? 1 : 0);
-
-            $this->writeResult($result, $options, $failed);
-            $this->writeSummaryJson($result, $options, $exitCode);
-
-            return $exitCode;
+            return $this->runCheck($options);
         });
     }
 
@@ -247,6 +229,29 @@ final readonly class CommentChecker
         };
     }
 
+    /**
+     * @param array{files:int,findings:list<CommentFinding>,suppressed_count:int} $result
+     * @param array<string, mixed> $options
+     */
+    private function finishRun(array $result, array $options): int
+    {
+        $failed = $this->shouldFail($result['findings'], $options['failOn'], $options['failConfidence']);
+        $baselineWrite = $options['writeBaseline'] !== '';
+
+        if ($baselineWrite) {
+            $this->writeResult($result, $options, $failed);
+            $this->writeSummaryJson($result, $options, 0);
+
+            return 0;
+        }
+
+        $exitCode = $failed ? 1 : 0;
+        $this->writeResult($result, $options, $failed);
+        $this->writeSummaryJson($result, $options, $exitCode);
+
+        return $exitCode;
+    }
+
     private function help(): int
     {
         fwrite(STDOUT, implode(PHP_EOL, [
@@ -410,6 +415,20 @@ final readonly class CommentChecker
         return $this->cli->parseSnapshotFileOptions($options, $arg, '.phpprobe-comments-baseline.json');
     }
 
+    /**
+     * @param array<string, mixed> $options
+     */
+    private function runCheck(array $options): int
+    {
+        ['result' => $result, 'raw_findings' => $rawFindings] = $this->scanFindings($options);
+        $effectiveResult = $options['baseline'] !== ''
+            ? $this->withoutBaselineFindings($result, $options['baseline'])
+            : $result;
+        $this->writeBaselineIfRequested($options, $rawFindings);
+
+        return $this->finishRun($effectiveResult, $options);
+    }
+
     private function sarifLevel(string $severity): string
     {
         return match (strtolower($severity)) {
@@ -417,6 +436,17 @@ final readonly class CommentChecker
             'warning', 'medium' => 'warning',
             default => 'note',
         };
+    }
+
+    /**
+     * @param array<string, mixed> $options
+     * @return array{result:array{files:int,findings:list<CommentFinding>,suppressed_count:int},raw_findings:list<CommentFinding>}
+     */
+    private function scanFindings(array $options): array
+    {
+        $result = (new CommentScanner())->scan(CheckerRuntime::phpFiles($options), $options);
+
+        return ['result' => $result, 'raw_findings' => $result['findings']];
     }
 
     private function severityRank(string $severity): int
@@ -452,6 +482,26 @@ final readonly class CommentChecker
         }
 
         return false;
+    }
+
+    /**
+     * @param array{files:int,findings:list<CommentFinding>,suppressed_count:int} $result
+     * @param array{summaryJson:string,format:string,failOn:string,failConfidence:string,docMode:string,explain:bool} $options
+     * @return array<string, mixed>
+     */
+    private function summaryDetails(array $result, array $options): array
+    {
+        return [
+            'fail_confidence' => $options['failConfidence'],
+            'has_baseline' => $options['baseline'] !== '',
+            'wrote_baseline' => $options['writeBaseline'] !== '',
+            'files' => $result['files'],
+            'findings' => count($result['findings']),
+            'format' => $options['format'],
+            'suppressed_count' => $result['suppressed_count'],
+            'doc_mode' => $options['docMode'],
+            'explain' => $options['explain'],
+        ];
     }
 
     /**
@@ -521,6 +571,17 @@ final readonly class CommentChecker
         ];
 
         BaselineJson::writeObject($path, $payload, 'comment');
+    }
+
+    /**
+     * @param array<string, mixed> $options
+     * @param list<CommentFinding> $rawFindings
+     */
+    private function writeBaselineIfRequested(array $options, array $rawFindings): void
+    {
+        if ($options['writeBaseline'] !== '') {
+            $this->writeBaseline($rawFindings, $options['writeBaseline']);
+        }
     }
 
     /**
@@ -703,17 +764,7 @@ final readonly class CommentChecker
             'comments',
             $exitCode,
             $options['failOn'],
-            [
-            'fail_confidence' => $options['failConfidence'],
-            'has_baseline' => $options['baseline'] !== '',
-            'wrote_baseline' => $options['writeBaseline'] !== '',
-            'files' => $result['files'],
-            'findings' => count($result['findings']),
-            'format' => $options['format'],
-            'suppressed_count' => $result['suppressed_count'],
-            'doc_mode' => $options['docMode'],
-            'explain' => $options['explain'],
-            ],
+            $this->summaryDetails($result, $options),
         );
     }
 
