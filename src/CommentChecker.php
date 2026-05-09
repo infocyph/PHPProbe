@@ -96,6 +96,7 @@ final readonly class CommentChecker
             'strict' => false,
             'failOn' => 'error',
             'failConfidence' => 'low',
+            'emitMinSeverity' => 'info',
             'summaryJson' => '',
             'changedOnly' => false,
             'changedBase' => '',
@@ -271,6 +272,7 @@ final readonly class CommentChecker
             '  --write-baseline[=FILE]          write current findings to a baseline and exit 0',
             '  --fail-on=error|warning|info     minimum severity level to fail',
             '  --fail-confidence=low|medium|high minimum confidence level to fail',
+            '  --ci                             emit only error-level findings (fail-on=error)',
             '  --explain                        include finding explanations and suggestions',
             '  --changed-only                   scan only changed PHP files from Git diff',
             '  --changed-base=REF               Git base ref used with --changed-only',
@@ -392,6 +394,13 @@ final readonly class CommentChecker
             return true;
         }
 
+        if ($arg === '--ci') {
+            $options['failOn'] = 'error';
+            $options['emitMinSeverity'] = 'error';
+
+            return true;
+        }
+
         if ($arg === '--explain') {
             $options['explain'] = true;
 
@@ -413,6 +422,36 @@ final readonly class CommentChecker
         }
 
         return $this->cli->parseSnapshotFileOptions($options, $arg, '.phpprobe-comments-baseline.json');
+    }
+
+    /**
+     * @param array{files:int,findings:list<CommentFinding>,suppressed_count:int} $result
+     * @param array<string, mixed> $options
+     * @return array{files:int,findings:list<CommentFinding>,suppressed_count:int}
+     */
+    private function resultForOutput(array $result, array $options): array
+    {
+        $emitMinSeverity = strtolower(trim((string) ($options['emitMinSeverity'] ?? 'info')));
+
+        $threshold = match ($emitMinSeverity) {
+            'error' => 6,
+            'warning' => 4,
+            default => 1,
+        };
+
+        if ($threshold <= 1) {
+            return $result;
+        }
+
+        $filtered = array_values(array_filter(
+            $result['findings'],
+            fn(CommentFinding $finding): bool => $this->severityRank($finding->severity) >= $threshold,
+        ));
+
+        return [
+            ...$result,
+            'findings' => $filtered,
+        ];
     }
 
     /**
@@ -694,6 +733,8 @@ final readonly class CommentChecker
      */
     private function writeResult(array $result, array $options, bool $failed): void
     {
+        $result = $this->resultForOutput($result, $options);
+
         match ($options['format']) {
             'json' => $this->writeJson($result),
             'markdown' => $this->writeMarkdown($result, $options, $failed),
