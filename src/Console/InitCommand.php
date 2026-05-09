@@ -77,6 +77,22 @@ final class InitCommand
         return 0;
     }
 
+    private function help(): int
+    {
+        fwrite(STDOUT, implode(PHP_EOL, [
+            'Usage: phpprobe init [options]',
+            '',
+            'Options:',
+            '  --preset=NAME    default, standard, ci, or strict (default: standard)',
+            '  --path=FILE      target config path (default: ./phpprobe.json)',
+            '  --with-ci        also write .github/workflows/phpprobe.yml',
+            '  --force          overwrite existing files',
+            '  --help           show this help',
+        ]) . PHP_EOL);
+
+        return 0;
+    }
+
     /**
      * @param list<string> $args
      * @return array{preset:string,path:string,force:bool,withCi:bool,help:bool}
@@ -149,21 +165,5 @@ final class InitCommand
             '      - run: composer install --no-interaction --prefer-dist',
             sprintf('      - run: php vendor/bin/phpprobe check --preset=%s --report-dir=build/reports src tests', $preset),
         ]) . PHP_EOL;
-    }
-
-    private function help(): int
-    {
-        fwrite(STDOUT, implode(PHP_EOL, [
-            'Usage: phpprobe init [options]',
-            '',
-            'Options:',
-            '  --preset=NAME    default, standard, ci, or strict (default: standard)',
-            '  --path=FILE      target config path (default: ./phpprobe.json)',
-            '  --with-ci        also write .github/workflows/phpprobe.yml',
-            '  --force          overwrite existing files',
-            '  --help           show this help',
-        ]) . PHP_EOL);
-
-        return 0;
     }
 }

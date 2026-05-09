@@ -27,10 +27,18 @@ final class Cli
             'check' => (new CheckCommand())->run(array_slice($argv, 2)),
             'init' => (new InitCommand())->run(array_slice($argv, 2)),
             'config' => (new ConfigCommand())->run(array_slice($argv, 2)),
+            'doctor' => (new DoctorCommand())->run(array_slice($argv, 2)),
             'presets' => $this->presets(),
             'preset' => $this->preset((string) ($argv[2] ?? '')),
             default => $this->help(),
         };
+    }
+
+    private function help(): int
+    {
+        fwrite(STDOUT, 'Usage: phpprobe syntax|duplicates|api|comments|check [options] [paths...] | config validate | init [options] | doctor [options] | presets | preset <name>' . PHP_EOL);
+
+        return 0;
     }
 
     private function preset(string $name): int
@@ -55,13 +63,6 @@ final class Cli
     private function presets(): int
     {
         fwrite(STDOUT, implode(PHP_EOL, (new PresetRepository())->names()) . PHP_EOL);
-
-        return 0;
-    }
-
-    private function help(): int
-    {
-        fwrite(STDOUT, 'Usage: phpprobe syntax|duplicates|api|comments|check [options] [paths...] | config validate | init [options] | presets | preset <name>' . PHP_EOL);
 
         return 0;
     }

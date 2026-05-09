@@ -61,11 +61,31 @@ final readonly class CliOptions
     }
 
     /**
+     * @param list<string> $args
+     */
+    public function configPath(array $args, string $default): string
+    {
+        return $this->valuedOption($args, '--config') ?? $default;
+    }
+
+    /**
      * @param list<string> $allowed
      */
     public function isAllowedFormat(string $format, array $allowed = ['text', 'json', 'markdown', 'sarif', 'github']): bool
     {
         return in_array(strtolower(trim($format)), $allowed, true);
+    }
+
+    public function mergeConfigWithPreset(PhpProbeConfig $config, string $cliPreset): PhpProbeConfig
+    {
+        $repository = new PresetRepository();
+        $configPreset = $config->preset();
+
+        if (is_string($configPreset) && $configPreset !== '') {
+            $config = $repository->config($configPreset)->merge($config);
+        }
+
+        return $cliPreset !== '' ? $config->merge($repository->config($cliPreset)) : $config;
     }
 
     /**
@@ -86,26 +106,6 @@ final readonly class CliOptions
         return $normalized;
     }
 
-    /**
-     * @param list<string> $args
-     */
-    public function configPath(array $args, string $default): string
-    {
-        return $this->valuedOption($args, '--config') ?? $default;
-    }
-
-    public function mergeConfigWithPreset(PhpProbeConfig $config, string $cliPreset): PhpProbeConfig
-    {
-        $repository = new PresetRepository();
-        $configPreset = $config->preset();
-
-        if (is_string($configPreset) && $configPreset !== '') {
-            $config = $repository->config($configPreset)->merge($config);
-        }
-
-        return $cliPreset !== '' ? $config->merge($repository->config($cliPreset)) : $config;
-    }
-
     public function optionValue(string $arg, string $name): ?string
     {
         return str_starts_with($arg, $name . '=') ? substr($arg, strlen($name) + 1) : null;
@@ -123,95 +123,6 @@ final readonly class CliOptions
         }
 
         return $this->parseTrimmedOption($options, $arg, '--changed-base', 'changedBase');
-    }
-
-    /**
-     * @param list<string> $args
-     * @param array{excludes:list<string>} $options
-     */
-    public function parseExclude(array $args, int &$index, array &$options, string $arg): bool
-    {
-        return $this->parseRepeatableValue($args, $index, $options['excludes'], '--exclude', $arg);
-    }
-
-    /**
-     * @param array{baseline:string,writeBaseline:string} $options
-     */
-    public function parseSnapshotFileOptions(array &$options, string $arg, string $defaultWritePath): bool
-    {
-        $baseline = $this->optionValue($arg, '--baseline');
-
-        if ($baseline !== null) {
-            $options['baseline'] = $baseline;
-
-            return true;
-        }
-
-        $writeBaseline = $this->optionValue($arg, '--write-baseline');
-
-        if ($writeBaseline !== null || $arg === '--write-baseline') {
-            $options['writeBaseline'] = $writeBaseline !== null && $writeBaseline !== '' ? $writeBaseline : $defaultWritePath;
-
-            return true;
-        }
-
-        return false;
-    }
-
-    /**
-     * @param array{summaryJson:string} $options
-     */
-    public function parseSummaryJson(array &$options, string $arg): bool
-    {
-        return $this->parseTrimmedOption($options, $arg, '--summary-json', 'summaryJson');
-    }
-
-    /**
-     * @param array{format:string} $options
-     * @param list<string> $allowed
-     */
-    public function parseOutputFormat(array &$options, string $arg, array $allowed = ['text', 'json', 'markdown', 'sarif', 'github']): bool
-    {
-        if ($arg === '--json') {
-            $options['format'] = 'json';
-
-            return true;
-        }
-
-        $format = $this->optionValue($arg, '--format');
-
-        if ($format === null) {
-            return false;
-        }
-
-        $options['format'] = $this->normalizeFormat($format, $allowed);
-
-        return true;
-    }
-
-    /**
-     * @param array{failOn:string} $options
-     */
-    public function parseFailOn(array &$options, string $arg): bool
-    {
-        $failOn = $this->optionValue($arg, '--fail-on');
-
-        if ($failOn === null) {
-            return false;
-        }
-
-        $normalized = strtolower(trim($failOn));
-
-        if (!in_array($normalized, ['error', 'warning', 'info'], true)) {
-            throw new \InvalidArgumentException(sprintf(
-                'Invalid --fail-on value "%s". Expected: error, warning, info.',
-                $failOn,
-            ));
-        }
-
-        $options['failOn'] = $normalized;
-
-        return true;
     }
 
     /**
@@ -251,6 +162,82 @@ final readonly class CliOptions
     }
 
     /**
+     * @param array<string, mixed> $options
+     * @param list<string> $allowed
+     */
+    public function parseEnumOption(
+        array &$options,
+        string $arg,
+        string $name,
+        string $targetKey,
+        array $allowed,
+        string $errorMessage,
+    ): bool {
+        $value = $this->optionValue($arg, $name);
+
+        if ($value === null) {
+            return false;
+        }
+
+        $normalized = strtolower(trim($value));
+
+        if (!in_array($normalized, $allowed, true)) {
+            throw new \InvalidArgumentException(sprintf($errorMessage, $value));
+        }
+
+        $options[$targetKey] = $normalized;
+
+        return true;
+    }
+
+    /**
+     * @param list<string> $args
+     * @param array{excludes:list<string>} $options
+     */
+    public function parseExclude(array $args, int &$index, array &$options, string $arg): bool
+    {
+        return $this->parseRepeatableValue($args, $index, $options['excludes'], '--exclude', $arg);
+    }
+
+    /**
+     * @param array{failOn:string} $options
+     */
+    public function parseFailOn(array &$options, string $arg): bool
+    {
+        return $this->parseEnumOption(
+            $options,
+            $arg,
+            '--fail-on',
+            'failOn',
+            ['error', 'warning', 'info'],
+            'Invalid --fail-on value "%s". Expected: error, warning, info.',
+        );
+    }
+
+    /**
+     * @param array{format:string} $options
+     * @param list<string> $allowed
+     */
+    public function parseOutputFormat(array &$options, string $arg, array $allowed = ['text', 'json', 'markdown', 'sarif', 'github']): bool
+    {
+        if ($arg === '--json') {
+            $options['format'] = 'json';
+
+            return true;
+        }
+
+        $format = $this->optionValue($arg, '--format');
+
+        if ($format === null) {
+            return false;
+        }
+
+        $options['format'] = $this->normalizeFormat($format, $allowed);
+
+        return true;
+    }
+
+    /**
      * @param list<string> $args
      * @param list<string> $target
      */
@@ -280,6 +267,38 @@ final readonly class CliOptions
     }
 
     /**
+     * @param array{baseline:string,writeBaseline:string} $options
+     */
+    public function parseSnapshotFileOptions(array &$options, string $arg, string $defaultWritePath): bool
+    {
+        $baseline = $this->optionValue($arg, '--baseline');
+
+        if ($baseline !== null) {
+            $options['baseline'] = $baseline;
+
+            return true;
+        }
+
+        $writeBaseline = $this->optionValue($arg, '--write-baseline');
+
+        if ($writeBaseline !== null || $arg === '--write-baseline') {
+            $options['writeBaseline'] = $writeBaseline !== null && $writeBaseline !== '' ? $writeBaseline : $defaultWritePath;
+
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * @param array{summaryJson:string} $options
+     */
+    public function parseSummaryJson(array &$options, string $arg): bool
+    {
+        return $this->parseTrimmedOption($options, $arg, '--summary-json', 'summaryJson');
+    }
+
+    /**
      * @param list<string> $args
      */
     public function presetName(array $args): string
@@ -301,6 +320,22 @@ final readonly class CliOptions
     public function skipPreset(array $args, int &$index, string $arg): bool
     {
         return $this->skipValuedOption($args, $index, $arg, '--preset');
+    }
+
+    /**
+     * @param array<string, mixed> $options
+     */
+    private function parseTrimmedOption(array &$options, string $arg, string $name, string $targetKey): bool
+    {
+        $value = $this->optionValue($arg, $name);
+
+        if ($value === null) {
+            return false;
+        }
+
+        $options[$targetKey] = trim($value);
+
+        return true;
     }
 
     /**
@@ -343,21 +378,5 @@ final readonly class CliOptions
         }
 
         return null;
-    }
-
-    /**
-     * @param array<string, mixed> $options
-     */
-    private function parseTrimmedOption(array &$options, string $arg, string $name, string $targetKey): bool
-    {
-        $value = $this->optionValue($arg, $name);
-
-        if ($value === null) {
-            return false;
-        }
-
-        $options[$targetKey] = trim($value);
-
-        return true;
     }
 }

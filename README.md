@@ -15,6 +15,7 @@ PHPProbe is the checker runtime. It can be used directly as `phpprobe`, required
 
 - PHP `>=8.2`
 - `nikic/php-parser` `>=5.0 <6.0`
+- `phpstan/phpdoc-parser` `^2.3`
 
 Install it as a Composer tool dependency:
 
@@ -38,6 +39,7 @@ php vendor/bin/phpprobe comments [options] [paths...]
 php vendor/bin/phpprobe check [options] [paths...]
 php vendor/bin/phpprobe config validate [options]
 php vendor/bin/phpprobe init [options]
+php vendor/bin/phpprobe doctor [options]
 php vendor/bin/phpprobe presets
 php vendor/bin/phpprobe preset <name>
 ```
@@ -219,7 +221,19 @@ A full project config may override any part of the selected preset:
     "paths": ["src"],
     "exclude": ["src/generated"],
     "scan_markers": true,
+    "doc_mode": "hybrid",
+    "doc_signature_consistency": true,
+    "doc_type_hygiene": true,
+    "baseline": "",
+    "write_baseline": "",
     "fail_on": "error",
+    "fail_confidence": "low",
+    "explain": false,
+    "custom_rules": [],
+    "doc_cache": {
+      "enabled": true,
+      "file": ".phpprobe-comments-doc-cache.json"
+    },
     "rules": {
       "comment_marker": {
         "enabled": true
@@ -301,6 +315,9 @@ Options:
 | `--changed-only` | flag | Scan only changed PHP files from Git diff. |
 | `--changed-base` | `--changed-base=REF` | Base ref used with `--changed-only`. |
 | `--fail-on` | `--fail-on=error|warning|info` | Passed to duplicates, api, and comments. |
+| `--fail-confidence` | `--fail-confidence=low|medium|high` | Passed through to comments. |
+| `--doc-mode` | `--doc-mode=heuristic|parser|hybrid` | Passed through to comments. |
+| `--explain` | flag | Passed through to comments. |
 | `--help` | flag | Print command help. |
 
 Exit behavior:
@@ -336,6 +353,20 @@ Options:
 - `--with-ci` (also writes `.github/workflows/phpprobe.yml`)
 - `--force` (overwrite existing files)
 - `--help`
+
+## Doctor Command
+
+```bash
+php vendor/bin/phpprobe doctor [options]
+```
+
+Options:
+
+- `--config=FILE` (default `./phpprobe.json`)
+- `--json`
+- `--help`
+
+Checks include PHP version, required extensions, config validity, and CaptainHook presence.
 
 ## Syntax Checker
 
@@ -381,6 +412,8 @@ Output and exits:
 | All files pass | `stdout`: `Syntax OK: N PHP files checked.` plus summary | `0` |
 | One or more files fail | `stderr`: failing file list plus lint output | `1` |
 | Unknown option or runtime config error | `stderr`: error | `2` |
+
+JSON note: comment findings include `confidence`, `subtype`, `explanation`, `suggestion`, and `autofix` (suggestion metadata) when available.
 | Unknown preset | `stderr`: preset error | `2` |
 
 ## Comment Policy Checker
@@ -404,21 +437,37 @@ Options:
 | `--json` | flag | Alias for `--format=json`. |
 | `--strict` | flag | Escalate commented-out-code policy severities. |
 | `--policy` | `--policy=relaxed|standard|strict` | Comment policy profile. |
+| `--doc-mode` | `--doc-mode=heuristic|parser|hybrid` | Doc-comment analysis mode. `hybrid` is default and recommended. |
+| `--baseline` | `--baseline=FILE` | Suppress comment findings already present in a baseline. |
+| `--write-baseline` | `--write-baseline` or `--write-baseline=FILE` | Write current comment findings to a baseline and exit `0`. |
 | `--fail-on` | `--fail-on=error|warning|info` | Control failure threshold (default: `error`). |
+| `--fail-confidence` | `--fail-confidence=low|medium|high` | Minimum confidence level that can fail the run (default: `low`). |
+| `--explain` | flag | Include why/suggestion details per finding in text/markdown output. |
 | `--summary-json` | `--summary-json=FILE` | Write a machine-readable run summary JSON. |
 | `--changed-only` | flag | Scan only changed PHP files from Git diff. |
 | `--changed-base` | `--changed-base=REF` | Base ref used with `--changed-only`. |
 | `--tags` | `--tags=TODO,FIXME,...` | Override marker tags for marker detection. |
 | `--help`, `-h` | flag | Print comments checker help and exit `0`. |
 
-Config-only option: `comments.rules` allows per-finding overrides such as `{ "comment_marker": { "enabled": false } }` or `{ "commented_out_code_with_weak_reason": { "severity": "info" } }`.
+Config-only options:
+- `comments.rules` allows per-finding overrides such as `{ "comment_marker": { "enabled": false } }` or `{ "commented_out_code_with_weak_reason": { "severity": "info" } }`.
+- `comments.doc_mode` accepts `heuristic`, `parser`, or `hybrid`.
+- `comments.fail_confidence` accepts `low`, `medium`, or `high`.
+- `comments.doc_signature_consistency` enables signature-vs-PHPDoc consistency checks.
+- `comments.doc_type_hygiene` enables PHPDoc tag/type hygiene checks.
+- `comments.explain` enables explanation and suggestion details.
+- `comments.baseline` and `comments.write_baseline` map to comment baseline CLI flags.
+- `comments.doc_cache` configures persistent PHPDoc parse cache with `enabled` and `file`.
+- `comments.custom_rules` allows regex-based project-specific rules (`id`, `pattern`, `severity`, `message`, `enabled`, `scope`).
 
-### Four enforced policies
+### Comment policy and PHPDoc checks
 
 1. Marker detection: tags like `TODO`, `FIXME`, `BUG`, `HACK`, `SECURITY`, `REVIEW`, `DEPRECATED`.
 2. Commented-out code requires directly attached tagged reason.
 3. Long commented-out blocks require an issue reference.
 4. Oversized commented-out blocks are always reported.
+5. Dead suppressions are surfaced for cleanup.
+6. PHPDoc signatures/tag values are validated against native declarations.
 
 Default thresholds:
 
@@ -436,7 +485,26 @@ Policy-to-finding mapping:
 | Oversized block disallowed | `commented_out_code_block_too_large` |
 | PHPDoc code without clear example label | `commented_out_code_in_phpdoc_without_example_label` |
 | Invalid suppression directive | `invalid_suppression_rule` |
+| Expired suppression directive | `expired_suppression_rule` |
+| Unused suppression directive | `dead_suppression_rule` |
+| PHPDoc tag/type parse issue | `phpdoc_invalid_tag_value` |
+| PHPDoc parameter missing from native signature | `phpdoc_unknown_param` |
+| Native parameter missing in PHPDoc | `phpdoc_missing_param` |
+| PHPDoc/native type mismatch | `phpdoc_signature_mismatch` |
 | Explicitly valid tagged reason (informational) | `commented_out_code_with_valid_reason` |
+
+Inline suppression format:
+- `@phpprobe-ignore RULE_ID`
+- `@phpprobe-ignore RULE_A,RULE_B until=YYYY-MM-DD`
+- `@phpprobe-ignore RULE_ID scope=symbol`
+- `@phpprobe-ignore RULE_ID scope=symbol symbol=ClassName::method`
+
+Comment baseline usage:
+
+```bash
+php vendor/bin/phpprobe comments --write-baseline=.phpprobe-comments-baseline.json src
+php vendor/bin/phpprobe comments --baseline=.phpprobe-comments-baseline.json src
+```
 
 Output and exits:
 
@@ -794,6 +862,8 @@ Composer scripts:
 | `composer duplicates` | `php bin/phpprobe duplicates --preset=standard --config=resources/phpprobe.json src tests` |
 | `composer api` | `php bin/phpprobe api --config=resources/phpprobe.json src tests` |
 | `composer comments` | `php bin/phpprobe comments --config=resources/phpprobe.json src tests` |
+| `composer doctor` | `php bin/phpprobe doctor --config=resources/phpprobe.json` |
+| `composer bench:comments` | `php tools/bench-comments.php` |
 
 Useful local checks:
 

@@ -22,10 +22,14 @@
     ],
     "require": {
         "php": ">=8.2",
-        "nikic/php-parser": "^5.7"
+        "nikic/php-parser": "^5.7",
+        "phpstan/phpdoc-parser": "^2.3"
     },
     "require-dev": {
-        "pestphp/pest": ">=3.0 <5.0"
+        "laravel/pint": ">=1.0 <2.0",
+        "pestphp/pest": ">=3.0 <5.0",
+        "rector/rector": ">=2.0 <3.0",
+        "squizlabs/php_codesniffer": ">=3.9 <5.0"
     },
     "minimum-stability": "dev",
     "prefer-stable": true,
@@ -45,12 +49,25 @@
         "sort-packages": true
     },
     "scripts": {
-        "test": "vendor/bin/pest --configuration=pest.xml",
-        "check": "@php bin/phpprobe check --preset=standard --config=resources/phpprobe.json src tests",
+        "test": "@php vendor/bin/pest --configuration=pest.xml",
+        "test:sniff": "@php vendor/bin/phpcs --standard=phpcs.xml.dist --report=full src tests",
+        "test:pint": "@php vendor/bin/pint --test",
+        "test:rector": "@php vendor/bin/rector process src tests --dry-run",
+        "check": "@php bin/phpprobe check --config=resources/phpprobe.json src tests",
         "lint": "@php bin/phpprobe syntax src tests",
-        "duplicates": "@php bin/phpprobe duplicates --preset=standard --config=resources/phpprobe.json src tests",
+        "duplicates": "@php bin/phpprobe duplicates --config=resources/phpprobe.json src tests",
         "api": "@php bin/phpprobe api --config=resources/phpprobe.json src tests",
         "comments": "@php bin/phpprobe comments --config=resources/phpprobe.json src tests",
-        "tests" : ["@test", "@check", "@lint", "@duplicates", "@api", "@comments"]
+        "doctor": "@php bin/phpprobe doctor --config=resources/phpprobe.json",
+        "pint": "@php vendor/bin/pint",
+        "fix:sniff": "@php vendor/bin/phpcbf --standard=phpcs.xml.dist --runtime-set ignore_errors_on_exit 1 src tests",
+        "rector": "@php vendor/bin/rector process src tests",
+        "process": [
+            "@rector",
+            "@pint",
+            "@lint"
+        ],
+        "bench:comments": "@php tools/bench-comments.php",
+        "tests" : ["@test", "@test:sniff", "@test:pint", "@test:rector", "@check", "@lint", "@duplicates", "@api", "@comments"]
     }
 }

@@ -60,7 +60,6 @@ final class Ansi
             return false;
         }
 
-        return function_exists('stream_isatty') ? stream_isatty($stream) : false;
+        return function_exists('stream_isatty') && stream_isatty($stream);
     }
 }
-

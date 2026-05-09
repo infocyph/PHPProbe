@@ -13,6 +13,10 @@ final readonly class CommentFinding
         public string $type,
         public string $severity,
         public string $message,
+        public string $confidence = 'medium',
+        public ?string $subtype = null,
+        public ?string $explanation = null,
+        public ?string $suggestion = null,
         public ?string $tag = null,
         public ?string $scope = null,
         public ?string $issue = null,
@@ -29,6 +33,10 @@ final readonly class CommentFinding
      *     type:string,
      *     severity:string,
      *     message:string,
+     *     confidence:string,
+     *     subtype:?string,
+     *     explanation:?string,
+     *     suggestion:?string,
      *     tag:?string,
      *     scope:?string,
      *     issue:?string,
@@ -46,6 +54,10 @@ final readonly class CommentFinding
             'type' => $this->type,
             'severity' => $this->severity,
             'message' => $this->message,
+            'confidence' => $this->confidence,
+            'subtype' => $this->subtype,
+            'explanation' => $this->explanation,
+            'suggestion' => $this->suggestion,
             'tag' => $this->tag,
             'scope' => $this->scope,
             'issue' => $this->issue,
@@ -55,4 +67,3 @@ final readonly class CommentFinding
         ];
     }
 }
-

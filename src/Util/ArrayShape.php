@@ -17,7 +17,7 @@ final class ArrayShape
 
         return array_filter(
             $value,
-            static fn(int|string $key): bool => is_string($key),
+            is_string(...),
             ARRAY_FILTER_USE_KEY,
         );
     }
