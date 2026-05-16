@@ -114,6 +114,58 @@ it('supports fail-on=error threshold for duplicate percentage', function (): voi
         ->and($result['clones'])->not()->toBeEmpty();
 });
 
+it('renders compact clone summary wording in text output', function (): void {
+    $root = makeDuplicateCheckerFixture();
+    $src = $root.DIRECTORY_SEPARATOR.'src';
+
+    mkdir($src, 0755, true);
+    file_put_contents($src.DIRECTORY_SEPARATOR.'Alpha.php', duplicateBaselineFixture('Alpha'));
+    file_put_contents($src.DIRECTORY_SEPARATOR.'Beta.php', duplicateBaselineFixture('Beta'));
+
+    try {
+        $run = runDuplicateCheckerCommand($root, ['--fuzzy', '--min-lines=5', '--min-tokens=20', 'src']);
+    } finally {
+        removeDuplicateCheckerFixture($root);
+    }
+
+    expect($run['exitCode'])->toBe(1)
+        ->and($run['stderr'])->toContain('Lines:')
+        ->and($run['stderr'])->toContain('Similarity:')
+        ->and($run['stderr'])->toContain('Engine: Token')
+        ->and($run['stderr'])->toContain('Score:');
+});
+
+it('supports classic duplicate output style from config overrides', function (): void {
+    $root = makeDuplicateCheckerFixture();
+    $src = $root.DIRECTORY_SEPARATOR.'src';
+
+    mkdir($src, 0755, true);
+    file_put_contents($root.DIRECTORY_SEPARATOR.'phpprobe.json', json_encode([
+        'duplicates' => [
+            'paths' => ['src'],
+            'fuzzy' => true,
+            'min_lines' => 5,
+            'min_tokens' => 20,
+            'output' => [
+                'style' => 'classic',
+            ],
+        ],
+    ], JSON_PRETTY_PRINT));
+    file_put_contents($src.DIRECTORY_SEPARATOR.'Alpha.php', duplicateBaselineFixture('Alpha'));
+    file_put_contents($src.DIRECTORY_SEPARATOR.'Beta.php', duplicateBaselineFixture('Beta'));
+
+    try {
+        $run = runDuplicateCheckerCommand($root, []);
+    } finally {
+        removeDuplicateCheckerFixture($root);
+    }
+
+    expect($run['exitCode'])->toBe(1)
+        ->and($run['stderr'])->toContain('lines,')
+        ->and($run['stderr'])->toContain('similar')
+        ->and($run['stderr'])->not()->toContain('Engine:');
+});
+
 it('detects near-miss block clones in audit mode', function (): void {
     $root = makeDuplicateCheckerFixture();
     $src = $root.DIRECTORY_SEPARATOR.'src';

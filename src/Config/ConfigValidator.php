@@ -27,8 +27,26 @@ final class ConfigValidator
      */
     private const ENUM_VALUES = [
         'root.preset' => ['default', 'standard', 'ci', 'strict', 'phpstorm', 'legacy-standard'],
+        'output.colors.success' => ['red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'gray', 'bold'],
+        'output.colors.error' => ['red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'gray', 'bold'],
+        'output.colors.warning' => ['red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'gray', 'bold'],
+        'output.colors.info' => ['red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'gray', 'bold'],
+        'output.colors.muted' => ['red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'gray', 'bold'],
+        'output.colors.file' => ['red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'gray', 'bold'],
+        'output.colors.severity.error' => ['red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'gray', 'bold'],
+        'output.colors.severity.critical' => ['red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'gray', 'bold'],
+        'output.colors.severity.high' => ['red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'gray', 'bold'],
+        'output.colors.severity.warning' => ['red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'gray', 'bold'],
+        'output.colors.severity.medium' => ['red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'gray', 'bold'],
+        'output.colors.severity.low' => ['red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'gray', 'bold'],
+        'output.colors.severity.info' => ['red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'gray', 'bold'],
         'syntax.format' => ['text', 'json', 'markdown', 'sarif', 'github'],
         'duplicates.mode' => ['gate', 'audit'],
+        'duplicates.output.style' => ['compact', 'classic'],
+        'duplicates.output.score_colors.high.color' => ['red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'gray'],
+        'duplicates.output.score_colors.medium.color' => ['red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'gray'],
+        'duplicates.output.score_colors.low.color' => ['red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'gray'],
+        'duplicates.output.score_colors.base.color' => ['red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'gray'],
         'duplicates.format' => ['text', 'json', 'markdown', 'sarif', 'github'],
         'duplicates.fail_on' => ['error', 'warning', 'info'],
         'api.format' => ['text', 'json', 'markdown', 'sarif', 'github'],
@@ -110,6 +128,9 @@ final class ConfigValidator
     private function sectionSchemas(): array
     {
         return [
+            'output' => [
+                'colors' => 'object',
+            ],
             'syntax' => $this->checkerSchema([
                 'parallel' => 'int',
             ]),
@@ -127,6 +148,7 @@ final class ConfigValidator
                 'fail_on' => 'string',
                 'ignore_fingerprints' => 'list',
                 'cache' => 'object',
+                'output' => 'object',
             ]),
             'api' => $this->checkerSchema([
                 'include_protected' => 'bool',
@@ -267,6 +289,73 @@ final class ConfigValidator
     }
 
     /**
+     * @param array<string, mixed> $duplicates
+     * @param list<string> $errors
+     */
+    private function validateDuplicateOutput(array $duplicates, array &$errors): void
+    {
+        $output = $duplicates['output'] ?? null;
+
+        if ($output === null) {
+            return;
+        }
+
+        if (!is_array($output) || array_is_list($output)) {
+            $errors[] = 'duplicates.output must be an object.';
+
+            return;
+        }
+
+        $outputObject = ArrayShape::stringKeyed($output);
+        $this->validateUnknownKeys('duplicates.output', $outputObject, ['style', 'score_colors'], $errors);
+
+        if (isset($outputObject['style'])) {
+            $this->validateEnumValue('duplicates.output', 'style', $outputObject['style'], $errors);
+        }
+
+        $scoreColors = $outputObject['score_colors'] ?? null;
+
+        if ($scoreColors === null) {
+            return;
+        }
+
+        if (!is_array($scoreColors) || array_is_list($scoreColors)) {
+            $errors[] = 'duplicates.output.score_colors must be an object.';
+
+            return;
+        }
+
+        $scoreColorsObject = ArrayShape::stringKeyed($scoreColors);
+        $this->validateUnknownKeys('duplicates.output.score_colors', $scoreColorsObject, ['high', 'medium', 'low', 'base'], $errors);
+
+        foreach (['high', 'medium', 'low', 'base'] as $band) {
+            $entry = $scoreColorsObject[$band] ?? null;
+
+            if ($entry === null) {
+                continue;
+            }
+
+            if (!is_array($entry) || array_is_list($entry)) {
+                $errors[] = sprintf('duplicates.output.score_colors.%s must be an object.', $band);
+
+                continue;
+            }
+
+            $entryObject = ArrayShape::stringKeyed($entry);
+            $allowed = $band === 'base' ? ['color'] : ['min', 'color'];
+            $this->validateUnknownKeys(sprintf('duplicates.output.score_colors.%s', $band), $entryObject, $allowed, $errors);
+
+            if ($band !== 'base' && isset($entryObject['min']) && !$this->matchesType($entryObject['min'], 'number')) {
+                $errors[] = sprintf('duplicates.output.score_colors.%s.min must be a number.', $band);
+            }
+
+            if (isset($entryObject['color'])) {
+                $this->validateEnumValue(sprintf('duplicates.output.score_colors.%s', $band), 'color', $entryObject['color'], $errors);
+            }
+        }
+    }
+
+    /**
      * @param list<string> $errors
      */
     private function validateEnumValue(string $section, string $key, mixed $value, array &$errors): void
@@ -302,7 +391,7 @@ final class ConfigValidator
      */
     private function validateRoot(array $root, array &$errors): void
     {
-        $allowed = ['preset', 'syntax', 'duplicates', 'api', 'comments', 'commented_out_code'];
+        $allowed = ['preset', 'output', 'syntax', 'duplicates', 'api', 'comments', 'commented_out_code'];
         $this->validateUnknownKeys('root', $root, $allowed, $errors);
 
         if (isset($root['preset']) && !is_string($root['preset'])) {
@@ -317,6 +406,62 @@ final class ConfigValidator
 
         $this->validateCommentCustomRules(ArrayShape::stringKeyed($root['comments'] ?? []), $errors);
         $this->validateCommentDocCache(ArrayShape::stringKeyed($root['comments'] ?? []), $errors);
+        $this->validateDuplicateOutput(ArrayShape::stringKeyed($root['duplicates'] ?? []), $errors);
+        $this->validateOutput(ArrayShape::stringKeyed($root['output'] ?? []), $errors);
+    }
+
+    /**
+     * @param array<string, mixed> $output
+     * @param list<string> $errors
+     */
+    private function validateOutput(array $output, array &$errors): void
+    {
+        if ($output === []) {
+            return;
+        }
+
+        $this->validateUnknownKeys('output', $output, ['colors'], $errors);
+        $colors = $output['colors'] ?? null;
+
+        if ($colors === null) {
+            return;
+        }
+
+        if (!is_array($colors) || array_is_list($colors)) {
+            $errors[] = 'output.colors must be an object.';
+
+            return;
+        }
+
+        $colorsObject = ArrayShape::stringKeyed($colors);
+        $this->validateUnknownKeys('output.colors', $colorsObject, ['success', 'error', 'warning', 'info', 'muted', 'file', 'severity'], $errors);
+
+        foreach (['success', 'error', 'warning', 'info', 'muted', 'file'] as $name) {
+            if (!array_key_exists($name, $colorsObject)) {
+                continue;
+            }
+
+            $this->validateEnumValue('output.colors', $name, $colorsObject[$name], $errors);
+        }
+
+        $severity = $colorsObject['severity'] ?? null;
+
+        if ($severity === null) {
+            return;
+        }
+
+        if (!is_array($severity) || array_is_list($severity)) {
+            $errors[] = 'output.colors.severity must be an object.';
+
+            return;
+        }
+
+        $severityObject = ArrayShape::stringKeyed($severity);
+        $this->validateUnknownKeys('output.colors.severity', $severityObject, ['error', 'critical', 'high', 'warning', 'medium', 'low', 'info'], $errors);
+
+        foreach ($severityObject as $name => $value) {
+            $this->validateEnumValue('output.colors.severity', $name, $value, $errors);
+        }
     }
 
     /**

@@ -135,9 +135,22 @@ final class DuplicateChecker
             'summaryJson' => '',
             'changedOnly' => false,
             'changedBase' => '',
+            'textColorSuccess' => 'green',
+            'textColorError' => 'red',
+            'textColorWarning' => 'yellow',
+            'textColorInfo' => 'cyan',
+            'textColorFile' => 'cyan',
             'cacheEnabled' => true,
             'cacheFile' => $this->defaultCacheFile(),
             'errorDuplicatePercentage' => 20.0,
+            'outputStyle' => 'compact',
+            'scoreColorHighMin' => 260.0,
+            'scoreColorMediumMin' => 180.0,
+            'scoreColorLowMin' => 120.0,
+            'scoreColorHigh' => 'red',
+            'scoreColorMedium' => 'yellow',
+            'scoreColorLow' => 'cyan',
+            'scoreColorBase' => 'gray',
             'config' => Paths::config('phpprobe.json'),
             'mode' => 'gate',
             'normalize' => true,
@@ -153,6 +166,16 @@ final class DuplicateChecker
             'paths' => [],
             'excludes' => [],
         ];
+    }
+
+    private function engineLabel(string $source): string
+    {
+        return match ($source) {
+            'tokens' => 'Token',
+            'statements' => 'Statement',
+            'near_miss' => 'Near-miss',
+            default => ucwords(str_replace('_', ' ', $source)),
+        };
     }
 
     /**
@@ -438,6 +461,19 @@ final class DuplicateChecker
     }
 
     /**
+     * @param array<string, mixed> $options
+     */
+    private function scoreColor(float $score, array $options): string
+    {
+        return match (true) {
+            $score >= (float) ($options['scoreColorHighMin'] ?? 260.0) => (string) ($options['scoreColorHigh'] ?? 'red'),
+            $score >= (float) ($options['scoreColorMediumMin'] ?? 180.0) => (string) ($options['scoreColorMedium'] ?? 'yellow'),
+            $score >= (float) ($options['scoreColorLowMin'] ?? 120.0) => (string) ($options['scoreColorLow'] ?? 'cyan'),
+            default => (string) ($options['scoreColorBase'] ?? 'gray'),
+        };
+    }
+
+    /**
      * @param array{files:int,total_lines:int,duplicated_lines:int,duplicate_percentage:float,known_clones:int,new_clones:int,cache_hit:bool,clones:list<array{fingerprint:string,source:string,score:float,similarity:float,tokens:int,lines:int,statements:int,block_type:string,occurrences:list<array{file:string,start_line:int,end_line:int,lines:int,context:string}>}>} $result
      * @param array<string, mixed> $options
      */
@@ -705,13 +741,13 @@ final class DuplicateChecker
     private function writeText(array $result, array $options, bool $failed): void
     {
         if ($options['writeBaseline'] !== '') {
-            fwrite(STDOUT, Ansi::color(sprintf('Duplicate baseline written: %s', $options['writeBaseline']), 'cyan', STDOUT) . PHP_EOL);
+            fwrite(STDOUT, Ansi::color(sprintf('Duplicate baseline written: %s', $options['writeBaseline']), (string) $options['textColorInfo'], STDOUT) . PHP_EOL);
         }
 
         if ($result['clones'] === []) {
             fwrite(STDOUT, Ansi::color(
                 sprintf('No new duplicated code found (%d PHP files, %d lines checked).', $result['files'], $result['total_lines']),
-                'green',
+                (string) $options['textColorSuccess'],
                 STDOUT,
             ) . PHP_EOL);
             fwrite(STDOUT, $this->summaryFooter($result, $options, $failed) . PHP_EOL);
@@ -724,31 +760,53 @@ final class DuplicateChecker
             count($result['clones']),
             $result['duplicated_lines'],
             $result['files'],
-        ), 'red', STDERR) . PHP_EOL);
+        ), (string) $options['textColorError'], STDERR) . PHP_EOL);
 
         foreach ($result['clones'] as $index => $clone) {
             $first = $clone['occurrences'][0];
-            fwrite(STDERR, sprintf(
-                '  %d) %d lines, %.0f%% similar, %s, score %.1f',
-                $index + 1,
-                $clone['lines'],
-                $clone['similarity'] * 100,
-                $clone['source'],
-                $clone['score'],
-            ) . PHP_EOL);
-            fwrite(STDERR, sprintf(
-                '     %s:%d-%d',
-                $first['file'],
-                $first['start_line'],
-                $first['end_line'],
-            ) . PHP_EOL);
+            $score = Ansi::color(sprintf('%.1f', $clone['score']), $this->scoreColor((float) $clone['score'], $options), STDERR);
+
+            if (($options['outputStyle'] ?? 'compact') === 'classic') {
+                fwrite(STDERR, sprintf(
+                    '  %d) %d lines, %.0f%% similar, %s, score %s',
+                    $index + 1,
+                    $clone['lines'],
+                    $clone['similarity'] * 100,
+                    $clone['source'],
+                    $score,
+                ) . PHP_EOL);
+            } else {
+                fwrite(STDERR, sprintf(
+                    '  %d) Lines: %d, Similarity: %.0f%%, Engine: %s, Score: %s',
+                    $index + 1,
+                    $clone['lines'],
+                    $clone['similarity'] * 100,
+                    $this->engineLabel((string) $clone['source']),
+                    $score,
+                ) . PHP_EOL);
+            }
+            fwrite(
+                STDERR,
+                '     ' . Ansi::color(
+                    sprintf('%s:%d-%d', $first['file'], $first['start_line'], $first['end_line']),
+                    (string) $options['textColorFile'],
+                    STDERR,
+                ) . PHP_EOL,
+            );
 
             foreach (array_slice($clone['occurrences'], 1) as $occurrence) {
-                fwrite(STDERR, sprintf('     %s:%d-%d', $occurrence['file'], $occurrence['start_line'], $occurrence['end_line']) . PHP_EOL);
+                fwrite(
+                    STDERR,
+                    '     ' . Ansi::color(
+                        sprintf('%s:%d-%d', $occurrence['file'], $occurrence['start_line'], $occurrence['end_line']),
+                        (string) $options['textColorFile'],
+                        STDERR,
+                    ) . PHP_EOL,
+                );
             }
         }
 
-        fwrite(STDERR, Ansi::color(sprintf('%.2f%% duplicated lines.', $result['duplicate_percentage']), 'yellow', STDERR) . PHP_EOL);
+        fwrite(STDERR, Ansi::color(sprintf('%.2f%% duplicated lines.', $result['duplicate_percentage']), (string) $options['textColorWarning'], STDERR) . PHP_EOL);
         fwrite(STDERR, $this->summaryFooter($result, $options, $failed) . PHP_EOL);
     }
 }

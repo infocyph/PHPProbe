@@ -100,6 +100,11 @@ final readonly class CommentChecker
             'summaryJson' => '',
             'changedOnly' => false,
             'changedBase' => '',
+            'textColorSuccess' => 'green',
+            'textColorError' => 'red',
+            'textColorInfo' => 'cyan',
+            'textColorFile' => 'cyan',
+            'severityColors' => [],
             'config' => Paths::config('phpprobe.json'),
             'paths' => [],
             'excludes' => [],
@@ -816,11 +821,11 @@ final readonly class CommentChecker
     private function writeText(array $result, array $options, bool $failed): void
     {
         if ($options['writeBaseline'] !== '') {
-            fwrite(STDOUT, Ansi::color(sprintf('Comment baseline written: %s', $options['writeBaseline']), 'cyan', STDOUT) . PHP_EOL);
+            fwrite(STDOUT, Ansi::color(sprintf('Comment baseline written: %s', $options['writeBaseline']), (string) $options['textColorInfo'], STDOUT) . PHP_EOL);
         }
 
         if ($result['findings'] === []) {
-            fwrite(STDOUT, Ansi::color(sprintf('No comment policy findings (%d PHP files scanned).', $result['files']), 'green', STDOUT) . PHP_EOL);
+            fwrite(STDOUT, Ansi::color(sprintf('No comment policy findings (%d PHP files scanned).', $result['files']), (string) $options['textColorSuccess'], STDOUT) . PHP_EOL);
             fwrite(STDOUT, $this->summaryFooter($result, $options, $failed) . PHP_EOL);
 
             return;
@@ -840,13 +845,13 @@ final readonly class CommentChecker
                     count($result['findings']),
                     count($grouped),
                 ),
-                'red',
+                (string) $options['textColorError'],
                 STDERR,
             ) . PHP_EOL,
         );
 
         foreach ($grouped as $file => $findings) {
-            fwrite(STDERR, Ansi::color($file, 'cyan', STDERR) . PHP_EOL);
+            fwrite(STDERR, Ansi::color($file, (string) $options['textColorFile'], STDERR) . PHP_EOL);
 
             foreach ($findings as $finding) {
                 $lineLabel = $finding->line === $finding->endLine
@@ -857,7 +862,7 @@ final readonly class CommentChecker
 
                 fwrite(STDERR, sprintf(
                     '  %s  L%s  %s (%s)%s',
-                    Ansi::severity($finding->severity, STDERR),
+                    Ansi::severity($finding->severity, STDERR, is_array($options['severityColors']) ? $options['severityColors'] : []),
                     $lineLabel,
                     $this->findingTitle($finding->type),
                     $confidence,

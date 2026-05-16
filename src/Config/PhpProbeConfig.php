@@ -48,6 +48,7 @@ final readonly class PhpProbeConfig
         $baseline = $this->apiBaselineValues($bundle['section']);
         $this->applyControlsFromBundle($options, $bundle);
         $this->applyApiBaselineValues($options, ...$baseline);
+        $this->applyGlobalOutputColors($options);
 
         return $options;
     }
@@ -148,6 +149,7 @@ final readonly class PhpProbeConfig
         if ($customRules !== []) {
             $options['customRules'] = $customRules;
         }
+        $this->applyGlobalOutputColors($options);
 
         return $options;
     }
@@ -163,6 +165,7 @@ final readonly class PhpProbeConfig
         [$mode, $normalize, $fuzzy, $nearMiss, $baseline, $writeBaseline] = $values['scalars'];
         [$minLines, $minTokens, $minStatements] = $values['thresholds'];
         [$minSimilarity, $cacheEnabled, $cacheFile, $ignoreFingerprints] = $values['optional'];
+        [$outputStyle, $scoreHighMin, $scoreMediumMin, $scoreLowMin, $scoreHighColor, $scoreMediumColor, $scoreLowColor, $scoreBaseColor] = $values['output'];
 
         $this->applyDuplicateScalarOptions(
             $options,
@@ -177,7 +180,19 @@ final readonly class PhpProbeConfig
         $this->applyDuplicateThresholdOptions($options, $minLines, $minTokens, $minStatements);
         $this->applyControlsFromBundle($options, $bundle);
         $this->applyDuplicateCacheAndSimilarity($options, $minSimilarity, $cacheEnabled, $cacheFile);
+        $this->applyDuplicateOutputOptions(
+            $options,
+            $outputStyle,
+            $scoreHighMin,
+            $scoreMediumMin,
+            $scoreLowMin,
+            $scoreHighColor,
+            $scoreMediumColor,
+            $scoreLowColor,
+            $scoreBaseColor,
+        );
         $this->assignIfListNotEmpty($options, 'ignoreFingerprints', $ignoreFingerprints);
+        $this->applyGlobalOutputColors($options);
 
         return $options;
     }
@@ -196,6 +211,7 @@ final readonly class PhpProbeConfig
         if ($parallel !== null) {
             $options['parallel'] = max(1, $parallel);
         }
+        $this->applyGlobalOutputColors($options);
 
         return $options;
     }
@@ -384,6 +400,39 @@ final readonly class PhpProbeConfig
     /**
      * @param array<string, mixed> $options
      */
+    private function applyGlobalOutputColors(array &$options): void
+    {
+        $output = $this->section('output');
+        $colors = ArrayShape::stringKeyed($this->value($output, 'colors'));
+        $severity = $this->stringMap($this->value($colors, 'severity'), true);
+
+        foreach ([
+            'textColorSuccess' => 'success',
+            'textColorError' => 'error',
+            'textColorWarning' => 'warning',
+            'textColorInfo' => 'info',
+            'textColorMuted' => 'muted',
+            'textColorFile' => 'file',
+        ] as $optionKey => $configKey) {
+            $this->assignNormalizedIfNotBlank($options, $optionKey, $this->stringValue($colors, $configKey), true);
+        }
+
+        if ($severity === []) {
+            return;
+        }
+
+        $normalized = [];
+
+        foreach ($severity as $key => $value) {
+            $normalized[strtolower($key)] = strtolower($value);
+        }
+
+        $options['severityColors'] = $normalized;
+    }
+
+    /**
+     * @param array<string, mixed> $options
+     */
     private function applyDuplicateCacheAndSimilarity(
         array &$options,
         ?float $minSimilarity,
@@ -401,6 +450,30 @@ final readonly class PhpProbeConfig
         if ($cacheFile !== null && $cacheFile !== '') {
             $options['cacheFile'] = $cacheFile;
         }
+    }
+
+    /**
+     * @param array<string, mixed> $options
+     */
+    private function applyDuplicateOutputOptions(
+        array &$options,
+        ?string $style,
+        ?float $highMin,
+        ?float $mediumMin,
+        ?float $lowMin,
+        ?string $highColor,
+        ?string $mediumColor,
+        ?string $lowColor,
+        ?string $baseColor,
+    ): void {
+        $this->assignNormalizedIfNotBlank($options, 'outputStyle', $style, true);
+        $this->assignIfNotNull($options, 'scoreColorHighMin', $highMin);
+        $this->assignIfNotNull($options, 'scoreColorMediumMin', $mediumMin);
+        $this->assignIfNotNull($options, 'scoreColorLowMin', $lowMin);
+        $this->assignNormalizedIfNotBlank($options, 'scoreColorHigh', $highColor, true);
+        $this->assignNormalizedIfNotBlank($options, 'scoreColorMedium', $mediumColor, true);
+        $this->assignNormalizedIfNotBlank($options, 'scoreColorLow', $lowColor, true);
+        $this->assignNormalizedIfNotBlank($options, 'scoreColorBase', $baseColor, true);
     }
 
     /**
@@ -635,11 +708,22 @@ final readonly class PhpProbeConfig
 
     /**
      * @param array<string, mixed> $section
-     * @return array{scalars:array{?string,?bool,?bool,?bool,?string,?string},thresholds:array{?int,?int,?int},optional:array{?float,?bool,?string,list<string>}}
+     * @return array{
+     *     scalars:array{?string,?bool,?bool,?bool,?string,?string},
+     *     thresholds:array{?int,?int,?int},
+     *     optional:array{?float,?bool,?string,list<string>},
+     *     output:array{?string,?float,?float,?float,?string,?string,?string,?string}
+     * }
      */
     private function duplicateSectionValues(array $section): array
     {
         $cache = ArrayShape::stringKeyed($this->value($section, 'cache'));
+        $output = ArrayShape::stringKeyed($this->value($section, 'output'));
+        $scoreColors = ArrayShape::stringKeyed($this->value($output, 'score_colors'));
+        $high = ArrayShape::stringKeyed($this->value($scoreColors, 'high'));
+        $medium = ArrayShape::stringKeyed($this->value($scoreColors, 'medium'));
+        $low = ArrayShape::stringKeyed($this->value($scoreColors, 'low'));
+        $base = ArrayShape::stringKeyed($this->value($scoreColors, 'base'));
 
         return [
             'scalars' => [
@@ -660,6 +744,16 @@ final readonly class PhpProbeConfig
                 $this->boolValue($cache, 'enabled'),
                 $this->stringValue($cache, 'file'),
                 $this->stringList($this->value($section, 'ignore_fingerprints')),
+            ],
+            'output' => [
+                $this->stringValue($output, 'style'),
+                $this->floatValue($high, 'min'),
+                $this->floatValue($medium, 'min'),
+                $this->floatValue($low, 'min'),
+                $this->stringValue($high, 'color'),
+                $this->stringValue($medium, 'color'),
+                $this->stringValue($low, 'color'),
+                $this->stringValue($base, 'color'),
             ],
         ];
     }

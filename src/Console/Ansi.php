@@ -6,6 +6,14 @@ namespace Infocyph\PHPProbe\Console;
 
 final class Ansi
 {
+    /**
+     * @return list<string>
+     */
+    public static function supportedColors(): array
+    {
+        return ['red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'gray', 'bold'];
+    }
+
     public static function color(string $text, string $name, mixed $stream): string
     {
         if (!self::enabled($stream)) {
@@ -32,14 +40,26 @@ final class Ansi
         return "\033[" . $code . 'm' . $text . "\033[0m";
     }
 
-    public static function severity(string $severity, mixed $stream): string
+    /**
+     * @param array<string, string> $colors
+     */
+    public static function severity(string $severity, mixed $stream, array $colors = []): string
     {
-        return match (strtolower($severity)) {
-            'error', 'critical', 'high' => self::color(strtoupper($severity), 'red', $stream),
-            'warning', 'medium' => self::color(strtoupper($severity), 'yellow', $stream),
-            'low' => self::color(strtoupper($severity), 'blue', $stream),
-            default => self::color(strtoupper($severity), 'gray', $stream),
+        $normalized = strtolower($severity);
+        $fallback = match ($normalized) {
+            'error', 'critical', 'high' => 'red',
+            'warning', 'medium' => 'yellow',
+            'low' => 'blue',
+            default => 'gray',
         };
+
+        $color = $colors[$normalized] ?? $fallback;
+
+        if (!in_array($color, self::supportedColors(), true)) {
+            $color = $fallback;
+        }
+
+        return self::color(strtoupper($severity), $color, $stream);
     }
 
     private static function enabled(mixed $stream): bool

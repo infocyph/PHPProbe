@@ -1,4 +1,23 @@
 {
+  "output": {
+    "colors": {
+      "success": "green",
+      "error": "red",
+      "warning": "yellow",
+      "info": "cyan",
+      "muted": "gray",
+      "file": "cyan",
+      "severity": {
+        "error": "red",
+        "critical": "red",
+        "high": "red",
+        "warning": "yellow",
+        "medium": "yellow",
+        "low": "blue",
+        "info": "gray"
+      }
+    }
+  },
   "syntax": {
     "paths": [],
     "exclude": [
@@ -67,6 +86,26 @@
     "cache": {
       "enabled": true,
       "file": ""
+    },
+    "output": {
+      "style": "compact",
+      "score_colors": {
+        "high": {
+          "min": 260,
+          "color": "red"
+        },
+        "medium": {
+          "min": 180,
+          "color": "yellow"
+        },
+        "low": {
+          "min": 120,
+          "color": "cyan"
+        },
+        "base": {
+          "color": "gray"
+        }
+      }
     }
   },
   "api": {
