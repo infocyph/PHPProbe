@@ -189,6 +189,25 @@ A full project config may override any part of the selected preset:
 ```json
 {
   "preset": "standard",
+  "output": {
+    "colors": {
+      "success": "green",
+      "error": "red",
+      "warning": "yellow",
+      "info": "cyan",
+      "muted": "gray",
+      "file": "cyan",
+      "severity": {
+        "error": "red",
+        "critical": "red",
+        "high": "red",
+        "warning": "yellow",
+        "medium": "yellow",
+        "low": "blue",
+        "info": "gray"
+      }
+    }
+  },
   "syntax": {
     "paths": ["src"],
     "exclude": ["src/generated"]
@@ -207,6 +226,15 @@ A full project config may override any part of the selected preset:
     "baseline": "",
     "write_baseline": "",
     "ignore_fingerprints": [],
+    "output": {
+      "style": "compact",
+      "score_colors": {
+        "high": { "min": 260, "color": "red" },
+        "medium": { "min": 180, "color": "yellow" },
+        "low": { "min": 120, "color": "cyan" },
+        "base": { "color": "gray" }
+      }
+    },
     "json": false
   },
   "api": {
@@ -610,7 +638,11 @@ Options:
 | `--cache-file` | `--cache-file=FILE` | Duplicate result cache path. |
 | `--help`, `-h` | flag | Print duplicate checker help and exit `0`. |
 
-Config-only option: `duplicates.ignore_fingerprints` accepts a list of clone fingerprints to suppress without using a baseline file.
+Config-only options:
+
+- `duplicates.ignore_fingerprints` accepts a list of clone fingerprints to suppress without using a baseline file.
+- `duplicates.output.style` accepts `compact` or `classic`.
+- `duplicates.output.score_colors` lets you tune score thresholds and ANSI colors per band.
 
 Exact accepted forms matter: numeric options, `--mode`, `--baseline` and valued `--write-baseline=FILE` are parsed in equals form. `--config`, `--preset` and `--exclude` also accept split form. `--write-baseline` may also be passed as a bare flag.
 
@@ -827,6 +859,32 @@ Checker text output is colorized on interactive terminals:
 - yellow: warning/medium severity lines
 - red: error/high/critical summaries
 - cyan: baseline write notifications
+
+You can override these globally for all checker text output with root-level `output.colors`:
+
+```json
+{
+  "output": {
+    "colors": {
+      "success": "green",
+      "error": "red",
+      "warning": "yellow",
+      "info": "cyan",
+      "muted": "gray",
+      "file": "cyan",
+      "severity": {
+        "error": "red",
+        "critical": "red",
+        "high": "red",
+        "warning": "yellow",
+        "medium": "yellow",
+        "low": "blue",
+        "info": "gray"
+      }
+    }
+  }
+}
+```
 
 Color output is automatically disabled for non-TTY streams and when `NO_COLOR` is set (or `TERM=dumb`), so CI logs and JSON output stay clean.
 

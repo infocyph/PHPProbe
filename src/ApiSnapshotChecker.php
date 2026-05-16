@@ -83,6 +83,9 @@ final readonly class ApiSnapshotChecker
             'summaryJson' => '',
             'changedOnly' => false,
             'changedBase' => '',
+            'textColorSuccess' => 'green',
+            'textColorError' => 'red',
+            'textColorInfo' => 'cyan',
             'config' => Paths::config('phpprobe.json'),
             'preset' => '',
             'includeProtected' => true,
@@ -513,26 +516,26 @@ final readonly class ApiSnapshotChecker
     private function writeText(array $result, array $options, bool $failed): void
     {
         if ($options['writeBaseline'] !== '') {
-            fwrite(STDOUT, Ansi::color(sprintf('Public API baseline written: %s', $options['writeBaseline']), 'cyan', STDOUT) . PHP_EOL);
+            fwrite(STDOUT, Ansi::color(sprintf('Public API baseline written: %s', $options['writeBaseline']), (string) $options['textColorInfo'], STDOUT) . PHP_EOL);
         }
 
         $symbolCount = count($result['snapshot']['symbols'] ?? []);
 
         if ($options['baseline'] === '') {
-            fwrite(STDOUT, Ansi::color(sprintf('Public API snapshot OK: %d symbol(s) scanned.', $symbolCount), 'green', STDOUT) . PHP_EOL);
+            fwrite(STDOUT, Ansi::color(sprintf('Public API snapshot OK: %d symbol(s) scanned.', $symbolCount), (string) $options['textColorSuccess'], STDOUT) . PHP_EOL);
             fwrite(STDOUT, $this->summaryFooter($result, $options, $failed) . PHP_EOL);
 
             return;
         }
 
         if (!$result['changed']) {
-            fwrite(STDOUT, Ansi::color(sprintf('Public API unchanged: %d symbol(s) scanned.', $symbolCount), 'green', STDOUT) . PHP_EOL);
+            fwrite(STDOUT, Ansi::color(sprintf('Public API unchanged: %d symbol(s) scanned.', $symbolCount), (string) $options['textColorSuccess'], STDOUT) . PHP_EOL);
             fwrite(STDOUT, $this->summaryFooter($result, $options, $failed) . PHP_EOL);
 
             return;
         }
 
-        fwrite(STDERR, Ansi::color('Public API snapshot changed:', 'red', STDERR) . PHP_EOL);
+        fwrite(STDERR, Ansi::color('Public API snapshot changed:', (string) $options['textColorError'], STDERR) . PHP_EOL);
 
         $labels = ['added' => 'Added', 'removed' => 'Removed', 'changed' => 'Changed'];
 

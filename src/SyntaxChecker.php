@@ -183,6 +183,9 @@ final class SyntaxChecker
             'changedOnly' => false,
             'changedBase' => '',
             'parallel' => 1,
+            'textColorSuccess' => 'green',
+            'textColorError' => 'red',
+            'textColorFile' => 'cyan',
             'config' => Paths::config('phpprobe.json'),
             'paths' => [],
             'excludes' => [],
@@ -414,16 +417,16 @@ final class SyntaxChecker
         }
 
         if ($result['failures'] === []) {
-            fwrite(STDOUT, Ansi::color(sprintf('Syntax OK: %d PHP files checked.', $result['files_checked']), 'green', STDOUT) . PHP_EOL);
+            fwrite(STDOUT, Ansi::color(sprintf('Syntax OK: %d PHP files checked.', $result['files_checked']), (string) $options['textColorSuccess'], STDOUT) . PHP_EOL);
             fwrite(STDOUT, $this->summaryFooter($result, $options, $failed) . PHP_EOL);
 
             return;
         }
 
-        fwrite(STDERR, Ansi::color(sprintf('Syntax errors in %d file(s):', count($result['failures'])), 'red', STDERR) . PHP_EOL);
+        fwrite(STDERR, Ansi::color(sprintf('Syntax errors in %d file(s):', count($result['failures'])), (string) $options['textColorError'], STDERR) . PHP_EOL);
 
         foreach ($result['failures'] as $failure) {
-            fwrite(STDERR, '  ' . Ansi::color($failure['file'], 'cyan', STDERR) . PHP_EOL);
+            fwrite(STDERR, '  ' . Ansi::color($failure['file'], (string) $options['textColorFile'], STDERR) . PHP_EOL);
 
             foreach (preg_split('/\R/', trim($failure['message'])) ?: [] as $line) {
                 if ($line !== '') {

@@ -133,6 +133,62 @@ it('validates enum values in config validate command', function (): void {
         ->and($joined)->toContain('comments.fail_confidence must be one of');
 });
 
+it('validates duplicate output style and score color values in config validate command', function (): void {
+    $root = makeCliFixture();
+    $bad = $root.DIRECTORY_SEPARATOR.'bad-duplicate-output-phpprobe.json';
+    file_put_contents($bad, json_encode([
+        'duplicates' => [
+            'output' => [
+                'style' => 'verbose',
+                'score_colors' => [
+                    'high' => ['min' => 260, 'color' => 'orange'],
+                ],
+            ],
+        ],
+    ], JSON_PRETTY_PRINT));
+
+    try {
+        $run = runCliCommand($root, ['config', 'validate', '--json', '--config=bad-duplicate-output-phpprobe.json']);
+    } finally {
+        removeCliFixture($root);
+    }
+
+    $payload = json_decode($run['stdout'], true);
+    $joined = implode(' ', $payload['errors'] ?? []);
+
+    expect($run['exitCode'])->toBe(1)
+        ->and($joined)->toContain('duplicates.output.style must be one of')
+        ->and($joined)->toContain('duplicates.output.score_colors.high.color must be one of');
+});
+
+it('validates global output colors in config validate command', function (): void {
+    $root = makeCliFixture();
+    $bad = $root.DIRECTORY_SEPARATOR.'bad-output-colors-phpprobe.json';
+    file_put_contents($bad, json_encode([
+        'output' => [
+            'colors' => [
+                'error' => 'orange',
+                'severity' => [
+                    'high' => 'purple',
+                ],
+            ],
+        ],
+    ], JSON_PRETTY_PRINT));
+
+    try {
+        $run = runCliCommand($root, ['config', 'validate', '--json', '--config=bad-output-colors-phpprobe.json']);
+    } finally {
+        removeCliFixture($root);
+    }
+
+    $payload = json_decode($run['stdout'], true);
+    $joined = implode(' ', $payload['errors'] ?? []);
+
+    expect($run['exitCode'])->toBe(1)
+        ->and($joined)->toContain('output.colors.error must be one of')
+        ->and($joined)->toContain('output.colors.severity.high must be one of');
+});
+
 it('initializes phpprobe config and ci workflow', function (): void {
     $root = makeCliFixture();
     $config = $root.DIRECTORY_SEPARATOR.'phpprobe.json';
