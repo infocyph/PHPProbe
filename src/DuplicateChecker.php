@@ -26,6 +26,7 @@ final class DuplicateChecker
     {
         return CheckerRuntime::guarded(function () use ($args): int {
             $options = $this->parseArgs($args);
+            CheckerRuntime::applyColorMode($options);
 
             if ($options['help']) {
                 return $this->help();
@@ -131,6 +132,7 @@ final class DuplicateChecker
         return [
             'help' => false,
             'format' => 'text',
+            'color' => 'auto',
             'failOn' => 'warning',
             'summaryJson' => '',
             'changedOnly' => false,
@@ -212,6 +214,7 @@ final class DuplicateChecker
             '  --baseline=FILE                  suppress clone groups already in a baseline',
             '  --write-baseline[=FILE]          write current clone groups to a baseline and exit 0',
             '  --format=text|json|markdown|sarif|github output format (default: text)',
+            '  --color=auto|always|never       ANSI color mode (default: auto)',
             '  --json                           alias for --format=json',
             '  --fail-on=error|warning|info     failure threshold (default: warning)',
             '  --summary-json=FILE              write machine-readable run summary',
@@ -337,6 +340,7 @@ final class DuplicateChecker
         return $cli->parseExclude($args, $index, $options, $arg)
             || $this->parseFlag($options, $arg)
             || $this->parseNumericOption($options, $arg, $cli)
+            || $cli->parseColor($options, $arg)
             || $cli->parseOutputFormat($options, $arg)
             || $cli->parseFailOn($options, $arg)
             || $cli->parseSummaryJson($options, $arg)

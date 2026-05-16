@@ -60,6 +60,7 @@ final class CheckCommand
             'config' => '',
             'preset' => '',
             'format' => 'text',
+            'color' => 'auto',
             'summaryJson' => '',
             'reportDir' => '',
             'changedOnly' => false,
@@ -74,12 +75,13 @@ final class CheckCommand
     }
 
     /**
-     * @param array{config:string,preset:string,format:string,summaryJson:string,reportDir:string,changedOnly:bool,changedBase:string,failOn:string,paths:list<string>,help:bool} $options
+     * @param array{config:string,preset:string,format:string,color:string,summaryJson:string,reportDir:string,changedOnly:bool,changedBase:string,failOn:string,paths:list<string>,help:bool} $options
      * @return list<string>
      */
     private function checkerArgs(string $checker, array $options, string $format): array
     {
         $args = ['--format=' . $format];
+        $args[] = '--color=' . $options['color'];
 
         if ($options['config'] !== '') {
             $args[] = '--config=' . $options['config'];
@@ -164,6 +166,7 @@ final class CheckCommand
             '  --config=FILE                    read PHPProbe checker settings',
             '  --preset=NAME                    apply preset: default, standard, ci, or strict',
             '  --format=text|json|markdown|sarif|github',
+            '  --color=auto|always|never       ANSI color mode for checker output (default: auto)',
             '  --summary-json=FILE              write combined summary JSON',
             '  --report-dir=DIR                 write per-checker text/json/markdown/sarif artifacts',
             '  --changed-only                   scan only changed PHP files from Git diff',
@@ -194,7 +197,7 @@ final class CheckCommand
 
     /**
      * @param list<string> $args
-     * @return array{config:string,preset:string,format:string,summaryJson:string,reportDir:string,changedOnly:bool,changedBase:string,failOn:string,failConfidence:string,docMode:string,explain:bool,paths:list<string>,help:bool}
+     * @return array{config:string,preset:string,format:string,color:string,summaryJson:string,reportDir:string,changedOnly:bool,changedBase:string,failOn:string,failConfidence:string,docMode:string,explain:bool,paths:list<string>,help:bool}
      */
     private function parseArgs(array $args): array
     {
@@ -251,6 +254,21 @@ final class CheckCommand
                 }
 
                 $options['format'] = $format;
+
+                continue;
+            }
+
+            if (str_starts_with($arg, '--color=')) {
+                $color = strtolower(trim(substr($arg, strlen('--color='))));
+
+                if (!in_array($color, ['auto', 'always', 'never'], true)) {
+                    throw new \InvalidArgumentException(sprintf(
+                        'Invalid --color value "%s". Expected: auto, always, never.',
+                        $color,
+                    ));
+                }
+
+                $options['color'] = $color;
 
                 continue;
             }
@@ -350,7 +368,7 @@ final class CheckCommand
     }
 
     /**
-     * @param array{config:string,preset:string,format:string,summaryJson:string,reportDir:string,changedOnly:bool,changedBase:string,failOn:string,failConfidence:string,docMode:string,explain:bool,paths:list<string>,help:bool} $options
+     * @param array{config:string,preset:string,format:string,color:string,summaryJson:string,reportDir:string,changedOnly:bool,changedBase:string,failOn:string,failConfidence:string,docMode:string,explain:bool,paths:list<string>,help:bool} $options
      * @return array{exit_code:int,stdout:string,stderr:string,payload:array<string,mixed>}
      */
     private function runChecker(string $checker, array $options, string $format): array
@@ -476,7 +494,7 @@ final class CheckCommand
     }
 
     /**
-     * @param array{config:string,preset:string,format:string,summaryJson:string,reportDir:string,changedOnly:bool,changedBase:string,failOn:string,failConfidence:string,docMode:string,explain:bool,paths:list<string>,help:bool} $options
+     * @param array{config:string,preset:string,format:string,color:string,summaryJson:string,reportDir:string,changedOnly:bool,changedBase:string,failOn:string,failConfidence:string,docMode:string,explain:bool,paths:list<string>,help:bool} $options
      * @param array<string, array{exit_code:int,stdout:string,stderr:string,payload:array<string,mixed>}> $results
      */
     private function writeReportArtifacts(array $checkers, array $options, array $results, array $summary): void

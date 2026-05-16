@@ -79,6 +79,7 @@ final readonly class ApiSnapshotChecker
         return [
             'help' => false,
             'format' => 'text',
+            'color' => 'auto',
             'failOn' => 'warning',
             'summaryJson' => '',
             'changedOnly' => false,
@@ -110,6 +111,7 @@ final readonly class ApiSnapshotChecker
             '  --baseline=FILE                  compare against a public API snapshot',
             '  --write-baseline[=FILE]          write the current public API snapshot and exit 0',
             '  --format=text|json|markdown|sarif|github output format (default: text)',
+            '  --color=auto|always|never       ANSI color mode (default: auto)',
             '  --json                           alias for --format=json',
             '  --fail-on=error|warning|info     failure threshold (default: warning)',
             '  --summary-json=FILE              write machine-readable run summary',
@@ -308,6 +310,8 @@ final readonly class ApiSnapshotChecker
      */
     private function runWithOptions(array $options): int
     {
+        CheckerRuntime::applyColorMode($options);
+
         if ($options['help']) {
             return $this->help();
         }

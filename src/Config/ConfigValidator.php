@@ -386,31 +386,6 @@ final class ConfigValidator
     }
 
     /**
-     * @param array<string, mixed> $root
-     * @param list<string> $errors
-     */
-    private function validateRoot(array $root, array &$errors): void
-    {
-        $allowed = ['preset', 'output', 'syntax', 'duplicates', 'api', 'comments', 'commented_out_code'];
-        $this->validateUnknownKeys('root', $root, $allowed, $errors);
-
-        if (isset($root['preset']) && !is_string($root['preset'])) {
-            $errors[] = 'root.preset must be a string.';
-        } elseif (is_string($root['preset'] ?? null)) {
-            $this->validateEnumValue('root', 'preset', $root['preset'], $errors);
-        }
-
-        foreach ($this->sectionSchemas() as $name => $schema) {
-            $this->validateSection($name, $root[$name] ?? null, $schema, $errors);
-        }
-
-        $this->validateCommentCustomRules(ArrayShape::stringKeyed($root['comments'] ?? []), $errors);
-        $this->validateCommentDocCache(ArrayShape::stringKeyed($root['comments'] ?? []), $errors);
-        $this->validateDuplicateOutput(ArrayShape::stringKeyed($root['duplicates'] ?? []), $errors);
-        $this->validateOutput(ArrayShape::stringKeyed($root['output'] ?? []), $errors);
-    }
-
-    /**
      * @param array<string, mixed> $output
      * @param list<string> $errors
      */
@@ -462,6 +437,31 @@ final class ConfigValidator
         foreach ($severityObject as $name => $value) {
             $this->validateEnumValue('output.colors.severity', $name, $value, $errors);
         }
+    }
+
+    /**
+     * @param array<string, mixed> $root
+     * @param list<string> $errors
+     */
+    private function validateRoot(array $root, array &$errors): void
+    {
+        $allowed = ['preset', 'output', 'syntax', 'duplicates', 'api', 'comments', 'commented_out_code'];
+        $this->validateUnknownKeys('root', $root, $allowed, $errors);
+
+        if (isset($root['preset']) && !is_string($root['preset'])) {
+            $errors[] = 'root.preset must be a string.';
+        } elseif (is_string($root['preset'] ?? null)) {
+            $this->validateEnumValue('root', 'preset', $root['preset'], $errors);
+        }
+
+        foreach ($this->sectionSchemas() as $name => $schema) {
+            $this->validateSection($name, $root[$name] ?? null, $schema, $errors);
+        }
+
+        $this->validateCommentCustomRules(ArrayShape::stringKeyed($root['comments'] ?? []), $errors);
+        $this->validateCommentDocCache(ArrayShape::stringKeyed($root['comments'] ?? []), $errors);
+        $this->validateDuplicateOutput(ArrayShape::stringKeyed($root['duplicates'] ?? []), $errors);
+        $this->validateOutput(ArrayShape::stringKeyed($root['output'] ?? []), $errors);
     }
 
     /**
