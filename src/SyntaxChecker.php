@@ -35,6 +35,7 @@ final class SyntaxChecker
             '  --preset=NAME                    apply preset: default, standard, ci, or strict',
             '  --exclude=PATH                   skip a path (repeatable)',
             '  --format=text|json|markdown|sarif|github output format (default: text)',
+            '  --color=auto|always|never       ANSI color mode (default: auto)',
             '  --json                           alias for --format=json',
             '  --summary-json=FILE              write machine-readable run summary',
             '  --changed-only                   scan only changed PHP files from Git diff',
@@ -179,6 +180,7 @@ final class SyntaxChecker
         $options = [
             'help' => false,
             'format' => 'text',
+            'color' => 'auto',
             'summaryJson' => '',
             'changedOnly' => false,
             'changedBase' => '',
@@ -233,6 +235,8 @@ final class SyntaxChecker
      */
     private function runWithOptions(array $options): int
     {
+        CheckerRuntime::applyColorMode($options);
+
         if ($options['help']) {
             return $this->help();
         }

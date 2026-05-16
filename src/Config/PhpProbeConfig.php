@@ -400,39 +400,6 @@ final readonly class PhpProbeConfig
     /**
      * @param array<string, mixed> $options
      */
-    private function applyGlobalOutputColors(array &$options): void
-    {
-        $output = $this->section('output');
-        $colors = ArrayShape::stringKeyed($this->value($output, 'colors'));
-        $severity = $this->stringMap($this->value($colors, 'severity'), true);
-
-        foreach ([
-            'textColorSuccess' => 'success',
-            'textColorError' => 'error',
-            'textColorWarning' => 'warning',
-            'textColorInfo' => 'info',
-            'textColorMuted' => 'muted',
-            'textColorFile' => 'file',
-        ] as $optionKey => $configKey) {
-            $this->assignNormalizedIfNotBlank($options, $optionKey, $this->stringValue($colors, $configKey), true);
-        }
-
-        if ($severity === []) {
-            return;
-        }
-
-        $normalized = [];
-
-        foreach ($severity as $key => $value) {
-            $normalized[strtolower($key)] = strtolower($value);
-        }
-
-        $options['severityColors'] = $normalized;
-    }
-
-    /**
-     * @param array<string, mixed> $options
-     */
     private function applyDuplicateCacheAndSimilarity(
         array &$options,
         ?float $minSimilarity,
@@ -516,6 +483,39 @@ final readonly class PhpProbeConfig
             'minTokens' => $minTokens,
             'minStatements' => $minStatements,
         ]);
+    }
+
+    /**
+     * @param array<string, mixed> $options
+     */
+    private function applyGlobalOutputColors(array &$options): void
+    {
+        $output = $this->section('output');
+        $colors = ArrayShape::stringKeyed($this->value($output, 'colors'));
+        $severity = $this->stringMap($this->value($colors, 'severity'), true);
+
+        foreach ([
+            'textColorSuccess' => 'success',
+            'textColorError' => 'error',
+            'textColorWarning' => 'warning',
+            'textColorInfo' => 'info',
+            'textColorMuted' => 'muted',
+            'textColorFile' => 'file',
+        ] as $optionKey => $configKey) {
+            $this->assignNormalizedIfNotBlank($options, $optionKey, $this->stringValue($colors, $configKey), true);
+        }
+
+        if ($severity === []) {
+            return;
+        }
+
+        $normalized = [];
+
+        foreach ($severity as $key => $value) {
+            $normalized[strtolower($key)] = strtolower($value);
+        }
+
+        $options['severityColors'] = $normalized;
     }
 
     /**

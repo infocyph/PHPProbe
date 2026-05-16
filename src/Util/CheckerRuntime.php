@@ -9,6 +9,26 @@ use Infocyph\PHPProbe\Filesystem\PhpFileFinder;
 final class CheckerRuntime
 {
     /**
+     * @param array{color?:mixed} $options
+     */
+    public static function applyColorMode(array $options): void
+    {
+        $mode = strtolower(trim((string) ($options['color'] ?? 'auto')));
+
+        if (!in_array($mode, ['auto', 'always', 'never'], true)) {
+            return;
+        }
+
+        if ($mode === 'auto') {
+            putenv('PHPPROBE_COLOR');
+
+            return;
+        }
+
+        putenv('PHPPROBE_COLOR=' . $mode);
+    }
+
+    /**
      * @param callable():int $work
      */
     public static function guarded(callable $work): int

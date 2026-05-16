@@ -126,6 +126,21 @@ final readonly class CliOptions
     }
 
     /**
+     * @param array{color:string} $options
+     */
+    public function parseColor(array &$options, string $arg): bool
+    {
+        return $this->parseEnumOption(
+            $options,
+            $arg,
+            '--color',
+            'color',
+            ['auto', 'always', 'never'],
+            'Invalid --color value "%s". Expected: auto, always, never.',
+        );
+    }
+
+    /**
      * @param list<string> $args
      * @param array<string, mixed> $options
      */
@@ -147,6 +162,10 @@ final readonly class CliOptions
         }
 
         if ($this->parseOutputFormat($options, $arg)) {
+            return true;
+        }
+
+        if ($this->parseColor($options, $arg)) {
             return true;
         }
 

@@ -93,6 +93,7 @@ final readonly class CommentChecker
         return [
             'help' => false,
             'format' => 'text',
+            'color' => 'auto',
             'strict' => false,
             'failOn' => 'error',
             'failConfidence' => 'low',
@@ -268,6 +269,7 @@ final readonly class CommentChecker
             '  --preset=NAME                    apply preset: default, standard, ci, or strict',
             '  --exclude=PATH                   skip a path (repeatable)',
             '  --format=text|json|markdown|sarif|github output format (default: text)',
+            '  --color=auto|always|never       ANSI color mode (default: auto)',
             '  --json                           alias for --format=json',
             '  --summary-json=FILE              write machine-readable run summary',
             '  --strict                         enforce strict policy severities',
@@ -464,6 +466,8 @@ final readonly class CommentChecker
      */
     private function runCheck(array $options): int
     {
+        CheckerRuntime::applyColorMode($options);
+
         ['result' => $result, 'raw_findings' => $rawFindings] = $this->scanFindings($options);
         $effectiveResult = $options['baseline'] !== ''
             ? $this->withoutBaselineFindings($result, $options['baseline'])

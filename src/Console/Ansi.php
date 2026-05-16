@@ -6,14 +6,6 @@ namespace Infocyph\PHPProbe\Console;
 
 final class Ansi
 {
-    /**
-     * @return list<string>
-     */
-    public static function supportedColors(): array
-    {
-        return ['red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'gray', 'bold'];
-    }
-
     public static function color(string $text, string $name, mixed $stream): string
     {
         if (!self::enabled($stream)) {
@@ -62,8 +54,30 @@ final class Ansi
         return self::color(strtoupper($severity), $color, $stream);
     }
 
+    /**
+     * @return list<string>
+     */
+    public static function supportedColors(): array
+    {
+        return ['red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'gray', 'bold'];
+    }
+
     private static function enabled(mixed $stream): bool
     {
+        $mode = getenv('PHPPROBE_COLOR');
+
+        if (is_string($mode) && $mode !== '') {
+            $normalized = strtolower(trim($mode));
+
+            if ($normalized === 'never') {
+                return false;
+            }
+
+            if ($normalized === 'always') {
+                return true;
+            }
+        }
+
         $noColor = getenv('NO_COLOR');
 
         if (is_string($noColor) && $noColor !== '') {
