@@ -5,9 +5,14 @@ declare(strict_types=1);
 namespace Infocyph\PHPProbe\Console;
 
 use Infocyph\PHPProbe\Process\ProcRunner;
+use Infocyph\PHPProbe\Util\AtomicFileWriter;
 use Infocyph\PHPProbe\Util\GithubAnnotation;
+use Infocyph\PHPProbe\Util\Sarif;
 use Infocyph\PHPProbe\Util\SummaryJson;
 
+/**
+ * @phpstan-type CheckOptions array{config:string,preset:string,format:string,summaryJson:string,reportDir:string,changedOnly:bool,changedBase:string,parallel:string,timeout:string,failOn:string,excludes:list<string>,duplicateArgs:list<string>,paths:list<string>,help:bool}
+ */
 final class CheckCommand
 {
     /**
@@ -17,115 +22,86 @@ final class CheckCommand
     {
         try {
             $options = $this->parseArgs($args);
-        } catch (\InvalidArgumentException $exception) {
+
+            if ($options['help']) {
+                return $this->help();
+            }
+
+            $results = ['syntax' => $this->runChecker('syntax', $options)];
+
+            if ($results['syntax']['exit_code'] === 0) {
+                $results['duplicates'] = $this->runChecker('duplicates', $options);
+            }
+
+            $exitCode = $this->combinedExitCode($results);
+            $summary = $this->summaryPayload($results, $exitCode);
+            SummaryJson::writeIfConfigured($options['summaryJson'], $summary);
+
+            if ($options['reportDir'] !== '') {
+                $this->writeReportArtifacts($options['reportDir'], $results, $summary);
+            }
+
+            $this->writeOutput($options['format'], $results, $summary);
+
+            return $exitCode;
+        } catch (\InvalidArgumentException|\RuntimeException $exception) {
             fwrite(STDERR, $exception->getMessage() . PHP_EOL);
 
             return 2;
         }
-
-        if ($options['help']) {
-            return $this->help();
-        }
-
-        $checkers = ['syntax', 'duplicates', 'api', 'comments'];
-        $results = [];
-
-        foreach ($checkers as $checker) {
-            $results[$checker] = $this->runChecker($checker, $options, 'json');
-        }
-
-        $exitCode = $this->combinedExitCode($results);
-        $summary = $this->summaryPayload($results, $exitCode);
-
-        if ($options['summaryJson'] !== '') {
-            $this->ensureParentDirectory($options['summaryJson']);
-            SummaryJson::write($options['summaryJson'], $summary);
-        }
-
-        if ($options['reportDir'] !== '') {
-            $this->writeReportArtifacts($checkers, $options, $results, $summary);
-        }
-
-        $this->writeOutput($options, $results, $summary);
-
-        return $exitCode;
     }
 
     /**
-     * @return array{config:string,preset:string,format:string,summaryJson:string,reportDir:string,changedOnly:bool,changedBase:string,failOn:string,failConfidence:string,docMode:string,explain:bool,paths:list<string>,help:bool}
-     */
-    private function baseOutputOptions(): array
-    {
-        return [
-            'config' => '',
-            'preset' => '',
-            'format' => 'text',
-            'color' => 'auto',
-            'summaryJson' => '',
-            'reportDir' => '',
-            'changedOnly' => false,
-            'changedBase' => '',
-            'failOn' => '',
-            'failConfidence' => '',
-            'docMode' => '',
-            'explain' => false,
-            'paths' => [],
-            'help' => false,
-        ];
-    }
-
-    /**
-     * @param array{config:string,preset:string,format:string,color:string,summaryJson:string,reportDir:string,changedOnly:bool,changedBase:string,failOn:string,paths:list<string>,help:bool} $options
+     * @param CheckOptions $options
      * @return list<string>
      */
-    private function checkerArgs(string $checker, array $options, string $format): array
+    private function checkerArgs(string $checker, array $options): array
     {
-        $args = ['--format=' . $format];
-        $args[] = '--color=' . $options['color'];
+        $args = ['--format=json', '--color=never'];
 
-        if ($options['config'] !== '') {
-            $args[] = '--config=' . $options['config'];
-        }
-
-        if ($options['preset'] !== '') {
-            $args[] = '--preset=' . $options['preset'];
+        foreach (['config', 'preset', 'changedBase'] as $key) {
+            if ($options[$key] !== '') {
+                $name = match ($key) {
+                    'changedBase' => '--changed-base=',
+                    default => '--' . $key . '=',
+                };
+                $args[] = $name . $options[$key];
+            }
         }
 
         if ($options['changedOnly']) {
             $args[] = '--changed-only';
         }
 
-        if ($options['changedBase'] !== '') {
-            $args[] = '--changed-base=' . $options['changedBase'];
+        foreach ($options['excludes'] as $exclude) {
+            $args[] = '--exclude=' . $exclude;
         }
 
-        if ($options['failOn'] !== '' && in_array($checker, ['duplicates', 'api', 'comments'], true)) {
-            $args[] = '--fail-on=' . $options['failOn'];
-        }
-
-        if ($checker === 'comments') {
-            if ($options['failConfidence'] !== '') {
-                $args[] = '--fail-confidence=' . $options['failConfidence'];
+        if ($checker === 'syntax') {
+            if ($options['parallel'] !== '') {
+                $args[] = '--parallel=' . $options['parallel'];
             }
 
-            if ($options['docMode'] !== '') {
-                $args[] = '--doc-mode=' . $options['docMode'];
+            if ($options['timeout'] !== '') {
+                $args[] = '--timeout=' . $options['timeout'];
+            }
+        } else {
+            if ($options['failOn'] !== '') {
+                $args[] = '--fail-on=' . $options['failOn'];
             }
 
-            if ($options['explain']) {
-                $args[] = '--explain';
-            }
+            $args = [...$args, ...$options['duplicateArgs']];
         }
 
         return [...$args, ...$options['paths']];
     }
 
     /**
-     * @param array<string, array{exit_code:int,stdout:string,stderr:string,payload:array<string,mixed>}> $results
+     * @param array<string, array{exit_code:int,stderr:string,payload:array<string,mixed>}> $results
      */
     private function combinedExitCode(array $results): int
     {
-        $hasFailure = false;
+        $exitCode = 0;
 
         foreach ($results as $result) {
             if ($result['exit_code'] === 2) {
@@ -133,28 +109,11 @@ final class CheckCommand
             }
 
             if ($result['exit_code'] !== 0) {
-                $hasFailure = true;
+                $exitCode = 1;
             }
         }
 
-        return $hasFailure ? 1 : 0;
-    }
-
-    private function ensureParentDirectory(string $path): void
-    {
-        $directory = dirname($path);
-
-        if ($directory === '' || $directory === '.') {
-            return;
-        }
-
-        if (is_dir($directory)) {
-            return;
-        }
-
-        if (!mkdir($directory, 0755, true) && !is_dir($directory)) {
-            throw new \RuntimeException(sprintf('Failed to create directory: %s', $directory));
-        }
+        return $exitCode;
     }
 
     private function help(): int
@@ -162,19 +121,24 @@ final class CheckCommand
         fwrite(STDOUT, implode(PHP_EOL, [
             'Usage: phpprobe check [options] [paths...]',
             '',
+            'Runs syntax first, then duplicate analysis only when syntax passes.',
+            '',
             'Options:',
             '  --config=FILE                    read PHPProbe checker settings',
             '  --preset=NAME                    apply preset: default, standard, ci, or strict',
-            '  --format=text|json|markdown|sarif|github',
-            '  --color=auto|always|never       ANSI color mode for checker output (default: auto)',
+            '  --format=text|json|markdown|sarif|github output format (default: text)',
             '  --summary-json=FILE              write combined summary JSON',
-            '  --report-dir=DIR                 write per-checker text/json/markdown/sarif artifacts',
+            '  --report-dir=DIR                 write JSON, Markdown, and SARIF reports',
             '  --changed-only                   scan only changed PHP files from Git diff',
             '  --changed-base=REF               Git base ref used with --changed-only',
-            '  --fail-on=error|warning|info     pass through to duplicates/api/comments',
-            '  --fail-confidence=low|medium|high pass through to comments',
-            '  --doc-mode=heuristic|parser|hybrid pass through to comments',
-            '  --explain                        pass through to comments',
+            '  --parallel=N                     pass worker count to syntax checker',
+            '  --timeout=SECONDS                pass process timeout to syntax checker',
+            '  --fail-on=error|warning|info     pass threshold to duplicate checker',
+            '  --exclude=PATH                   exclude a path from both checkers; repeatable',
+            '  --mode=gate|audit                select duplicate detector mode',
+            '  --exact | --fuzzy | --no-fuzzy  select token normalization',
+            '  --near-miss                      enable bounded AST-shape comparison',
+            '  Duplicate threshold, baseline, and cache options are also forwarded.',
             '  --help                           show this help',
         ]) . PHP_EOL);
 
@@ -182,105 +146,54 @@ final class CheckCommand
     }
 
     /**
-     * @param array{exit_code:int,stdout:string,stderr:string,payload:array<string,mixed>} $run
+     * @param array{checker:string,exit_code:int,checks:array<string,int>,skipped:list<string>} $summary
      */
-    private function outputForReport(array $run, string $format): string
+    private function markdown(array $summary): string
     {
-        if ($format === 'text') {
-            $stream = trim($run['stderr']) !== '' ? $run['stderr'] : $run['stdout'];
+        $lines = ['# PHPProbe Check Report', '', '| Checker | Result |', '| --- | --- |'];
 
-            return rtrim($stream) . PHP_EOL;
+        foreach ($summary['checks'] as $name => $exitCode) {
+            $lines[] = sprintf('| `%s` | `%s` |', $name, $exitCode === 0 ? 'PASS' : 'FAIL');
         }
 
-        return rtrim($run['stdout']) . PHP_EOL;
+        foreach ($summary['skipped'] as $name) {
+            $lines[] = sprintf('| `%s` | `SKIPPED` |', $name);
+        }
+
+        $lines[] = '';
+        $lines[] = sprintf('Overall exit code: `%d`', $summary['exit_code']);
+
+        return implode(PHP_EOL, $lines) . PHP_EOL;
     }
 
     /**
      * @param list<string> $args
-     * @return array{config:string,preset:string,format:string,color:string,summaryJson:string,reportDir:string,changedOnly:bool,changedBase:string,failOn:string,failConfidence:string,docMode:string,explain:bool,paths:list<string>,help:bool}
+     * @return CheckOptions
      */
     private function parseArgs(array $args): array
     {
-        $options = $this->baseOutputOptions();
-        $count = count($args);
+        $options = [
+            'config' => '',
+            'preset' => '',
+            'format' => 'text',
+            'summaryJson' => '',
+            'reportDir' => '',
+            'changedOnly' => false,
+            'changedBase' => '',
+            'parallel' => '',
+            'timeout' => '',
+            'failOn' => '',
+            'excludes' => [],
+            'duplicateArgs' => [],
+            'paths' => [],
+            'help' => false,
+        ];
 
-        for ($index = 0; $index < $count; $index++) {
+        for ($index = 0, $count = count($args); $index < $count; $index++) {
             $arg = $args[$index];
-
-            if ($arg === '--') {
-                $options['paths'] = [...$options['paths'], ...array_slice($args, $index + 1)];
-
-                break;
-            }
 
             if ($arg === '--help' || $arg === '-h') {
                 $options['help'] = true;
-
-                continue;
-            }
-
-            if (str_starts_with($arg, '--config=')) {
-                $options['config'] = substr($arg, strlen('--config='));
-
-                continue;
-            }
-
-            if ($arg === '--config' && isset($args[$index + 1])) {
-                $options['config'] = $args[++$index];
-
-                continue;
-            }
-
-            if (str_starts_with($arg, '--preset=')) {
-                $options['preset'] = substr($arg, strlen('--preset='));
-
-                continue;
-            }
-
-            if ($arg === '--preset' && isset($args[$index + 1])) {
-                $options['preset'] = $args[++$index];
-
-                continue;
-            }
-
-            if (str_starts_with($arg, '--format=')) {
-                $format = strtolower(trim(substr($arg, strlen('--format='))));
-
-                if (!in_array($format, ['text', 'json', 'markdown', 'sarif', 'github'], true)) {
-                    throw new \InvalidArgumentException(sprintf(
-                        'Invalid --format value "%s". Expected one of: text, json, markdown, sarif, github.',
-                        $format,
-                    ));
-                }
-
-                $options['format'] = $format;
-
-                continue;
-            }
-
-            if (str_starts_with($arg, '--color=')) {
-                $color = strtolower(trim(substr($arg, strlen('--color='))));
-
-                if (!in_array($color, ['auto', 'always', 'never'], true)) {
-                    throw new \InvalidArgumentException(sprintf(
-                        'Invalid --color value "%s". Expected: auto, always, never.',
-                        $color,
-                    ));
-                }
-
-                $options['color'] = $color;
-
-                continue;
-            }
-
-            if (str_starts_with($arg, '--summary-json=')) {
-                $options['summaryJson'] = trim(substr($arg, strlen('--summary-json=')));
-
-                continue;
-            }
-
-            if (str_starts_with($arg, '--report-dir=')) {
-                $options['reportDir'] = trim(substr($arg, strlen('--report-dir=')));
 
                 continue;
             }
@@ -291,47 +204,83 @@ final class CheckCommand
                 continue;
             }
 
-            if (str_starts_with($arg, '--changed-base=')) {
-                $options['changedBase'] = trim(substr($arg, strlen('--changed-base=')));
+            if (in_array($arg, ['--near-miss', '--exact', '--fuzzy', '--no-fuzzy', '--no-cache', '--write-baseline'], true)) {
+                $options['duplicateArgs'][] = $arg;
 
                 continue;
             }
 
-            if (str_starts_with($arg, '--fail-on=')) {
-                $options['failOn'] = strtolower(trim(substr($arg, strlen('--fail-on='))));
+            $matched = false;
+
+            foreach ([
+                '--config' => 'config',
+                '--preset' => 'preset',
+                '--summary-json' => 'summaryJson',
+                '--report-dir' => 'reportDir',
+                '--changed-base' => 'changedBase',
+                '--parallel' => 'parallel',
+                '--timeout' => 'timeout',
+                '--fail-on' => 'failOn',
+            ] as $name => $key) {
+                $value = $this->valuedArgument($args, $index, $arg, $name);
+
+                if ($value !== null) {
+                    $options[$key] = $value;
+                    $matched = true;
+
+                    break;
+                }
+            }
+
+            if ($matched) {
+                continue;
+            }
+
+            $format = $this->valuedArgument($args, $index, $arg, '--format');
+
+            if ($format !== null) {
+                $format = strtolower($format);
+
+                if (!in_array($format, ['text', 'json', 'markdown', 'sarif', 'github'], true)) {
+                    throw new \InvalidArgumentException('--format must be one of: text, json, markdown, sarif, github.');
+                }
+
+                $options['format'] = $format;
 
                 continue;
             }
 
-            $failConfidence = $this->parseEnumOptionFromArg(
-                $arg,
-                '--fail-confidence=',
-                ['low', 'medium', 'high'],
-                'Invalid --fail-confidence value "%s". Expected: low, medium, high.',
-            );
+            $exclude = $this->valuedArgument($args, $index, $arg, '--exclude');
 
-            if ($failConfidence !== null) {
-                $options['failConfidence'] = $failConfidence;
+            if ($exclude !== null) {
+                $options['excludes'][] = $exclude;
 
                 continue;
             }
 
-            $docMode = $this->parseEnumOptionFromArg(
-                $arg,
-                '--doc-mode=',
-                ['heuristic', 'parser', 'hybrid'],
-                'Invalid --doc-mode value "%s". Expected: heuristic, parser, hybrid.',
-            );
+            foreach ([
+                '--mode',
+                '--min-lines',
+                '--min-tokens',
+                '--min-statements',
+                '--min-similarity',
+                '--max-near-miss-comparisons',
+                '--baseline',
+                '--write-baseline',
+                '--cache-file',
+                '--error-duplicate-percentage',
+            ] as $name) {
+                $value = $this->valuedArgument($args, $index, $arg, $name);
 
-            if ($docMode !== null) {
-                $options['docMode'] = $docMode;
+                if ($value !== null) {
+                    $options['duplicateArgs'][] = $name . '=' . $value;
+                    $matched = true;
 
-                continue;
+                    break;
+                }
             }
 
-            if ($arg === '--explain') {
-                $options['explain'] = true;
-
+            if ($matched) {
                 continue;
             }
 
@@ -342,61 +291,118 @@ final class CheckCommand
             $options['paths'][] = $arg;
         }
 
+        if ($options['failOn'] !== '' && !in_array($options['failOn'], ['error', 'warning', 'info'], true)) {
+            throw new \InvalidArgumentException('--fail-on must be one of: error, warning, info.');
+        }
+
         return $options;
     }
 
     /**
-     * @param list<string> $allowed
+     * @param CheckOptions $options
+     * @return array{exit_code:int,stderr:string,payload:array<string,mixed>}
      */
-    private function parseEnumOptionFromArg(
-        string $arg,
-        string $prefix,
-        array $allowed,
-        string $errorMessage,
-    ): ?string {
-        if (!str_starts_with($arg, $prefix)) {
-            return null;
-        }
-
-        $value = strtolower(trim(substr($arg, strlen($prefix))));
-
-        if (!in_array($value, $allowed, true)) {
-            throw new \InvalidArgumentException(sprintf($errorMessage, $value));
-        }
-
-        return $value;
-    }
-
-    /**
-     * @param array{config:string,preset:string,format:string,color:string,summaryJson:string,reportDir:string,changedOnly:bool,changedBase:string,failOn:string,failConfidence:string,docMode:string,explain:bool,paths:list<string>,help:bool} $options
-     * @return array{exit_code:int,stdout:string,stderr:string,payload:array<string,mixed>}
-     */
-    private function runChecker(string $checker, array $options, string $format): array
+    private function runChecker(string $checker, array $options): array
     {
-        $args = $this->checkerArgs($checker, $options, $format);
         $binary = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'bin' . DIRECTORY_SEPARATOR . 'phpprobe';
-        $run = (new ProcRunner())->run([PHP_BINARY, $binary, $checker, ...$args], '', getcwd() ?: null);
+        $run = (new ProcRunner())->run(
+            [PHP_BINARY, $binary, $checker, ...$this->checkerArgs($checker, $options)],
+            cwd: getcwd() ?: null,
+            timeout: 900.0,
+            outputLimit: 67_108_864,
+        );
 
         if ($run === null) {
             throw new \RuntimeException(sprintf('Could not start "%s" checker process.', $checker));
         }
 
-        $stdout = $run->stdout;
-        $stderr = $run->stderr;
-        $exitCode = $run->exitCode;
-        $payload = json_decode($stdout, true);
+        try {
+            $payload = json_decode($run->stdout, true, 512, JSON_THROW_ON_ERROR);
+        } catch (\JsonException $exception) {
+            throw new \RuntimeException(sprintf(
+                'The %s checker returned invalid JSON%s%s',
+                $checker,
+                $run->stderr === '' ? '.' : ': ',
+                trim($run->stderr),
+            ), previous: $exception);
+        }
 
+        if (!is_array($payload) || array_is_list($payload)) {
+            throw new \RuntimeException(sprintf('The %s checker returned an invalid result object.', $checker));
+        }
+
+        /** @var array<string, mixed> $payload */
+        return ['exit_code' => $run->exitCode, 'stderr' => $run->stderr, 'payload' => $payload];
+    }
+
+    /**
+     * @param array<string, array{exit_code:int,stderr:string,payload:array<string,mixed>}> $results
+     * @return array<string, mixed>
+     */
+    private function sarif(array $results): array
+    {
+        $findings = [];
+        $syntax = $results['syntax']['payload']['failures'] ?? [];
+
+        if (is_array($syntax)) {
+            foreach ($syntax as $failure) {
+                if (!is_array($failure)) {
+                    continue;
+                }
+
+                $message = is_string($failure['message'] ?? null) ? $failure['message'] : 'Syntax error';
+                $file = is_string($failure['file'] ?? null) ? $failure['file'] : '';
+                $findings[] = $this->sarifFinding('php_syntax_error', 'error', $message, $file, 1);
+            }
+        }
+
+        $clones = $results['duplicates']['payload']['clones'] ?? [];
+
+        if (is_array($clones)) {
+            foreach ($clones as $clone) {
+                if (!is_array($clone) || !is_array($clone['occurrences'] ?? null)) {
+                    continue;
+                }
+
+                foreach ($clone['occurrences'] as $occurrence) {
+                    if (is_array($occurrence)) {
+                        $source = is_string($clone['source'] ?? null) ? $clone['source'] : 'tokens';
+                        $file = is_string($occurrence['file'] ?? null) ? $occurrence['file'] : '';
+                        $line = is_int($occurrence['start_line'] ?? null) ? $occurrence['start_line'] : 1;
+                        $findings[] = $this->sarifFinding(
+                            'duplicate_code_clone',
+                            'warning',
+                            sprintf('Duplicate clone group (%s).', $source),
+                            $file,
+                            $line,
+                        );
+                    }
+                }
+            }
+        }
+
+        return Sarif::payload($findings);
+    }
+
+    /** @return array<string, mixed> */
+    private function sarifFinding(string $rule, string $level, string $message, string $file, int $line): array
+    {
         return [
-            'exit_code' => $exitCode,
-            'stdout' => $stdout,
-            'stderr' => $stderr,
-            'payload' => is_array($payload) ? $payload : [],
+            'ruleId' => $rule,
+            'level' => $level,
+            'message' => ['text' => trim($message)],
+            'locations' => [[
+                'physicalLocation' => [
+                    'artifactLocation' => ['uri' => $file],
+                    'region' => ['startLine' => max(1, $line)],
+                ],
+            ]],
         ];
     }
 
     /**
-     * @param array<string, array{exit_code:int,stdout:string,stderr:string,payload:array<string,mixed>}> $results
-     * @return array{checker:string,exit_code:int,checks:array<string,int>}
+     * @param array<string, array{exit_code:int,stderr:string,payload:array<string,mixed>}> $results
+     * @return array{checker:string,exit_code:int,checks:array<string,int>,skipped:list<string>}
      */
     private function summaryPayload(array $results, int $exitCode): array
     {
@@ -410,113 +416,104 @@ final class CheckCommand
             'checker' => 'check',
             'exit_code' => $exitCode,
             'checks' => $checks,
+            'skipped' => isset($results['duplicates']) ? [] : ['duplicates'],
         ];
     }
 
     /**
-     * @param array<string, array{exit_code:int,stdout:string,stderr:string,payload:array<string,mixed>}> $results
+     * @param list<string> $args
      */
-    private function writeOutput(array $options, array $results, array $summary): void
+    private function valuedArgument(array $args, int &$index, string $arg, string $name): ?string
     {
-        $format = $options['format'];
-
-        if ($format === 'json') {
-            fwrite(STDOUT, json_encode([
-                'summary' => $summary,
-                'checks' => $results,
-            ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL);
-
-            return;
+        if (str_starts_with($arg, $name . '=')) {
+            $value = trim(substr($arg, strlen($name) + 1));
+        } elseif ($arg === $name) {
+            $index++;
+            $value = trim($args[$index] ?? '');
+        } else {
+            return null;
         }
 
-        if ($format === 'markdown') {
-            $lines = [
-                '# PHPProbe Check Report',
-                '',
-                sprintf('- Exit code: `%d`', $summary['exit_code']),
-                '',
-                '| Checker | Exit |',
-                '| --- | --- |',
-            ];
+        if ($value === '') {
+            throw new \InvalidArgumentException(sprintf('%s requires a value.', $name));
+        }
 
-            foreach ($results as $name => $result) {
-                $lines[] = sprintf('| `%s` | `%d` |', $name, $result['exit_code']);
-            }
+        return $value;
+    }
 
-            fwrite(STDOUT, implode(PHP_EOL, $lines) . PHP_EOL);
+    /**
+     * @param array<string, array{exit_code:int,stderr:string,payload:array<string,mixed>}> $results
+     */
+    private function writeGithub(array $results): void
+    {
+        foreach ($results as $name => $result) {
+            $level = $result['exit_code'] === 0 ? 'notice' : 'error';
+            $message = $result['exit_code'] === 0 ? 'PASS' : (trim($result['stderr']) ?: 'FAILED');
+            fwrite(STDOUT, GithubAnnotation::emit($level, 'PHPProbe ' . $name, $message) . PHP_EOL);
+        }
+    }
+
+    /**
+     * @param array<string, array{exit_code:int,stderr:string,payload:array<string,mixed>}> $results
+     * @param array{checker:string,exit_code:int,checks:array<string,int>,skipped:list<string>} $summary
+     */
+    private function writeOutput(string $format, array $results, array $summary): void
+    {
+        if ($format === 'json') {
+            fwrite(STDOUT, json_encode(['summary' => $summary, 'results' => $results], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL);
 
             return;
         }
 
         if ($format === 'sarif') {
-            $runs = [];
-
-            foreach ($results as $name => $_result) {
-                $sarif = $this->runChecker($name, $options, 'sarif');
-                $payload = json_decode($sarif['stdout'], true);
-
-                if (is_array($payload) && is_array($payload['runs'] ?? null)) {
-                    $runs = [...$runs, ...$payload['runs']];
-                }
-            }
-
-            fwrite(STDOUT, json_encode([
-                'version' => '2.1.0',
-                '$schema' => 'https://json.schemastore.org/sarif-2.1.0.json',
-                'runs' => $runs,
-            ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL);
+            fwrite(STDOUT, json_encode($this->sarif($results), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL);
 
             return;
         }
 
         if ($format === 'github') {
-            foreach ($results as $name => $result) {
-                if ($result['exit_code'] === 0) {
-                    fwrite(STDOUT, GithubAnnotation::emit('notice', 'PHPProbe ' . $name, 'PASS') . PHP_EOL);
+            $this->writeGithub($results);
 
-                    continue;
-                }
+            return;
+        }
 
-                $message = trim($result['stderr']) !== '' ? trim($result['stderr']) : ('Checker failed: ' . $name);
-                fwrite(STDOUT, GithubAnnotation::emit('error', 'PHPProbe ' . $name, $message) . PHP_EOL);
-            }
+        if ($format === 'markdown') {
+            fwrite(STDOUT, $this->markdown($summary));
 
             return;
         }
 
         fwrite(STDOUT, 'PHPProbe check summary:' . PHP_EOL);
 
-        foreach ($results as $name => $result) {
-            fwrite(STDOUT, sprintf('  - %s: exit=%d', $name, $result['exit_code']) . PHP_EOL);
+        foreach ($summary['checks'] as $name => $exitCode) {
+            fwrite(STDOUT, sprintf('  - %s: exit=%d', $name, $exitCode) . PHP_EOL);
+        }
+
+        foreach ($summary['skipped'] as $name) {
+            fwrite(STDOUT, sprintf('  - %s: skipped', $name) . PHP_EOL);
         }
 
         fwrite(STDOUT, sprintf('Overall exit: %d', $summary['exit_code']) . PHP_EOL);
     }
 
     /**
-     * @param array{config:string,preset:string,format:string,color:string,summaryJson:string,reportDir:string,changedOnly:bool,changedBase:string,failOn:string,failConfidence:string,docMode:string,explain:bool,paths:list<string>,help:bool} $options
-     * @param array<string, array{exit_code:int,stdout:string,stderr:string,payload:array<string,mixed>}> $results
+     * @param array<string, array{exit_code:int,stderr:string,payload:array<string,mixed>}> $results
+     * @param array{checker:string,exit_code:int,checks:array<string,int>,skipped:list<string>} $summary
      */
-    private function writeReportArtifacts(array $checkers, array $options, array $results, array $summary): void
+    private function writeReportArtifacts(string $directory, array $results, array $summary): void
     {
-        if (!is_dir($options['reportDir']) && !mkdir($options['reportDir'], 0755, true) && !is_dir($options['reportDir'])) {
-            throw new \RuntimeException(sprintf('Failed to create report directory: %s', $options['reportDir']));
+        foreach ($results as $name => $result) {
+            AtomicFileWriter::write(
+                $directory . DIRECTORY_SEPARATOR . $name . '.json',
+                json_encode($result['payload'], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR) . PHP_EOL,
+            );
         }
 
-        foreach ($checkers as $checker) {
-            foreach (['text', 'json', 'markdown', 'sarif'] as $format) {
-                $run = $format === 'json' ? $results[$checker] : $this->runChecker($checker, $options, $format);
-                $extension = match ($format) {
-                    'markdown' => 'md',
-                    default => $format,
-                };
-                file_put_contents(
-                    $options['reportDir'] . DIRECTORY_SEPARATOR . $checker . '.' . $extension,
-                    $this->outputForReport($run, $format),
-                );
-            }
-        }
-
-        SummaryJson::write($options['reportDir'] . DIRECTORY_SEPARATOR . 'summary.json', $summary);
+        AtomicFileWriter::write($directory . DIRECTORY_SEPARATOR . 'summary.md', $this->markdown($summary));
+        AtomicFileWriter::write(
+            $directory . DIRECTORY_SEPARATOR . 'report.sarif',
+            json_encode($this->sarif($results), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR) . PHP_EOL,
+        );
+        SummaryJson::write($directory . DIRECTORY_SEPARATOR . 'summary.json', $summary);
     }
 }

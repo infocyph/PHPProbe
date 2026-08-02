@@ -4,64 +4,20 @@ declare(strict_types=1);
 
 namespace Infocyph\PHPProbe\Config;
 
-use Infocyph\PHPProbe\Util\ArrayShape;
-
 final class ConfigValidator
 {
-    /**
-     * @var array<string, string>
-     */
-    private const CHECKER_SECTION_COMMON_SCHEMA = [
-        'paths' => 'list',
-        'exclude' => 'list',
-        'exclude_paths' => 'list',
-        'format' => 'string',
-        'json' => 'bool',
-        'summary_json' => 'string',
-        'changed_only' => 'bool',
-        'changed_base' => 'string',
-    ];
+    /** @var list<string> */
+    private const COLORS = ['red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'gray', 'bold'];
+
+    /** @var list<string> */
+    private const FORMATS = ['text', 'json', 'markdown', 'sarif', 'github'];
+
+    private const MAX_CONFIG_BYTES = 1_048_576;
 
     /**
-     * @var array<string, list<string>>
+     * @return array<string, mixed>
      */
-    private const ENUM_VALUES = [
-        'root.preset' => ['default', 'standard', 'ci', 'strict', 'phpstorm', 'legacy-standard'],
-        'output.colors.success' => ['red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'gray', 'bold'],
-        'output.colors.error' => ['red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'gray', 'bold'],
-        'output.colors.warning' => ['red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'gray', 'bold'],
-        'output.colors.info' => ['red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'gray', 'bold'],
-        'output.colors.muted' => ['red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'gray', 'bold'],
-        'output.colors.file' => ['red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'gray', 'bold'],
-        'output.colors.severity.error' => ['red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'gray', 'bold'],
-        'output.colors.severity.critical' => ['red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'gray', 'bold'],
-        'output.colors.severity.high' => ['red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'gray', 'bold'],
-        'output.colors.severity.warning' => ['red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'gray', 'bold'],
-        'output.colors.severity.medium' => ['red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'gray', 'bold'],
-        'output.colors.severity.low' => ['red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'gray', 'bold'],
-        'output.colors.severity.info' => ['red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'gray', 'bold'],
-        'syntax.format' => ['text', 'json', 'markdown', 'sarif', 'github'],
-        'duplicates.mode' => ['gate', 'audit'],
-        'duplicates.output.style' => ['compact', 'classic'],
-        'duplicates.output.score_colors.high.color' => ['red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'gray'],
-        'duplicates.output.score_colors.medium.color' => ['red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'gray'],
-        'duplicates.output.score_colors.low.color' => ['red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'gray'],
-        'duplicates.output.score_colors.base.color' => ['red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'gray'],
-        'duplicates.format' => ['text', 'json', 'markdown', 'sarif', 'github'],
-        'duplicates.fail_on' => ['error', 'warning', 'info'],
-        'api.format' => ['text', 'json', 'markdown', 'sarif', 'github'],
-        'api.fail_on' => ['error', 'warning', 'info'],
-        'comments.format' => ['text', 'json', 'markdown', 'sarif', 'github'],
-        'comments.fail_on' => ['error', 'warning', 'info'],
-        'comments.doc_mode' => ['heuristic', 'parser', 'hybrid'],
-        'comments.fail_confidence' => ['low', 'medium', 'high'],
-        'commented_out_code.policy' => ['relaxed', 'standard', 'strict'],
-    ];
-
-    /**
-     * @return list<string>
-     */
-    public function validateFile(string $path): array
+    public function decodeFile(string $path): array
     {
         if (!is_file($path)) {
             throw new \RuntimeException(sprintf('Config file not found: %s', $path));
@@ -71,6 +27,12 @@ final class ConfigValidator
             throw new \RuntimeException(sprintf('Config file is not readable: %s', $path));
         }
 
+        $size = filesize($path);
+
+        if (is_int($size) && $size > self::MAX_CONFIG_BYTES) {
+            throw new \RuntimeException(sprintf('Config file exceeds the %d-byte limit: %s', self::MAX_CONFIG_BYTES, $path));
+        }
+
         $contents = file_get_contents($path);
 
         if (!is_string($contents) || trim($contents) === '') {
@@ -78,7 +40,7 @@ final class ConfigValidator
         }
 
         try {
-            $decoded = json_decode($contents, true, 512, JSON_THROW_ON_ERROR);
+            $decoded = json_decode($contents, true, 64, JSON_THROW_ON_ERROR);
         } catch (\JsonException $exception) {
             throw new \RuntimeException(
                 sprintf('Invalid config JSON at %s: %s', $path, $exception->getMessage()),
@@ -86,271 +48,169 @@ final class ConfigValidator
             );
         }
 
-        if (!is_array($decoded)) {
-            return ['Config root must be a JSON object.'];
+        if (!is_array($decoded) || array_is_list($decoded)) {
+            throw new \RuntimeException(sprintf('Config root must be a JSON object: %s', $path));
         }
 
-        $root = ArrayShape::stringKeyed($decoded);
+        /** @var array<string, mixed> $decoded */
+        return $decoded;
+    }
+
+    /**
+     * @param array<string, mixed> $config
+     * @return list<string>
+     */
+    public function validate(array $config): array
+    {
         $errors = [];
-        $this->validateRoot($root, $errors);
+        $this->unknownKeys('root', $config, ['preset', 'output', 'syntax', 'duplicates'], $errors);
+
+        if (array_key_exists('preset', $config)) {
+            $this->enum('root.preset', $config['preset'], PresetRepository::NAMES, $errors);
+        }
+
+        $this->output($config['output'] ?? null, $errors);
+        $this->checker('syntax', $config['syntax'] ?? null, ['parallel', 'timeout'], $errors);
+        $this->checker('duplicates', $config['duplicates'] ?? null, [
+            'mode',
+            'normalize',
+            'fuzzy',
+            'near_miss',
+            'min_lines',
+            'min_tokens',
+            'min_statements',
+            'min_similarity',
+            'max_near_miss_comparisons',
+            'baseline',
+            'write_baseline',
+            'ignore_fingerprints',
+            'fail_on',
+            'error_duplicate_percentage',
+            'cache',
+            'output',
+        ], $errors);
+
+        $this->syntaxValues($config['syntax'] ?? null, $errors);
+        $this->duplicateValues($config['duplicates'] ?? null, $errors);
 
         return $errors;
     }
 
     /**
-     * @param array<string, string> $sectionSchema
-     * @return array<string, string>
+     * @return list<string>
      */
-    private function checkerSchema(array $sectionSchema): array
+    public function validateFile(string $path): array
     {
-        return [
-            ...self::CHECKER_SECTION_COMMON_SCHEMA,
-            ...$sectionSchema,
-        ];
-    }
-
-    private function matchesType(mixed $value, string $type): bool
-    {
-        return match ($type) {
-            'bool' => is_bool($value),
-            'string' => is_string($value),
-            'int' => is_int($value),
-            'number' => is_int($value) || is_float($value) || (is_string($value) && is_numeric($value)),
-            'object' => is_array($value) && ($value === [] || !array_is_list($value)),
-            'list' => is_string($value) || (is_array($value) && array_is_list($value)),
-            default => false,
-        };
+        return $this->validate($this->decodeFile($path));
     }
 
     /**
-     * @return array<string, array<string, string>>
-     */
-    private function sectionSchemas(): array
-    {
-        return [
-            'output' => [
-                'colors' => 'object',
-            ],
-            'syntax' => $this->checkerSchema([
-                'parallel' => 'int',
-            ]),
-            'duplicates' => $this->checkerSchema([
-                'mode' => 'string',
-                'normalize' => 'bool',
-                'fuzzy' => 'bool',
-                'near_miss' => 'bool',
-                'min_lines' => 'number',
-                'min_tokens' => 'number',
-                'min_statements' => 'number',
-                'min_similarity' => 'number',
-                'baseline' => 'string',
-                'write_baseline' => 'string',
-                'fail_on' => 'string',
-                'ignore_fingerprints' => 'list',
-                'cache' => 'object',
-                'output' => 'object',
-            ]),
-            'api' => $this->checkerSchema([
-                'include_protected' => 'bool',
-                'baseline' => 'string',
-                'write_baseline' => 'string',
-                'fail_on' => 'string',
-            ]),
-            'comments' => $this->checkerSchema([
-                'scan_markers' => 'bool',
-                'doc_mode' => 'string',
-                'fail_confidence' => 'string',
-                'explain' => 'bool',
-                'doc_signature_consistency' => 'bool',
-                'doc_type_hygiene' => 'bool',
-                'baseline' => 'string',
-                'write_baseline' => 'string',
-                'marker_tags' => 'list',
-                'marker_severity' => 'object',
-                'rules' => 'object',
-                'custom_rules' => 'list',
-                'doc_cache' => 'object',
-                'fail_on' => 'string',
-            ]),
-            'commented_out_code' => [
-                'enabled' => 'bool',
-                'policy' => 'string',
-                'min_reason_length' => 'number',
-                'max_allowed_block_lines' => 'number',
-                'require_issue_for_blocks_longer_than' => 'number',
-                'allowed_reason_tags' => 'list',
-                'optional_reason_tags' => 'list',
-                'ignore_paths' => 'list',
-                'allow_optional_reason_tags_in_strict_mode' => 'bool',
-                'allowed_issue_patterns' => 'list',
-                'suppression' => 'object',
-                'single_line_comments' => 'object',
-                'block_comments' => 'object',
-                'phpdoc_comments' => 'object',
-                'finding_severity' => 'object',
-                'finding_severity_strict' => 'object',
-            ],
-        ];
-    }
-
-    private function typeLabel(string $type): string
-    {
-        /** @var array<string, string> $labels */
-        $labels = [
-            'bool' => 'a boolean',
-            'string' => 'a string',
-            'int' => 'an integer',
-            'number' => 'a number',
-            'object' => 'an object',
-            'list' => 'a string or list of strings',
-        ];
-
-        return $labels[$type] ?? $type;
-    }
-
-    /**
-     * @param array<string, mixed> $comments
+     * @param list<string> $extraKeys
      * @param list<string> $errors
      */
-    private function validateCommentCustomRules(array $comments, array &$errors): void
+    private function checker(string $name, mixed $value, array $extraKeys, array &$errors): void
     {
-        $rules = $comments['custom_rules'] ?? null;
-
-        if ($rules === null) {
+        if ($value === null) {
             return;
         }
 
-        if (!is_array($rules) || !array_is_list($rules)) {
-            $errors[] = 'comments.custom_rules must be a list.';
+        if (!is_array($value) || array_is_list($value)) {
+            $errors[] = sprintf('%s must be a JSON object.', $name);
 
             return;
         }
 
-        foreach ($rules as $index => $rule) {
-            if (!is_array($rule) || array_is_list($rule)) {
-                $errors[] = sprintf('comments.custom_rules[%d] must be an object.', $index);
+        $common = ['paths', 'exclude', 'format', 'summary_json', 'changed_only', 'changed_base'];
+        $this->unknownKeys($name, $value, [...$common, ...$extraKeys], $errors);
+        $this->stringList($name . '.paths', $value['paths'] ?? null, $errors);
+        $this->stringList($name . '.exclude', $value['exclude'] ?? null, $errors);
+        $this->optionalString($name . '.summary_json', $value['summary_json'] ?? null, $errors);
+        $this->optionalString($name . '.changed_base', $value['changed_base'] ?? null, $errors);
+        $this->optionalBool($name . '.changed_only', $value['changed_only'] ?? null, $errors);
 
-                continue;
-            }
-
-            $entry = ArrayShape::stringKeyed($rule);
-
-            if (!is_string($entry['id'] ?? null) || trim($entry['id']) === '') {
-                $errors[] = sprintf('comments.custom_rules[%d].id must be a non-empty string.', $index);
-            }
-
-            if (!is_string($entry['pattern'] ?? null) || trim($entry['pattern']) === '') {
-                $errors[] = sprintf('comments.custom_rules[%d].pattern must be a non-empty string.', $index);
-            }
-
-            if (isset($entry['severity']) && (!is_string($entry['severity']) || !in_array(strtolower(trim($entry['severity'])), ['error', 'critical', 'high', 'warning', 'medium', 'low', 'info'], true))) {
-                $errors[] = sprintf('comments.custom_rules[%d].severity must be one of: error, critical, high, warning, medium, low, info.', $index);
-            }
-
-            if (isset($entry['scope']) && (!is_string($entry['scope']) || !in_array(strtolower(trim($entry['scope'])), ['all', 'line', 'block', 'doc'], true))) {
-                $errors[] = sprintf('comments.custom_rules[%d].scope must be one of: all, line, block, doc.', $index);
-            }
-
-            if (isset($entry['enabled']) && !is_bool($entry['enabled'])) {
-                $errors[] = sprintf('comments.custom_rules[%d].enabled must be a boolean.', $index);
-            }
+        if (array_key_exists('format', $value)) {
+            $this->enum($name . '.format', $value['format'], self::FORMATS, $errors);
         }
     }
 
     /**
-     * @param array<string, mixed> $comments
      * @param list<string> $errors
      */
-    private function validateCommentDocCache(array $comments, array &$errors): void
+    private function duplicateCache(mixed $value, array &$errors): void
     {
-        $cache = $comments['doc_cache'] ?? null;
-
-        if ($cache === null) {
+        if ($value === null) {
             return;
         }
 
-        if (!is_array($cache) || array_is_list($cache)) {
-            $errors[] = 'comments.doc_cache must be an object.';
+        if (!is_array($value) || array_is_list($value)) {
+            $errors[] = 'duplicates.cache must be a JSON object.';
 
             return;
         }
 
-        $entry = ArrayShape::stringKeyed($cache);
-        $allowed = ['enabled', 'file'];
-        $this->validateUnknownKeys('comments.doc_cache', $entry, $allowed, $errors);
-
-        if (isset($entry['enabled']) && !is_bool($entry['enabled'])) {
-            $errors[] = 'comments.doc_cache.enabled must be a boolean.';
-        }
-
-        if (isset($entry['file']) && !is_string($entry['file'])) {
-            $errors[] = 'comments.doc_cache.file must be a string.';
-        }
+        $this->unknownKeys('duplicates.cache', $value, ['enabled', 'file'], $errors);
+        $this->optionalBool('duplicates.cache.enabled', $value['enabled'] ?? null, $errors);
+        $this->optionalString('duplicates.cache.file', $value['file'] ?? null, $errors);
     }
 
     /**
-     * @param array<string, mixed> $duplicates
      * @param list<string> $errors
      */
-    private function validateDuplicateOutput(array $duplicates, array &$errors): void
+    private function duplicateOutput(mixed $value, array &$errors): void
     {
-        $output = $duplicates['output'] ?? null;
-
-        if ($output === null) {
+        if ($value === null) {
             return;
         }
 
-        if (!is_array($output) || array_is_list($output)) {
-            $errors[] = 'duplicates.output must be an object.';
-
-            return;
-        }
-
-        $outputObject = ArrayShape::stringKeyed($output);
-        $this->validateUnknownKeys('duplicates.output', $outputObject, ['style', 'score_colors'], $errors);
-
-        if (isset($outputObject['style'])) {
-            $this->validateEnumValue('duplicates.output', 'style', $outputObject['style'], $errors);
-        }
-
-        $scoreColors = $outputObject['score_colors'] ?? null;
-
-        if ($scoreColors === null) {
-            return;
-        }
-
-        if (!is_array($scoreColors) || array_is_list($scoreColors)) {
-            $errors[] = 'duplicates.output.score_colors must be an object.';
+        if (!is_array($value) || array_is_list($value)) {
+            $errors[] = 'duplicates.output must be a JSON object.';
 
             return;
         }
 
-        $scoreColorsObject = ArrayShape::stringKeyed($scoreColors);
-        $this->validateUnknownKeys('duplicates.output.score_colors', $scoreColorsObject, ['high', 'medium', 'low', 'base'], $errors);
+        $this->unknownKeys('duplicates.output', $value, ['style', 'score_colors'], $errors);
+
+        if (array_key_exists('style', $value)) {
+            $this->enum('duplicates.output.style', $value['style'], ['compact', 'classic'], $errors);
+        }
+
+        $bands = $value['score_colors'] ?? null;
+
+        if ($bands === null) {
+            return;
+        }
+
+        if (!is_array($bands) || array_is_list($bands)) {
+            $errors[] = 'duplicates.output.score_colors must be a JSON object.';
+
+            return;
+        }
+
+        $this->unknownKeys('duplicates.output.score_colors', $bands, ['high', 'medium', 'low', 'base'], $errors);
 
         foreach (['high', 'medium', 'low', 'base'] as $band) {
-            $entry = $scoreColorsObject[$band] ?? null;
+            $entry = $bands[$band] ?? null;
 
             if ($entry === null) {
                 continue;
             }
 
             if (!is_array($entry) || array_is_list($entry)) {
-                $errors[] = sprintf('duplicates.output.score_colors.%s must be an object.', $band);
+                $errors[] = sprintf('duplicates.output.score_colors.%s must be a JSON object.', $band);
 
                 continue;
             }
 
-            $entryObject = ArrayShape::stringKeyed($entry);
             $allowed = $band === 'base' ? ['color'] : ['min', 'color'];
-            $this->validateUnknownKeys(sprintf('duplicates.output.score_colors.%s', $band), $entryObject, $allowed, $errors);
+            $path = 'duplicates.output.score_colors.' . $band;
+            $this->unknownKeys($path, $entry, $allowed, $errors);
 
-            if ($band !== 'base' && isset($entryObject['min']) && !$this->matchesType($entryObject['min'], 'number')) {
-                $errors[] = sprintf('duplicates.output.score_colors.%s.min must be a number.', $band);
+            if ($band !== 'base' && array_key_exists('min', $entry)) {
+                $this->number($path . '.min', $entry['min'], 0.0, null, $errors);
             }
 
-            if (isset($entryObject['color'])) {
-                $this->validateEnumValue(sprintf('duplicates.output.score_colors.%s', $band), 'color', $entryObject['color'], $errors);
+            if (array_key_exists('color', $entry)) {
+                $this->enum($path . '.color', $entry['color'], self::COLORS, $errors);
             }
         }
     }
@@ -358,156 +218,201 @@ final class ConfigValidator
     /**
      * @param list<string> $errors
      */
-    private function validateEnumValue(string $section, string $key, mixed $value, array &$errors): void
+    private function duplicateValues(mixed $value, array &$errors): void
     {
-        if (!is_string($value)) {
+        if (!is_array($value) || array_is_list($value)) {
             return;
         }
 
-        $enumKey = $section . '.' . $key;
-        $allowed = self::ENUM_VALUES[$enumKey] ?? null;
-
-        if (!is_array($allowed)) {
-            return;
+        if (array_key_exists('mode', $value)) {
+            $this->enum('duplicates.mode', $value['mode'], ['gate', 'audit'], $errors);
         }
 
-        $normalized = strtolower(trim($value));
-
-        if (in_array($normalized, $allowed, true)) {
-            return;
+        foreach (['normalize', 'fuzzy', 'near_miss'] as $key) {
+            $this->optionalBool('duplicates.' . $key, $value[$key] ?? null, $errors);
         }
 
-        $errors[] = sprintf(
-            '%s.%s must be one of: %s.',
-            $section,
-            $key,
-            implode(', ', $allowed),
-        );
+        foreach (['min_lines', 'min_tokens', 'min_statements', 'max_near_miss_comparisons'] as $key) {
+            if (array_key_exists($key, $value)) {
+                $this->integer('duplicates.' . $key, $value[$key], 1, $errors);
+            }
+        }
+
+        if (is_int($value['max_near_miss_comparisons'] ?? null) && $value['max_near_miss_comparisons'] > 10_000_000) {
+            $errors[] = 'duplicates.max_near_miss_comparisons must not exceed 10000000.';
+        }
+
+        if (array_key_exists('min_similarity', $value)) {
+            $this->number('duplicates.min_similarity', $value['min_similarity'], 0.0, 1.0, $errors);
+        }
+
+        if (array_key_exists('error_duplicate_percentage', $value)) {
+            $this->number('duplicates.error_duplicate_percentage', $value['error_duplicate_percentage'], 0.0, 100.0, $errors);
+        }
+
+        foreach (['baseline', 'write_baseline'] as $key) {
+            $this->optionalString('duplicates.' . $key, $value[$key] ?? null, $errors);
+        }
+
+        $this->stringList('duplicates.ignore_fingerprints', $value['ignore_fingerprints'] ?? null, $errors);
+
+        if (array_key_exists('fail_on', $value)) {
+            $this->enum('duplicates.fail_on', $value['fail_on'], ['error', 'warning', 'info'], $errors);
+        }
+
+        $this->duplicateCache($value['cache'] ?? null, $errors);
+        $this->duplicateOutput($value['output'] ?? null, $errors);
     }
 
     /**
-     * @param array<string, mixed> $output
+     * @param list<string> $allowed
      * @param list<string> $errors
      */
-    private function validateOutput(array $output, array &$errors): void
+    private function enum(string $path, mixed $value, array $allowed, array &$errors): void
     {
-        if ($output === []) {
+        if (!is_string($value) || !in_array(strtolower(trim($value)), $allowed, true)) {
+            $errors[] = sprintf('%s must be one of: %s.', $path, implode(', ', $allowed));
+        }
+    }
+
+    /**
+     * @param list<string> $errors
+     */
+    private function integer(string $path, mixed $value, int $minimum, array &$errors): void
+    {
+        if (!is_int($value) || $value < $minimum) {
+            $errors[] = sprintf('%s must be an integer greater than or equal to %d.', $path, $minimum);
+        }
+    }
+
+    /**
+     * @param list<string> $errors
+     */
+    private function number(string $path, mixed $value, float $minimum, ?float $maximum, array &$errors): void
+    {
+        if (!is_int($value) && !is_float($value)) {
+            $errors[] = sprintf('%s must be a number.', $path);
+
             return;
         }
 
-        $this->validateUnknownKeys('output', $output, ['colors'], $errors);
-        $colors = $output['colors'] ?? null;
+        $number = (float) $value;
+
+        if ($number < $minimum || ($maximum !== null && $number > $maximum)) {
+            $range = $maximum === null ? sprintf('at least %s', $minimum) : sprintf('between %s and %s', $minimum, $maximum);
+            $errors[] = sprintf('%s must be %s.', $path, $range);
+        }
+    }
+
+    /**
+     * @param list<string> $errors
+     */
+    private function optionalBool(string $path, mixed $value, array &$errors): void
+    {
+        if ($value !== null && !is_bool($value)) {
+            $errors[] = sprintf('%s must be a boolean.', $path);
+        }
+    }
+
+    /**
+     * @param list<string> $errors
+     */
+    private function optionalString(string $path, mixed $value, array &$errors): void
+    {
+        if ($value !== null && !is_string($value)) {
+            $errors[] = sprintf('%s must be a string.', $path);
+        }
+    }
+
+    /**
+     * @param list<string> $errors
+     */
+    private function output(mixed $value, array &$errors): void
+    {
+        if ($value === null) {
+            return;
+        }
+
+        if (!is_array($value) || array_is_list($value)) {
+            $errors[] = 'output must be a JSON object.';
+
+            return;
+        }
+
+        $this->unknownKeys('output', $value, ['colors'], $errors);
+        $colors = $value['colors'] ?? null;
 
         if ($colors === null) {
             return;
         }
 
         if (!is_array($colors) || array_is_list($colors)) {
-            $errors[] = 'output.colors must be an object.';
+            $errors[] = 'output.colors must be a JSON object.';
 
             return;
         }
 
-        $colorsObject = ArrayShape::stringKeyed($colors);
-        $this->validateUnknownKeys('output.colors', $colorsObject, ['success', 'error', 'warning', 'info', 'muted', 'file', 'severity'], $errors);
+        $this->unknownKeys('output.colors', $colors, ['success', 'error', 'warning', 'info', 'file'], $errors);
 
-        foreach (['success', 'error', 'warning', 'info', 'muted', 'file'] as $name) {
-            if (!array_key_exists($name, $colorsObject)) {
-                continue;
-            }
-
-            $this->validateEnumValue('output.colors', $name, $colorsObject[$name], $errors);
-        }
-
-        $severity = $colorsObject['severity'] ?? null;
-
-        if ($severity === null) {
-            return;
-        }
-
-        if (!is_array($severity) || array_is_list($severity)) {
-            $errors[] = 'output.colors.severity must be an object.';
-
-            return;
-        }
-
-        $severityObject = ArrayShape::stringKeyed($severity);
-        $this->validateUnknownKeys('output.colors.severity', $severityObject, ['error', 'critical', 'high', 'warning', 'medium', 'low', 'info'], $errors);
-
-        foreach ($severityObject as $name => $value) {
-            $this->validateEnumValue('output.colors.severity', $name, $value, $errors);
+        foreach ($colors as $name => $color) {
+            $this->enum('output.colors.' . $name, $color, self::COLORS, $errors);
         }
     }
 
     /**
-     * @param array<string, mixed> $root
      * @param list<string> $errors
      */
-    private function validateRoot(array $root, array &$errors): void
-    {
-        $allowed = ['preset', 'output', 'syntax', 'duplicates', 'api', 'comments', 'commented_out_code'];
-        $this->validateUnknownKeys('root', $root, $allowed, $errors);
-
-        if (isset($root['preset']) && !is_string($root['preset'])) {
-            $errors[] = 'root.preset must be a string.';
-        } elseif (is_string($root['preset'] ?? null)) {
-            $this->validateEnumValue('root', 'preset', $root['preset'], $errors);
-        }
-
-        foreach ($this->sectionSchemas() as $name => $schema) {
-            $this->validateSection($name, $root[$name] ?? null, $schema, $errors);
-        }
-
-        $this->validateCommentCustomRules(ArrayShape::stringKeyed($root['comments'] ?? []), $errors);
-        $this->validateCommentDocCache(ArrayShape::stringKeyed($root['comments'] ?? []), $errors);
-        $this->validateDuplicateOutput(ArrayShape::stringKeyed($root['duplicates'] ?? []), $errors);
-        $this->validateOutput(ArrayShape::stringKeyed($root['output'] ?? []), $errors);
-    }
-
-    /**
-     * @param array<string, string> $schema
-     * @param list<string> $errors
-     */
-    private function validateSection(string $name, mixed $value, array $schema, array &$errors): void
+    private function stringList(string $path, mixed $value, array &$errors): void
     {
         if ($value === null) {
             return;
         }
 
-        if (!is_array($value)) {
-            $errors[] = sprintf('%s must be a JSON object.', $name);
+        if (!is_array($value) || !array_is_list($value)) {
+            $errors[] = sprintf('%s must be a list of strings.', $path);
 
             return;
         }
 
-        $section = ArrayShape::stringKeyed($value);
-        $this->validateUnknownKeys($name, $section, array_keys($schema), $errors);
-
-        foreach ($schema as $key => $type) {
-            if (!array_key_exists($key, $section)) {
-                continue;
+        foreach ($value as $index => $item) {
+            if (!is_string($item) || trim($item) === '') {
+                $errors[] = sprintf('%s[%d] must be a non-empty string.', $path, $index);
             }
-
-            if (!$this->matchesType($section[$key], $type)) {
-                $errors[] = sprintf('%s.%s must be %s.', $name, $key, $this->typeLabel($type));
-
-                continue;
-            }
-
-            $this->validateEnumValue($name, $key, $section[$key], $errors);
         }
     }
 
     /**
-     * @param array<string, mixed> $section
+     * @param list<string> $errors
+     */
+    private function syntaxValues(mixed $value, array &$errors): void
+    {
+        if (!is_array($value) || array_is_list($value)) {
+            return;
+        }
+
+        if (array_key_exists('parallel', $value)) {
+            $this->integer('syntax.parallel', $value['parallel'], 1, $errors);
+
+            if (is_int($value['parallel']) && $value['parallel'] > 64) {
+                $errors[] = 'syntax.parallel must not exceed 64.';
+            }
+        }
+
+        if (array_key_exists('timeout', $value)) {
+            $this->number('syntax.timeout', $value['timeout'], 0.1, 600.0, $errors);
+        }
+    }
+
+    /**
+     * @param array<mixed, mixed> $value
      * @param list<string> $allowed
      * @param list<string> $errors
      */
-    private function validateUnknownKeys(string $name, array $section, array $allowed, array &$errors): void
+    private function unknownKeys(string $path, array $value, array $allowed, array &$errors): void
     {
-        foreach ($section as $key => $_value) {
-            if (!in_array($key, $allowed, true)) {
-                $errors[] = sprintf('%s.%s is not a supported key.', $name, $key);
+        foreach ($value as $key => $_item) {
+            if (!is_string($key) || !in_array($key, $allowed, true)) {
+                $errors[] = sprintf('%s.%s is not a supported key.', $path, (string) $key);
             }
         }
     }

@@ -82,41 +82,6 @@ final class DoctorCommand
     }
 
     /**
-     * @return array{name:string,status:string,message:string}
-     */
-    private function captainHookCheck(): array
-    {
-        $root = getcwd() ?: '.';
-        $captainConfig = $root . DIRECTORY_SEPARATOR . '.captainhook.json';
-        $gitHook = $root . DIRECTORY_SEPARATOR . '.git' . DIRECTORY_SEPARATOR . 'hooks' . DIRECTORY_SEPARATOR . 'pre-commit';
-
-        $hasConfig = is_file($captainConfig);
-        $hasHook = is_file($gitHook);
-
-        if ($hasConfig && $hasHook) {
-            return [
-                'name' => 'captainhook',
-                'status' => 'pass',
-                'message' => 'CaptainHook config and pre-commit hook are present.',
-            ];
-        }
-
-        if (!$hasConfig && !$hasHook) {
-            return [
-                'name' => 'captainhook',
-                'status' => 'warn',
-                'message' => 'CaptainHook is not detected. Install hooks to enforce checks before commit.',
-            ];
-        }
-
-        return [
-            'name' => 'captainhook',
-            'status' => 'warn',
-            'message' => 'CaptainHook setup is partial. Ensure both .captainhook.json and .git/hooks/pre-commit are installed.',
-        ];
-    }
-
-    /**
      * @return list<array{name:string,status:string,message:string}>
      */
     private function checks(string $configPath): array
@@ -125,8 +90,8 @@ final class DoctorCommand
         $checks[] = $this->phpVersionCheck();
         $checks[] = $this->extensionCheck('json');
         $checks[] = $this->extensionCheck('tokenizer');
+        $checks[] = $this->functionCheck('proc_open');
         $checks[] = $this->configCheck($configPath);
-        $checks[] = $this->captainHookCheck();
 
         return $checks;
     }
@@ -186,6 +151,26 @@ final class DoctorCommand
             'name' => 'ext_' . $extension,
             'status' => 'fail',
             'message' => sprintf('Extension "%s" is missing.', $extension),
+        ];
+    }
+
+    /**
+     * @return array{name:string,status:string,message:string}
+     */
+    private function functionCheck(string $function): array
+    {
+        if (function_exists($function)) {
+            return [
+                'name' => 'function_' . $function,
+                'status' => 'pass',
+                'message' => sprintf('Function "%s" is available.', $function),
+            ];
+        }
+
+        return [
+            'name' => 'function_' . $function,
+            'status' => 'fail',
+            'message' => sprintf('Function "%s" is unavailable or disabled.', $function),
         ];
     }
 

@@ -20,7 +20,7 @@ Link issues with `Closes #...` or `Relates #...`.
 List the commands you ran and their result.
 
 ```bash
-composer ic:tests
+composer tests
 ```
 
 If full suite was not run, explain why and list focused checks.

@@ -70,7 +70,8 @@ final class BaselineJson
             throw new \RuntimeException(sprintf('%s baseline payload must be a JSON object: %s', $context, $path));
         }
 
-        return ArrayShape::stringKeyed($decoded);
+        /** @var array<string, mixed> $decoded */
+        return $decoded;
     }
 
     /**

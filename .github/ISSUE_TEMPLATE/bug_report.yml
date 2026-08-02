@@ -22,7 +22,7 @@ body:
       label: Steps to reproduce
       description: Share exact commands, config, and steps.
       placeholder: |
-        1. Run `composer ic:tests`
+        1. Run `composer tests`
         2. ...
         3. Observe ...
     validations:

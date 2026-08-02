@@ -14,7 +14,7 @@ final class ScopedTempFile
             return $fallbackName;
         }
 
-        $scope = substr(hash('sha1', getcwd() ?: ''), 0, 12);
+        $scope = substr(hash('sha256', getcwd() ?: ''), 0, 24);
 
         return $tmp . DIRECTORY_SEPARATOR . $scopedPrefix . '-' . $scope . '.json';
     }

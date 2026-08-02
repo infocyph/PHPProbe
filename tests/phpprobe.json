@@ -1,0 +1,6 @@
+{
+  "preset": "standard",
+  "duplicates": {
+    "baseline": "tests/phpprobe-duplicates-baseline.json"
+  }
+}

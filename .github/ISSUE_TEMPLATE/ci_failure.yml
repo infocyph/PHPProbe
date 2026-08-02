@@ -27,7 +27,7 @@ body:
     attributes:
       label: Failing command
       description: Exact command or step that failed.
-      placeholder: composer ic:ci
+      placeholder: composer tests
     validations:
       required: true
   - type: textarea

@@ -9,7 +9,7 @@ use Infocyph\PHPProbe\Filesystem\PhpFileFinder;
 final class CheckerRuntime
 {
     /**
-     * @param array{color?:mixed} $options
+     * @param array{color?:string} $options
      */
     public static function applyColorMode(array $options): void
     {

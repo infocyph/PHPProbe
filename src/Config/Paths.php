@@ -4,66 +4,24 @@ declare(strict_types=1);
 
 namespace Infocyph\PHPProbe\Config;
 
-use Infocyph\PHPProbe\Util\ArrayShape;
-
 final class Paths
 {
     public static function bundledConfigFile(string $file): string
     {
-        $resourceFile = self::bundledConfigFileOrNull($file);
+        $path = self::packageRoot() . DIRECTORY_SEPARATOR . 'resources' . DIRECTORY_SEPARATOR . ltrim($file, '/\\');
 
-        if (is_string($resourceFile)) {
-            return $resourceFile;
+        if (!is_file($path)) {
+            throw new \RuntimeException(sprintf('Missing PHPProbe resource "%s": %s', $file, $path));
         }
 
-        throw new \RuntimeException(sprintf(
-            'Missing PHPProbe resource "%s". Expected bundled resource at "%s"%s.',
-            $file,
-            self::vendorResourceFile($file),
-            self::isPhpprobeRootPackage() ? sprintf(' or PHPProbe source resource at "%s"', self::phpprobeRootResourceFile($file)) : '',
-        ));
+        return $path;
     }
 
-    public static function bundledConfigFileOrNull(string $file): ?string
+    public static function config(string $file = 'phpprobe.json'): string
     {
-        $vendorResourceFile = self::vendorResourceFile($file);
+        $projectFile = self::projectRootPath() . DIRECTORY_SEPARATOR . $file;
 
-        if (is_file($vendorResourceFile)) {
-            return $vendorResourceFile;
-        }
-
-        if (self::isPhpprobeRootPackage()) {
-            $sourceResourceFile = self::phpprobeRootResourceFile($file);
-
-            if (is_file($sourceResourceFile)) {
-                return $sourceResourceFile;
-            }
-        }
-
-        return null;
-    }
-
-    public static function config(string $file): string
-    {
-        $projectFile = self::projectRoot() . DIRECTORY_SEPARATOR . $file;
-
-        if (is_file($projectFile)) {
-            return $projectFile;
-        }
-
-        $bundled = self::bundledConfigFileOrNull($file);
-
-        if (is_string($bundled)) {
-            return $bundled;
-        }
-
-        throw new \RuntimeException(sprintf(
-            'Missing PHPProbe config "%s". Expected project config at "%s" or bundled config at "%s"%s.',
-            $file,
-            $projectFile,
-            self::vendorResourceFile($file),
-            self::isPhpprobeRootPackage() ? sprintf(' or PHPProbe source config at "%s"', self::phpprobeRootResourceFile($file)) : '',
-        ));
+        return is_file($projectFile) ? $projectFile : self::bundledConfigFile($file);
     }
 
     public static function preset(string $name): string
@@ -73,86 +31,11 @@ final class Paths
 
     public static function projectRootPath(): string
     {
-        return self::projectRoot();
+        return getcwd() ?: '.';
     }
 
-    private static function absoluteProjectPath(string $path): string
+    private static function packageRoot(): string
     {
-        if (preg_match('/^[A-Za-z]:[\/\\\\]/', $path) === 1 || str_starts_with($path, DIRECTORY_SEPARATOR)) {
-            return $path;
-        }
-
-        return self::projectRoot() . DIRECTORY_SEPARATOR . $path;
-    }
-
-    private static function composerConfig(string $key): mixed
-    {
-        $config = self::composerData()['config'] ?? [];
-
-        if (!is_array($config)) {
-            return null;
-        }
-
-        return $config[$key] ?? null;
-    }
-
-    /**
-     * @return array<string, mixed>
-     */
-    private static function composerData(): array
-    {
-        $composerJson = self::projectRoot() . DIRECTORY_SEPARATOR . 'composer.json';
-
-        if (!is_file($composerJson) || !is_readable($composerJson)) {
-            return [];
-        }
-
-        $contents = file_get_contents($composerJson);
-
-        if (!is_string($contents)) {
-            return [];
-        }
-
-        $data = json_decode($contents, true);
-
-        return ArrayShape::stringKeyed($data);
-    }
-
-    private static function isPhpprobeRootPackage(): bool
-    {
-        $data = self::composerData();
-
-        return ($data['name'] ?? null) === 'infocyph/phpprobe';
-    }
-
-    private static function phpprobeRootResourceFile(string $file): string
-    {
-        return self::projectRoot() . DIRECTORY_SEPARATOR . 'resources' . DIRECTORY_SEPARATOR . ltrim($file, '/\\');
-    }
-
-    private static function projectRoot(): string
-    {
-        return getcwd() ?: dirname(__DIR__, 2);
-    }
-
-    private static function vendorDir(): string
-    {
-        $configured = self::composerConfig('vendor-dir');
-
-        if (is_string($configured) && $configured !== '') {
-            return self::absoluteProjectPath($configured);
-        }
-
-        return self::projectRoot() . DIRECTORY_SEPARATOR . 'vendor';
-    }
-
-    private static function vendorPackageRoot(): string
-    {
-        return self::vendorDir() . DIRECTORY_SEPARATOR . 'infocyph' . DIRECTORY_SEPARATOR . 'phpprobe';
-    }
-
-    private static function vendorResourceFile(string $file): string
-    {
-        return self::vendorPackageRoot() . DIRECTORY_SEPARATOR . 'resources' . DIRECTORY_SEPARATOR . ltrim($file, '/\\');
+        return dirname(__DIR__, 2);
     }
 }

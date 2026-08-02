@@ -26,14 +26,20 @@ final class DuplicateCloneReducer
      * @param list<array{file:string,start_line:int,end_line:int,lines:int,context:string}> $occurrences
      * @return array{fingerprint:string,source:string,score:float,similarity:float,tokens:int,lines:int,statements:int,block_type:string,occurrences:list<array{file:string,start_line:int,end_line:int,lines:int,context:string}>}
      */
-    public function makeClone(string $source, array $occurrences, int $tokens, int $statements, float $similarity): array
-    {
+    public function makeClone(
+        string $source,
+        array $occurrences,
+        int $tokens,
+        int $statements,
+        float $similarity,
+        string $identity = '',
+    ): array {
         $occurrences = $this->uniqueOccurrences($occurrences);
         $lines = $this->representativeLines($occurrences);
         $blockType = $this->blockType($occurrences);
 
         return [
-            'fingerprint' => $this->fingerprint($source, $occurrences, $similarity),
+            'fingerprint' => $this->fingerprint($source, $occurrences, $similarity, $identity),
             'source' => $source,
             'score' => $this->score($source, $occurrences, $tokens, $statements, $similarity, $blockType),
             'similarity' => $similarity,
@@ -54,6 +60,10 @@ final class DuplicateCloneReducer
         $selected = [];
 
         foreach ($this->rank($clones) as $clone) {
+            if (count($clone['occurrences']) < 2) {
+                continue;
+            }
+
             if (!$this->isContainedInAny($clone, $selected)) {
                 $selected[] = $clone;
             }
@@ -78,17 +88,39 @@ final class DuplicateCloneReducer
      */
     public function uniqueDuplicatedLines(array $clones): int
     {
-        $lines = [];
+        $intervals = [];
 
         foreach ($clones as $clone) {
             foreach ($clone['occurrences'] as $occurrence) {
-                for ($line = $occurrence['start_line']; $line <= $occurrence['end_line']; $line++) {
-                    $lines[$occurrence['file'] . ':' . $line] = true;
-                }
+                $intervals[$occurrence['file']][] = [$occurrence['start_line'], $occurrence['end_line']];
             }
         }
 
-        return count($lines);
+        $count = 0;
+
+        foreach ($intervals as $fileIntervals) {
+            usort($fileIntervals, static fn(array $left, array $right): int => $left <=> $right);
+            [$start, $end] = $fileIntervals[0];
+            $intervalCount = count($fileIntervals);
+
+            for ($index = 1; $index < $intervalCount; $index++) {
+                [$nextStart, $nextEnd] = $fileIntervals[$index];
+
+                if ($nextStart <= $end + 1) {
+                    $end = max($end, $nextEnd);
+
+                    continue;
+                }
+
+                $count += $end - $start + 1;
+                $start = $nextStart;
+                $end = $nextEnd;
+            }
+
+            $count += $end - $start + 1;
+        }
+
+        return $count;
     }
 
     /**
@@ -125,12 +157,23 @@ final class DuplicateCloneReducer
     /**
      * @param list<array{file:string,start_line:int,end_line:int,lines:int,context:string}> $occurrences
      */
-    private function fingerprint(string $source, array $occurrences, float $similarity): string
+    private function fingerprint(string $source, array $occurrences, float $similarity, string $identity): string
     {
-        $parts = [$source, sprintf('%.3f', $similarity)];
+        $parts = [$source, sprintf('%.3f', $similarity), $identity];
 
-        foreach ($occurrences as $occurrence) {
-            $parts[] = $this->occurrenceKey($occurrence);
+        if ($identity === '') {
+            foreach ($occurrences as $occurrence) {
+                $parts[] = $this->occurrenceKey($occurrence);
+            }
+        } else {
+            $locations = [];
+
+            foreach ($occurrences as $occurrence) {
+                $locations[] = $occurrence['file'] . ':' . $occurrence['context'];
+            }
+
+            sort($locations, SORT_STRING);
+            $parts = [...$parts, ...array_values(array_unique($locations))];
         }
 
         return hash('sha256', implode('|', $parts));
@@ -173,12 +216,16 @@ final class DuplicateCloneReducer
      */
     private function mergeClone(array $left, array $right): array
     {
+        $identities = [$left['fingerprint'], $right['fingerprint']];
+        sort($identities, SORT_STRING);
+
         return $this->makeClone(
             $left['score'] >= $right['score'] ? $left['source'] : $right['source'],
             [...$left['occurrences'], ...$right['occurrences']],
             max($left['tokens'], $right['tokens']),
             max($left['statements'], $right['statements']),
             max($left['similarity'], $right['similarity']),
+            implode('|', $identities),
         );
     }
 
@@ -248,6 +295,20 @@ final class DuplicateCloneReducer
         $occurrences = array_values($unique);
         usort($occurrences, static fn(array $left, array $right): int => [$left['file'], $left['start_line'], $left['end_line']] <=> [$right['file'], $right['start_line'], $right['end_line']]);
 
-        return $occurrences;
+        $selected = [];
+        $lastEndByFile = [];
+
+        foreach ($occurrences as $occurrence) {
+            $lastEnd = $lastEndByFile[$occurrence['file']] ?? 0;
+
+            if ($occurrence['start_line'] <= $lastEnd) {
+                continue;
+            }
+
+            $selected[] = $occurrence;
+            $lastEndByFile[$occurrence['file']] = $occurrence['end_line'];
+        }
+
+        return $selected;
     }
 }

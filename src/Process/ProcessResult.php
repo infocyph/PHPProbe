@@ -10,10 +10,12 @@ final readonly class ProcessResult
         public int $exitCode,
         public string $stdout,
         public string $stderr,
+        public bool $timedOut = false,
+        public bool $outputLimitExceeded = false,
     ) {}
 
     public function successful(): bool
     {
-        return $this->exitCode === 0;
+        return $this->exitCode === 0 && !$this->timedOut && !$this->outputLimitExceeded;
     }
 }

@@ -9,26 +9,29 @@ final class DuplicateCodeIndex
     /**
      * @param list<string> $files
      * @param array{normalize:bool,fuzzy:bool} $options
-     * @return array{streams: array<string, list<array{value:string,exact:string,line:int,statement:int,shape:string}>>, blocks: array<string, list<array{id:string,type:string,file:string,start_line:int,end_line:int,token_start:int,token_end:int,statement_hashes:list<string>,shape:list<string>}>>, total_lines: int}
+     * @return array{streams:array<string,list<array{value:string,line:int}>>,blocks:array<string,list<array{id:string,type:string,file:string,start_line:int,end_line:int,token_start:int,token_end:int,statement_hashes:list<string>,shape:list<string>}>>,total_lines:int}
      */
-    public function build(array $files, array $options): array
+    public function build(array $files, array $options, bool $includeAst): array
     {
         $streams = [];
         $blocks = [];
         $totalLines = 0;
-        $ast = new DuplicateAstBlockIndex();
+        $ast = $includeAst ? new DuplicateAstBlockIndex() : null;
 
         foreach ($files as $file) {
             $contents = file_get_contents($file);
 
             if (!is_string($contents)) {
-                continue;
+                throw new \RuntimeException(sprintf('Failed to read PHP source file: %s', $file));
             }
 
             $totalLines += $this->lineCount($contents);
             $tokens = $this->tokenize($contents, $options['normalize'], $options['fuzzy']);
             $streams[$file] = $tokens;
-            $blocks[$file] = $ast->blocks($contents, $file, $tokens);
+
+            if ($ast !== null) {
+                $blocks[$file] = $ast->blocks($contents, $file, $tokens);
+            }
         }
 
         return ['streams' => $streams, 'blocks' => $blocks, 'total_lines' => $totalLines];
@@ -36,50 +39,18 @@ final class DuplicateCodeIndex
 
     private function isIdentifierToken(int $id): bool
     {
-        static $ids = null;
-
-        if (!is_array($ids)) {
-            $ids = [T_STRING];
-
-            foreach (['T_NAME_QUALIFIED', 'T_NAME_FULLY_QUALIFIED', 'T_NAME_RELATIVE'] as $tokenName) {
-                if (defined($tokenName)) {
-                    $ids[] = (int) constant($tokenName);
-                }
-            }
-        }
-
-        return in_array($id, $ids, true);
+        return in_array($id, [T_STRING, T_NAME_QUALIFIED, T_NAME_FULLY_QUALIFIED, T_NAME_RELATIVE], true);
     }
 
     private function lineCount(string $contents): int
     {
-        return $contents === '' ? 0 : substr_count($contents, "\n") + 1;
-    }
-
-    /**
-     * @param array{0:int,1:string,2:int}|string $rawToken
-     * @return array{value:string,exact:string,line:int,statement:int,shape:string}|null
-     */
-    private function normalizedToken(array|string $rawToken, int &$currentLine, bool $normalize, bool $fuzzy): ?array
-    {
-        if (is_string($rawToken)) {
-            return $this->symbolToken($rawToken, $currentLine);
+        if ($contents === '') {
+            return 0;
         }
 
-        [$id, $text, $line] = $rawToken;
-        $currentLine = $line + substr_count($text, "\n");
+        $newlines = substr_count($contents, "\n");
 
-        if (in_array($id, [T_OPEN_TAG, T_CLOSE_TAG, T_WHITESPACE, T_COMMENT, T_DOC_COMMENT], true)) {
-            return null;
-        }
-
-        return [
-            'value' => $normalize ? $this->normalizeToken($id, $text, $fuzzy) : token_name($id) . ':' . $text,
-            'exact' => token_name($id) . ':' . $text,
-            'line' => $line,
-            'statement' => 0,
-            'shape' => '',
-        ];
+        return str_ends_with($contents, "\n") ? $newlines : $newlines + 1;
     }
 
     private function normalizeToken(int $id, string $text, bool $fuzzy): string
@@ -97,44 +68,82 @@ final class DuplicateCodeIndex
     }
 
     /**
-     * @return array{value:string,exact:string,line:int,statement:int,shape:string}
-     */
-    private function symbolToken(string $symbol, int &$currentLine): array
-    {
-        $token = [
-            'value' => $symbol,
-            'exact' => $symbol,
-            'line' => $currentLine,
-            'statement' => 0,
-            'shape' => '',
-        ];
-
-        $currentLine += substr_count($symbol, "\n");
-
-        return $token;
-    }
-
-    /**
-     * @return list<array{value:string,exact:string,line:int,statement:int,shape:string}>
+     * @return list<array{value:string,line:int}>
      */
     private function tokenize(string $contents, bool $normalize, bool $fuzzy): array
     {
         $tokens = [];
-        $statement = 0;
         $currentLine = 1;
+        $braceDepth = 0;
+        $namespaceDepth = 0;
+        $namespacePending = false;
+        $statementStart = true;
+        $skippingImport = false;
 
         foreach (token_get_all($contents) as $rawToken) {
-            $token = $this->normalizedToken($rawToken, $currentLine, $normalize, $fuzzy);
+            if (is_array($rawToken)) {
+                [$id, $text, $line] = $rawToken;
+                $currentLine = $line + substr_count($text, "\n");
 
-            if ($token === null) {
+                if ($skippingImport || in_array($id, [T_OPEN_TAG, T_CLOSE_TAG, T_WHITESPACE, T_COMMENT, T_DOC_COMMENT], true)) {
+                    continue;
+                }
+
+                if ($id === T_USE && $statementStart && $braceDepth === $namespaceDepth) {
+                    $skippingImport = true;
+
+                    continue;
+                }
+
+                if ($id === T_NAMESPACE && $statementStart) {
+                    $namespacePending = true;
+                }
+
+                $tokens[] = [
+                    'value' => $normalize ? $this->normalizeToken($id, $text, $fuzzy) : token_name($id) . ':' . $text,
+                    'line' => $line,
+                ];
+                $statementStart = false;
+
                 continue;
             }
 
-            $token['statement'] = $statement;
-            $tokens[] = $token;
+            if ($skippingImport) {
+                if ($rawToken === ';') {
+                    $skippingImport = false;
+                    $statementStart = true;
+                }
 
-            if (in_array($token['exact'], [';', '{', '}'], true)) {
-                $statement++;
+                $currentLine += substr_count($rawToken, "\n");
+
+                continue;
+            }
+
+            $tokens[] = ['value' => $rawToken, 'line' => $currentLine];
+            $currentLine += substr_count($rawToken, "\n");
+
+            if ($rawToken === '{') {
+                $braceDepth++;
+
+                if ($namespacePending) {
+                    $namespaceDepth = $braceDepth;
+                    $namespacePending = false;
+                }
+
+                $statementStart = true;
+            } elseif ($rawToken === '}') {
+                $braceDepth = max(0, $braceDepth - 1);
+
+                if ($namespaceDepth > $braceDepth) {
+                    $namespaceDepth = 0;
+                }
+
+                $statementStart = true;
+            } elseif ($rawToken === ';') {
+                $namespacePending = false;
+                $statementStart = true;
+            } else {
+                $statementStart = false;
             }
         }
 
