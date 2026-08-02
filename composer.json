@@ -1,6 +1,6 @@
 {
     "name": "infocyph/phpprobe",
-    "description": "Standalone PHP syntax and duplicate code checker.",
+    "description": "Standalone PHP syntax, duplicate-code, and comment-policy checker.",
     "license": "MIT",
     "type": "library",
     "keywords": [
@@ -8,7 +8,9 @@
         "php",
         "syntax",
         "duplicate-code",
-        "copy-paste-detection"
+        "copy-paste-detection",
+        "comment-policy",
+        "commented-out-code"
     ],
     "authors": [
         {
@@ -21,16 +23,17 @@
         }
     ],
     "require": {
-        "php": ">=8.2",
+        "php": ">=8.4",
         "ext-tokenizer": "*",
-        "nikic/php-parser": "^5.7"
+        "nikic/php-parser": "^5.8.0",
+        "phpstan/phpdoc-parser": "^2.3.3"
     },
     "require-dev": {
-        "laravel/pint": ">=1.0 <2.0",
-        "pestphp/pest": ">=3.0 <5.0",
-        "phpstan/phpstan": ">=2.1 <3.0",
-        "rector/rector": ">=2.0 <3.0",
-        "squizlabs/php_codesniffer": ">=3.9 <5.0"
+        "laravel/pint": "^1.30.3",
+        "pestphp/pest": "^5.0",
+        "phpstan/phpstan": "^2.2.7",
+        "rector/rector": "^2.5.9",
+        "squizlabs/php_codesniffer": "^4.0.1"
     },
     "autoload": {
         "psr-4": {
@@ -57,10 +60,12 @@
         "check": "@php bin/phpprobe check --config=tests/phpprobe.json src tests",
         "lint": "@php bin/phpprobe syntax src tests",
         "duplicates": "@php bin/phpprobe duplicates --config=resources/phpprobe.json src tests",
+        "comments": "@php bin/phpprobe comments --config=resources/phpprobe.json src tests",
         "doctor": "@php bin/phpprobe doctor --config=resources/phpprobe.json",
         "pint": "@php vendor/bin/pint",
         "fix:sniff": "@php vendor/bin/phpcbf --standard=phpcs.xml.dist --runtime-set ignore_errors_on_exit 1 src tests",
         "rector": "@php vendor/bin/rector process src",
+        "bench:comments": "@php tools/bench-comments.php",
         "process": [
             "@rector",
             "@pint",

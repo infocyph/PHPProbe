@@ -2,6 +2,10 @@
   "version": 1,
   "clones": [
     { "fingerprint": "59e2005864600ec1834f316ae5798b3cedd2fe126f98c125dcb133cf4ec31ea0", "source": "tokens", "score": 127 },
-    { "fingerprint": "f0edf45c11ff9fd436c6159df97fa4371a74939d042fad38283909d68e3918e1", "source": "statements", "score": 118 }
+    { "fingerprint": "f0edf45c11ff9fd436c6159df97fa4371a74939d042fad38283909d68e3918e1", "source": "statements", "score": 118 },
+    { "fingerprint": "18994ba0dd18d2400fbaf68f46b26a3da090e7859be92b623df8f92d5567b326", "source": "tokens", "score": 170.4 },
+    { "fingerprint": "e87cc3715dd556b0eb5766b1f3ad0e17936ccf205755def45f5abce976c53cfd", "source": "tokens", "score": 166 },
+    { "fingerprint": "329cf743604b9a29ef591c95fd16f086a0389c644aa7a84197aa9155869d82c8", "source": "tokens", "score": 161.2 },
+    { "fingerprint": "a8e3c889e2aea06f815e59f16d3663650dc24d6d5670dc3a43b8dc75a54449fb", "source": "tokens", "score": 134 }
   ]
 }

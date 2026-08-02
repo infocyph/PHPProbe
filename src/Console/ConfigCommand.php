@@ -59,7 +59,7 @@ final class ConfigCommand
         }
 
         try {
-            $errors = (new ConfigValidator())->validateFile($configPath);
+            $errors = new ConfigValidator()->validateFile($configPath);
         } catch (\RuntimeException $exception) {
             fwrite(STDERR, $exception->getMessage() . PHP_EOL);
 

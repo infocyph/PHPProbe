@@ -6,7 +6,7 @@ namespace Infocyph\PHPProbe\Process;
 
 final class ProcRunner
 {
-    private const DEFAULT_OUTPUT_LIMIT = 16_777_216;
+    private const int DEFAULT_OUTPUT_LIMIT = 16_777_216;
 
     /**
      * @param list<string>|string $command

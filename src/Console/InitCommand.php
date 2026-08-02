@@ -27,7 +27,7 @@ final class InitCommand
         }
 
         try {
-            (new PresetRepository())->config($options['preset']);
+            new PresetRepository()->config($options['preset']);
         } catch (\InvalidArgumentException $exception) {
             fwrite(STDERR, $exception->getMessage() . PHP_EOL);
 
@@ -165,7 +165,7 @@ final class InitCommand
             '      - uses: actions/checkout@v6',
             '      - uses: shivammathur/setup-php@v2',
             '        with:',
-            '          php-version: "8.2"',
+            '          php-version: "8.4"',
             '      - run: composer install --no-interaction --prefer-dist',
             sprintf('      - run: php vendor/bin/phpprobe check --preset=%s --report-dir=build/reports src tests', $preset),
         ]) . PHP_EOL;

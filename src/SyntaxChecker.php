@@ -54,7 +54,7 @@ final class SyntaxChecker
 
     private function lintFile(string $file, float $timeout): ?string
     {
-        $result = (new ProcRunner())->run([PHP_BINARY, '-d', 'display_errors=1', '-l', $file], timeout: $timeout);
+        $result = new ProcRunner()->run([PHP_BINARY, '-d', 'display_errors=1', '-l', $file], timeout: $timeout);
 
         if (!$result instanceof ProcessResult) {
             return 'Could not start PHP lint process';

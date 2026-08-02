@@ -7,12 +7,12 @@ namespace Infocyph\PHPProbe\Config;
 final class ConfigValidator
 {
     /** @var list<string> */
-    private const COLORS = ['red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'gray', 'bold'];
+    private const array COLORS = ['red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'gray', 'bold'];
 
     /** @var list<string> */
-    private const FORMATS = ['text', 'json', 'markdown', 'sarif', 'github'];
+    private const array FORMATS = ['text', 'json', 'markdown', 'sarif', 'github'];
 
-    private const MAX_CONFIG_BYTES = 1_048_576;
+    private const int MAX_CONFIG_BYTES = 1_048_576;
 
     /**
      * @return array<string, mixed>
@@ -63,7 +63,7 @@ final class ConfigValidator
     public function validate(array $config): array
     {
         $errors = [];
-        $this->unknownKeys('root', $config, ['preset', 'output', 'syntax', 'duplicates'], $errors);
+        $this->unknownKeys('root', $config, ['preset', 'output', 'syntax', 'duplicates', 'comments', 'commented_out_code'], $errors);
 
         if (array_key_exists('preset', $config)) {
             $this->enum('root.preset', $config['preset'], PresetRepository::NAMES, $errors);
@@ -89,9 +89,27 @@ final class ConfigValidator
             'cache',
             'output',
         ], $errors);
+        $this->checker('comments', $config['comments'] ?? null, [
+            'fail_on',
+            'fail_confidence',
+            'doc_mode',
+            'doc_signature_consistency',
+            'doc_type_hygiene',
+            'explain',
+            'baseline',
+            'write_baseline',
+            'scan_markers',
+            'marker_tags',
+            'marker_severity',
+            'custom_rules',
+            'doc_cache',
+            'rules',
+        ], $errors);
 
         $this->syntaxValues($config['syntax'] ?? null, $errors);
         $this->duplicateValues($config['duplicates'] ?? null, $errors);
+        $this->commentValues($config['comments'] ?? null, $errors);
+        $this->commentedOutValues($config['commented_out_code'] ?? null, $errors);
 
         return $errors;
     }
@@ -102,6 +120,26 @@ final class ConfigValidator
     public function validateFile(string $path): array
     {
         return $this->validate($this->decodeFile($path));
+    }
+
+    /**
+     * @param list<string> $errors
+     */
+    private function cacheValues(string $path, mixed $value, array &$errors): void
+    {
+        if ($value === null) {
+            return;
+        }
+
+        if (!is_array($value) || array_is_list($value)) {
+            $errors[] = $path . ' must be a JSON object.';
+
+            return;
+        }
+
+        $this->unknownKeys($path, $value, ['enabled', 'file'], $errors);
+        $this->optionalBool($path . '.enabled', $value['enabled'] ?? null, $errors);
+        $this->optionalString($path . '.file', $value['file'] ?? null, $errors);
     }
 
     /**
@@ -136,21 +174,203 @@ final class ConfigValidator
     /**
      * @param list<string> $errors
      */
-    private function duplicateCache(mixed $value, array &$errors): void
+    private function commentCustomRules(mixed $value, array &$errors): void
+    {
+        if ($value === null) {
+            return;
+        }
+
+        if (!is_array($value) || !array_is_list($value)) {
+            $errors[] = 'comments.custom_rules must be a list.';
+
+            return;
+        }
+
+        foreach ($value as $index => $rule) {
+            $path = sprintf('comments.custom_rules[%d]', $index);
+
+            if (!is_array($rule) || array_is_list($rule)) {
+                $errors[] = $path . ' must be a JSON object.';
+
+                continue;
+            }
+
+            $this->unknownKeys($path, $rule, ['id', 'pattern', 'severity', 'scope', 'message', 'enabled'], $errors);
+
+            foreach (['id', 'pattern'] as $key) {
+                if (!is_string($rule[$key] ?? null) || trim($rule[$key]) === '') {
+                    $errors[] = sprintf('%s.%s must be a non-empty string.', $path, $key);
+                }
+            }
+
+            if (array_key_exists('severity', $rule)) {
+                $this->severity($path . '.severity', $rule['severity'], $errors);
+            }
+
+            if (array_key_exists('scope', $rule)) {
+                $this->enum($path . '.scope', $rule['scope'], ['all', 'line', 'block', 'doc'], $errors);
+            }
+
+            $this->optionalString($path . '.message', $rule['message'] ?? null, $errors);
+            $this->optionalBool($path . '.enabled', $rule['enabled'] ?? null, $errors);
+        }
+    }
+
+    /**
+     * @param list<string> $errors
+     */
+    private function commentDocCache(mixed $value, array &$errors): void
+    {
+        $this->cacheValues('comments.doc_cache', $value, $errors);
+    }
+
+    /**
+     * @param list<string> $errors
+     */
+    private function commentedOutValues(mixed $value, array &$errors): void
     {
         if ($value === null) {
             return;
         }
 
         if (!is_array($value) || array_is_list($value)) {
-            $errors[] = 'duplicates.cache must be a JSON object.';
+            $errors[] = 'commented_out_code must be a JSON object.';
 
             return;
         }
 
-        $this->unknownKeys('duplicates.cache', $value, ['enabled', 'file'], $errors);
-        $this->optionalBool('duplicates.cache.enabled', $value['enabled'] ?? null, $errors);
-        $this->optionalString('duplicates.cache.file', $value['file'] ?? null, $errors);
+        $this->unknownKeys('commented_out_code', $value, [
+            'enabled',
+            'policy',
+            'allowed_reason_tags',
+            'optional_reason_tags',
+            'allow_optional_reason_tags_in_strict_mode',
+            'ignore_paths',
+            'suppression',
+            'min_reason_length',
+            'max_allowed_block_lines',
+            'require_issue_for_blocks_longer_than',
+            'allowed_issue_patterns',
+            'single_line_comments',
+            'block_comments',
+            'phpdoc_comments',
+            'finding_severity',
+            'finding_severity_strict',
+        ], $errors);
+
+        $this->optionalBool('commented_out_code.enabled', $value['enabled'] ?? null, $errors);
+        $this->optionalBool('commented_out_code.allow_optional_reason_tags_in_strict_mode', $value['allow_optional_reason_tags_in_strict_mode'] ?? null, $errors);
+
+        if (array_key_exists('policy', $value)) {
+            $this->enum('commented_out_code.policy', $value['policy'], ['relaxed', 'standard', 'strict'], $errors);
+        }
+
+        foreach (['allowed_reason_tags', 'optional_reason_tags', 'ignore_paths', 'allowed_issue_patterns'] as $key) {
+            $this->stringList('commented_out_code.' . $key, $value[$key] ?? null, $errors);
+        }
+
+        foreach (['min_reason_length', 'max_allowed_block_lines'] as $key) {
+            if (array_key_exists($key, $value)) {
+                $this->integer('commented_out_code.' . $key, $value[$key], 1, $errors);
+            }
+        }
+
+        if (array_key_exists('require_issue_for_blocks_longer_than', $value)) {
+            $this->integer('commented_out_code.require_issue_for_blocks_longer_than', $value['require_issue_for_blocks_longer_than'], 0, $errors);
+        }
+
+        $this->nestedObject('commented_out_code.suppression', $value['suppression'] ?? null, [
+            'enabled' => 'bool',
+            'directive' => 'string',
+        ], $errors);
+        $this->nestedObject('commented_out_code.single_line_comments', $value['single_line_comments'] ?? null, [
+            'allow_blank_line_between_reason_and_code' => 'bool',
+        ], $errors);
+        $this->nestedObject('commented_out_code.block_comments', $value['block_comments'] ?? null, [
+            'allow_reason_before_block_comment' => 'bool',
+            'allow_blank_line_between_reason_and_code' => 'bool',
+        ], $errors);
+        $this->nestedObject('commented_out_code.phpdoc_comments', $value['phpdoc_comments'] ?? null, [
+            'allow_documentation_examples' => 'bool',
+            'example_labels' => 'strings',
+        ], $errors);
+        $this->severityMap('commented_out_code.finding_severity', $value['finding_severity'] ?? null, $errors);
+        $this->severityMap('commented_out_code.finding_severity_strict', $value['finding_severity_strict'] ?? null, $errors);
+    }
+
+    /**
+     * @param list<string> $errors
+     */
+    private function commentRules(mixed $value, array &$errors): void
+    {
+        if ($value === null) {
+            return;
+        }
+
+        if (!is_array($value) || ($value !== [] && array_is_list($value))) {
+            $errors[] = 'comments.rules must be a JSON object.';
+
+            return;
+        }
+
+        foreach ($value as $name => $rule) {
+            $path = 'comments.rules.' . $name;
+
+            if (!is_string($name) || trim($name) === '' || !is_array($rule) || array_is_list($rule)) {
+                $errors[] = $path . ' must be a named JSON object.';
+
+                continue;
+            }
+
+            $this->unknownKeys($path, $rule, ['enabled', 'severity'], $errors);
+            $this->optionalBool($path . '.enabled', $rule['enabled'] ?? null, $errors);
+
+            if (array_key_exists('severity', $rule)) {
+                $this->severity($path . '.severity', $rule['severity'], $errors);
+            }
+        }
+    }
+
+    /**
+     * @param list<string> $errors
+     */
+    private function commentValues(mixed $value, array &$errors): void
+    {
+        if (!is_array($value) || array_is_list($value)) {
+            return;
+        }
+
+        foreach ([
+            'fail_on' => ['error', 'warning', 'info'],
+            'fail_confidence' => ['low', 'medium', 'high'],
+            'doc_mode' => ['heuristic', 'parser', 'hybrid'],
+        ] as $key => $allowed) {
+            if (array_key_exists($key, $value)) {
+                $this->enum('comments.' . $key, $value[$key], $allowed, $errors);
+            }
+        }
+
+        foreach (['doc_signature_consistency', 'doc_type_hygiene', 'explain', 'scan_markers'] as $key) {
+            $this->optionalBool('comments.' . $key, $value[$key] ?? null, $errors);
+        }
+
+        foreach (['baseline', 'write_baseline'] as $key) {
+            $this->optionalString('comments.' . $key, $value[$key] ?? null, $errors);
+        }
+
+        $this->stringList('comments.marker_tags', $value['marker_tags'] ?? null, $errors);
+        $this->severityMap('comments.marker_severity', $value['marker_severity'] ?? null, $errors);
+        $this->commentCustomRules($value['custom_rules'] ?? null, $errors);
+        $this->commentDocCache($value['doc_cache'] ?? null, $errors);
+        $this->commentRules($value['rules'] ?? null, $errors);
+    }
+
+    /**
+     * @param list<string> $errors
+     */
+    private function duplicateCache(mixed $value, array &$errors): void
+    {
+        $this->cacheValues('duplicates.cache', $value, $errors);
     }
 
     /**
@@ -286,6 +506,35 @@ final class ConfigValidator
     }
 
     /**
+     * @param array<string, 'bool'|'string'|'strings'> $schema
+     * @param list<string> $errors
+     */
+    private function nestedObject(string $path, mixed $value, array $schema, array &$errors): void
+    {
+        if ($value === null) {
+            return;
+        }
+
+        if (!is_array($value) || array_is_list($value)) {
+            $errors[] = $path . ' must be a JSON object.';
+
+            return;
+        }
+
+        $this->unknownKeys($path, $value, array_keys($schema), $errors);
+
+        foreach ($schema as $key => $type) {
+            if ($type === 'bool') {
+                $this->optionalBool($path . '.' . $key, $value[$key] ?? null, $errors);
+            } elseif ($type === 'string') {
+                $this->optionalString($path . '.' . $key, $value[$key] ?? null, $errors);
+            } else {
+                $this->stringList($path . '.' . $key, $value[$key] ?? null, $errors);
+            }
+        }
+    }
+
+    /**
      * @param list<string> $errors
      */
     private function number(string $path, mixed $value, float $minimum, ?float $maximum, array &$errors): void
@@ -356,6 +605,40 @@ final class ConfigValidator
 
         foreach ($colors as $name => $color) {
             $this->enum('output.colors.' . $name, $color, self::COLORS, $errors);
+        }
+    }
+
+    /**
+     * @param list<string> $errors
+     */
+    private function severity(string $path, mixed $value, array &$errors): void
+    {
+        $this->enum($path, $value, ['error', 'critical', 'high', 'warning', 'medium', 'low', 'info'], $errors);
+    }
+
+    /**
+     * @param list<string> $errors
+     */
+    private function severityMap(string $path, mixed $value, array &$errors): void
+    {
+        if ($value === null) {
+            return;
+        }
+
+        if (!is_array($value) || array_is_list($value)) {
+            $errors[] = $path . ' must be a JSON object.';
+
+            return;
+        }
+
+        foreach ($value as $name => $severity) {
+            if (!is_string($name) || trim($name) === '') {
+                $errors[] = $path . ' keys must be non-empty strings.';
+
+                continue;
+            }
+
+            $this->severity($path . '.' . $name, $severity, $errors);
         }
     }
 
