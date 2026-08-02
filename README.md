@@ -149,6 +149,10 @@ All supported settings can be overridden explicitly:
   "duplicates": {
     "paths": ["src"],
     "exclude": ["vendor", "tests", "build"],
+    "format": "text",
+    "summary_json": "",
+    "changed_only": false,
+    "changed_base": "",
     "mode": "gate",
     "normalize": true,
     "fuzzy": true,
@@ -181,6 +185,9 @@ All supported settings can be overridden explicitly:
     "paths": ["src", "tests"],
     "exclude": ["vendor", "build"],
     "format": "text",
+    "summary_json": "",
+    "changed_only": false,
+    "changed_base": "",
     "fail_on": "error",
     "fail_confidence": "low",
     "doc_mode": "hybrid",
@@ -188,8 +195,16 @@ All supported settings can be overridden explicitly:
     "baseline": "",
     "write_baseline": "",
     "scan_markers": true,
-    "marker_tags": ["TODO", "FIXME", "BUG", "SECURITY"],
-    "marker_severity": { "SECURITY": "critical", "BUG": "high", "TODO": "low" },
+    "marker_tags": [
+      "TODO", "FIXME", "BUG", "HACK", "XXX", "NOTE", "OPTIMIZE",
+      "REFACTOR", "DEPRECATED", "SECURITY", "REVIEW", "QUESTION", "WARNING"
+    ],
+    "marker_severity": {
+      "SECURITY": "critical", "BUG": "high", "FIXME": "high",
+      "HACK": "medium", "XXX": "medium", "WARNING": "medium",
+      "TODO": "low", "OPTIMIZE": "low", "REFACTOR": "low",
+      "DEPRECATED": "low", "REVIEW": "info", "QUESTION": "info", "NOTE": "info"
+    },
     "custom_rules": [],
     "doc_cache": { "enabled": true, "file": "" },
     "doc_signature_consistency": true,
@@ -201,6 +216,9 @@ All supported settings can be overridden explicitly:
     "policy": "standard",
     "allowed_reason_tags": ["TODO", "FIXME", "BUG", "HACK", "SECURITY", "REVIEW", "DEPRECATED"],
     "optional_reason_tags": ["TEMP", "DEBUG", "EXPERIMENTAL"],
+    "allow_optional_reason_tags_in_strict_mode": false,
+    "ignore_paths": [],
+    "suppression": { "enabled": true, "directive": "@phpprobe-ignore" },
     "min_reason_length": 12,
     "max_allowed_block_lines": 10,
     "require_issue_for_blocks_longer_than": 3,
@@ -212,7 +230,38 @@ All supported settings can be overridden explicitly:
     },
     "phpdoc_comments": {
       "allow_documentation_examples": true,
-      "example_labels": ["Example:", "Usage:", "Snippet:"]
+      "example_labels": ["Example:", "Examples:", "Usage:", "Snippet:", "Code sample:"]
+    },
+    "finding_severity": {
+      "comment_marker": "info",
+      "commented_out_code_without_reason": "warning",
+      "commented_out_code_without_valid_tag": "warning",
+      "commented_out_code_without_valid_reason": "warning",
+      "commented_out_code_with_weak_reason": "warning",
+      "commented_out_code_with_valid_reason": "info",
+      "commented_out_code_block_too_large": "error",
+      "commented_out_code_requires_issue_reference": "warning",
+      "commented_out_code_in_phpdoc_without_example_label": "warning",
+      "invalid_suppression_rule": "warning",
+      "expired_suppression_rule": "warning",
+      "dead_suppression_rule": "warning",
+      "phpdoc_signature_mismatch": "warning",
+      "phpdoc_unknown_param": "warning",
+      "phpdoc_missing_param": "info",
+      "phpdoc_invalid_tag_value": "warning"
+    },
+    "finding_severity_strict": {
+      "commented_out_code_without_reason": "error",
+      "commented_out_code_without_valid_tag": "error",
+      "commented_out_code_without_valid_reason": "error",
+      "commented_out_code_with_weak_reason": "error",
+      "commented_out_code_block_too_large": "error",
+      "invalid_suppression_rule": "error",
+      "expired_suppression_rule": "error",
+      "dead_suppression_rule": "error",
+      "phpdoc_signature_mismatch": "error",
+      "phpdoc_unknown_param": "error",
+      "phpdoc_invalid_tag_value": "error"
     }
   }
 }
@@ -222,10 +271,10 @@ Configuration is strict: unknown keys, invalid enum values, unsafe worker counts
 
 Preset intent:
 
-- `default`: explicit low-level defaults;
-- `standard`: complete token, statement, structural, and near-miss analysis;
-- `ci`: deterministic CI thresholds and two lint workers;
-- `strict`: AST-backed audit with bounded near-miss detection.
+- `default`: low-overhead syntax, token duplicate, and standard comment-policy defaults;
+- `standard`: full duplicate detector matrix with the standard comment policy and generated-path exclusions;
+- `ci`: CI-oriented exclusions, two syntax workers, and more conservative duplicate thresholds;
+- `strict`: tighter AST-backed duplicate thresholds and strict comment-policy thresholds/severities.
 
 ## Changed files and exclusions
 
@@ -284,7 +333,7 @@ composer benchmark
 
 `composer tests` runs Pest, max-level PHPStan, PHPCS, Pint dry-run, Rector dry-run, and PHPProbe against itself.
 
-Full documentation is available in the [docs directory](docs/index.rst). Security reports should follow [SECURITY.md](SECURITY.md), and contributions should follow [CONTRIBUTING.md](CONTRIBUTING.md).
+Full documentation is available in the [docs directory](docs/index.rst), including the [complete CLI reference](docs/cli-reference.rst). Security reports should follow [SECURITY.md](SECURITY.md), and contributions should follow [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 

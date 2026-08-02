@@ -80,7 +80,6 @@ final readonly class CommentChecker
             'strict' => [
                 ...$options,
                 'strict' => true,
-                'allowOptionalReasonTagsInStrictMode' => false,
                 'minReasonLength' => max(16, $options['minReasonLength']),
                 'maxAllowedBlockLines' => min(6, $options['maxAllowedBlockLines']),
                 'requireIssueForBlocksLongerThan' => min(2, $options['requireIssueForBlocksLongerThan']),

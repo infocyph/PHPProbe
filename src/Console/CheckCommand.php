@@ -136,7 +136,7 @@ final class CheckCommand
             '  --changed-base=REF               Git base ref used with --changed-only',
             '  --parallel=N                     pass worker count to syntax checker',
             '  --timeout=SECONDS                pass process timeout to syntax checker',
-            '  --fail-on=error|warning|info     pass threshold to duplicate checker',
+            '  --fail-on=error|warning|info     pass threshold to duplicate and comment checkers',
             '  --exclude=PATH                   exclude a path from both checkers; repeatable',
             '  --mode=gate|audit                select duplicate detector mode',
             '  --exact | --fuzzy | --no-fuzzy  select token normalization',

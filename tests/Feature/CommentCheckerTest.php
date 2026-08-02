@@ -910,6 +910,87 @@ PHP);
         ->and($types)->toContain('custom_rule_credential_marker');
 });
 
+it('applies documented defaults to minimal custom comment rules', function (): void {
+    $root = makeCommentCheckerFixture();
+    $src = $root.DIRECTORY_SEPARATOR.'src';
+
+    mkdir($src, 0755, true);
+    file_put_contents($root.DIRECTORY_SEPARATOR.'phpprobe.json', json_encode([
+        'comments' => [
+            'paths' => ['src'],
+            'custom_rules' => [[
+                'id' => 'credential-marker',
+                'pattern' => '/password\s*=/i',
+            ]],
+        ],
+    ], JSON_PRETTY_PRINT));
+
+    file_put_contents($src.DIRECTORY_SEPARATOR.'CustomRuleDefaults.php', <<<'PHP'
+<?php
+
+// password = hardcoded
+final class CustomRuleDefaults
+{
+}
+PHP);
+
+    try {
+        $run = runCommentCheckerCommand($root, ['--json', '--fail-on=warning']);
+    } finally {
+        removeCommentCheckerFixture($root);
+    }
+
+    $payload = json_decode($run['stdout'], true);
+    $finding = array_values(array_filter(
+        $payload['findings'],
+        static fn(array $item): bool => $item['type'] === 'custom_rule_credential_marker',
+    ));
+
+    expect($run['exitCode'])->toBe(1)
+        ->and($finding)->toHaveCount(1)
+        ->and($finding[0]['severity'])->toBe('warning')
+        ->and($finding[0]['message'])->toBe('Matched custom comment rule "credential-marker".');
+});
+
+it('honors explicitly allowed optional reason tags in strict policy', function (): void {
+    $root = makeCommentCheckerFixture();
+    $src = $root.DIRECTORY_SEPARATOR.'src';
+
+    mkdir($src, 0755, true);
+    file_put_contents($root.DIRECTORY_SEPARATOR.'phpprobe.json', json_encode([
+        'comments' => [
+            'paths' => ['src'],
+        ],
+        'commented_out_code' => [
+            'policy' => 'strict',
+            'allow_optional_reason_tags_in_strict_mode' => true,
+        ],
+    ], JSON_PRETTY_PRINT));
+
+    file_put_contents($src.DIRECTORY_SEPARATOR.'StrictOptionalReason.php', <<<'PHP'
+<?php
+
+// TEMP(PROJ-142): retain this implementation until migration is complete.
+// $legacy = $service->oldMethod();
+final class StrictOptionalReason
+{
+}
+PHP);
+
+    try {
+        $run = runCommentCheckerCommand($root, ['--json', '--fail-on=warning']);
+    } finally {
+        removeCommentCheckerFixture($root);
+    }
+
+    $payload = json_decode($run['stdout'], true);
+    $types = array_column($payload['findings'], 'type');
+
+    expect($run['exitCode'])->toBe(0)
+        ->and($types)->toContain('commented_out_code_with_valid_reason')
+        ->and($types)->not()->toContain('commented_out_code_without_valid_tag');
+});
+
 function makeCommentCheckerFixture(): string
 {
     return makeProbeFixture('phpprobe-comments');
@@ -947,4 +1028,3 @@ function runCommentCheckerCommand(string $cwd, array $args): array
         'stderr' => $stderr,
     ];
 }
-

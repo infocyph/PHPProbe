@@ -14,6 +14,7 @@ direct use by other Composer packages.
    duplicates
    comments
    configuration
+   cli-reference
    automation
 
 Design guarantees
