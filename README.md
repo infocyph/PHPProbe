@@ -3,11 +3,11 @@
 [![CI](https://github.com/infocyph/PHPProbe/actions/workflows/ci.yml/badge.svg)](https://github.com/infocyph/PHPProbe/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-PHPProbe is a focused, standalone quality gate for PHP syntax and duplicated code. It works in any Composer project and does not require a framework or PHPForge.
+PHPProbe is a focused, standalone quality gate for PHP syntax, duplicated code, and comment policy. It works in any Composer project and does not require a framework or PHPForge.
 
 ## Requirements
 
-- PHP 8.2 or newer
+- PHP 8.4 or newer
 - Composer 2
 - The tokenizer extension
 - `proc_open` for syntax checking
@@ -26,16 +26,18 @@ The initializer creates `phpprobe.json` and, when requested, a GitHub Actions wo
 ```bash
 php vendor/bin/phpprobe syntax src tests
 php vendor/bin/phpprobe duplicates src
+php vendor/bin/phpprobe comments src tests
 php vendor/bin/phpprobe check src tests
 ```
 
-`check` runs syntax first. Duplicate analysis only runs when syntax succeeds, preventing parser noise and wasted work on invalid source.
+`check` runs syntax first. Duplicate and comment analysis only run when syntax succeeds, preventing parser noise and wasted work on invalid source.
 
 | Command | Purpose |
 | --- | --- |
 | `syntax` | Lint PHP files, sequentially or with bounded parallel workers. |
 | `duplicates` | Detect exact, normalized, fuzzy, structural, and near-miss clones. |
-| `check` | Run syntax and the configured duplicate-detector profile, then optionally write report artifacts. |
+| `comments` | Enforce marker, commented-out-code, PHPDoc, custom-rule, and suppression policies. |
+| `check` | Run syntax and the configured duplicate/comment profiles, then optionally write report artifacts. |
 | `config validate` | Validate a configuration file without running a scan. |
 | `init` | Create a minimal configuration and optional CI workflow. |
 | `doctor` | Check the runtime, required extension, process support, and config. |
@@ -76,6 +78,31 @@ php vendor/bin/phpprobe duplicates --baseline=.phpprobe-duplicates-baseline.json
 ```
 
 The result cache is content-addressed, versioned, size-bounded, schema-validated, and written atomically. Disable it with `--no-cache` or choose a location with `--cache-file=FILE`.
+
+## Comment policy
+
+The comment checker distinguishes documentation from code-like comments and supports three PHPDoc modes: `heuristic`, `parser`, and `hybrid`. The default hybrid mode uses the PHPDoc parser where possible and falls back safely for malformed input.
+
+```bash
+# Review every finding with explanations
+php vendor/bin/phpprobe comments --fail-on=info --explain src tests
+
+# CI policy with stable machine-readable output
+php vendor/bin/phpprobe comments \
+  --ci \
+  --format=sarif \
+  --summary-json=build/comments-summary.json \
+  src tests
+```
+
+Commented-out code must have a nearby tagged reason such as `TODO(PROJ-123): retain until the legacy endpoint is retired`. Large blocks can require an issue reference. PHPProbe also detects marker tags, malformed or stale suppressions, PHPDoc signature drift, invalid PHPDoc tag values, and configured custom regex rules. Existing findings can be managed with a fingerprint baseline:
+
+```bash
+php vendor/bin/phpprobe comments --write-baseline=.phpprobe-comments-baseline.json src
+php vendor/bin/phpprobe comments --baseline=.phpprobe-comments-baseline.json src
+```
+
+See [comment policy](docs/comments.rst) for rules, suppressions, configuration, and practical examples.
 
 ## Syntax checking
 
@@ -122,6 +149,10 @@ All supported settings can be overridden explicitly:
   "duplicates": {
     "paths": ["src"],
     "exclude": ["vendor", "tests", "build"],
+    "format": "text",
+    "summary_json": "",
+    "changed_only": false,
+    "changed_base": "",
     "mode": "gate",
     "normalize": true,
     "fuzzy": true,
@@ -149,6 +180,89 @@ All supported settings can be overridden explicitly:
         "base": { "color": "gray" }
       }
     }
+  },
+  "comments": {
+    "paths": ["src", "tests"],
+    "exclude": ["vendor", "build"],
+    "format": "text",
+    "summary_json": "",
+    "changed_only": false,
+    "changed_base": "",
+    "fail_on": "error",
+    "fail_confidence": "low",
+    "doc_mode": "hybrid",
+    "explain": false,
+    "baseline": "",
+    "write_baseline": "",
+    "scan_markers": true,
+    "marker_tags": [
+      "TODO", "FIXME", "BUG", "HACK", "XXX", "NOTE", "OPTIMIZE",
+      "REFACTOR", "DEPRECATED", "SECURITY", "REVIEW", "QUESTION", "WARNING"
+    ],
+    "marker_severity": {
+      "SECURITY": "critical", "BUG": "high", "FIXME": "high",
+      "HACK": "medium", "XXX": "medium", "WARNING": "medium",
+      "TODO": "low", "OPTIMIZE": "low", "REFACTOR": "low",
+      "DEPRECATED": "low", "REVIEW": "info", "QUESTION": "info", "NOTE": "info"
+    },
+    "custom_rules": [],
+    "doc_cache": { "enabled": true, "file": "" },
+    "doc_signature_consistency": true,
+    "doc_type_hygiene": true,
+    "rules": {}
+  },
+  "commented_out_code": {
+    "enabled": true,
+    "policy": "standard",
+    "allowed_reason_tags": ["TODO", "FIXME", "BUG", "HACK", "SECURITY", "REVIEW", "DEPRECATED"],
+    "optional_reason_tags": ["TEMP", "DEBUG", "EXPERIMENTAL"],
+    "allow_optional_reason_tags_in_strict_mode": false,
+    "ignore_paths": [],
+    "suppression": { "enabled": true, "directive": "@phpprobe-ignore" },
+    "min_reason_length": 12,
+    "max_allowed_block_lines": 10,
+    "require_issue_for_blocks_longer_than": 3,
+    "allowed_issue_patterns": ["/#\\d+/", "/[A-Z]+-\\d+/"],
+    "single_line_comments": { "allow_blank_line_between_reason_and_code": false },
+    "block_comments": {
+      "allow_reason_before_block_comment": true,
+      "allow_blank_line_between_reason_and_code": true
+    },
+    "phpdoc_comments": {
+      "allow_documentation_examples": true,
+      "example_labels": ["Example:", "Examples:", "Usage:", "Snippet:", "Code sample:"]
+    },
+    "finding_severity": {
+      "comment_marker": "info",
+      "commented_out_code_without_reason": "warning",
+      "commented_out_code_without_valid_tag": "warning",
+      "commented_out_code_without_valid_reason": "warning",
+      "commented_out_code_with_weak_reason": "warning",
+      "commented_out_code_with_valid_reason": "info",
+      "commented_out_code_block_too_large": "error",
+      "commented_out_code_requires_issue_reference": "warning",
+      "commented_out_code_in_phpdoc_without_example_label": "warning",
+      "invalid_suppression_rule": "warning",
+      "expired_suppression_rule": "warning",
+      "dead_suppression_rule": "warning",
+      "phpdoc_signature_mismatch": "warning",
+      "phpdoc_unknown_param": "warning",
+      "phpdoc_missing_param": "info",
+      "phpdoc_invalid_tag_value": "warning"
+    },
+    "finding_severity_strict": {
+      "commented_out_code_without_reason": "error",
+      "commented_out_code_without_valid_tag": "error",
+      "commented_out_code_without_valid_reason": "error",
+      "commented_out_code_with_weak_reason": "error",
+      "commented_out_code_block_too_large": "error",
+      "invalid_suppression_rule": "error",
+      "expired_suppression_rule": "error",
+      "dead_suppression_rule": "error",
+      "phpdoc_signature_mismatch": "error",
+      "phpdoc_unknown_param": "error",
+      "phpdoc_invalid_tag_value": "error"
+    }
   }
 }
 ```
@@ -157,10 +271,10 @@ Configuration is strict: unknown keys, invalid enum values, unsafe worker counts
 
 Preset intent:
 
-- `default`: explicit low-level defaults;
-- `standard`: complete token, statement, structural, and near-miss analysis;
-- `ci`: deterministic CI thresholds and two lint workers;
-- `strict`: AST-backed audit with bounded near-miss detection.
+- `default`: low-overhead syntax, token duplicate, and standard comment-policy defaults;
+- `standard`: full duplicate detector matrix with the standard comment policy and generated-path exclusions;
+- `ci`: CI-oriented exclusions, two syntax workers, and more conservative duplicate thresholds;
+- `strict`: tighter AST-backed duplicate thresholds and strict comment-policy thresholds/severities.
 
 ## Changed files and exclusions
 
@@ -196,11 +310,13 @@ The report directory contains checker JSON, a Markdown summary, SARIF, and a com
 The checker gateway classes accept the same argument list as the CLI:
 
 ```php
+use Infocyph\PHPProbe\CommentChecker;
 use Infocyph\PHPProbe\DuplicateChecker;
 use Infocyph\PHPProbe\SyntaxChecker;
 
 $syntaxExit = (new SyntaxChecker())->run(['--format=json', 'src']);
 $duplicateExit = (new DuplicateChecker())->run(['--mode=gate', 'src']);
+$commentExit = (new CommentChecker())->run(['--fail-on=warning', 'src']);
 ```
 
 Output is written to standard output/error and the returned integer is the CLI-compatible exit code.
@@ -217,7 +333,7 @@ composer benchmark
 
 `composer tests` runs Pest, max-level PHPStan, PHPCS, Pint dry-run, Rector dry-run, and PHPProbe against itself.
 
-Full documentation is available in the [docs directory](docs/index.rst). Security reports should follow [SECURITY.md](SECURITY.md), and contributions should follow [CONTRIBUTING.md](CONTRIBUTING.md).
+Full documentation is available in the [docs directory](docs/index.rst), including the [complete CLI reference](docs/cli-reference.rst). Security reports should follow [SECURITY.md](SECURITY.md), and contributions should follow [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 

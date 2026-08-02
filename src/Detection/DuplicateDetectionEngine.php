@@ -8,11 +8,11 @@ use Infocyph\PHPProbe\Util\ProjectPath;
 
 final class DuplicateDetectionEngine
 {
-    public const CACHE_VERSION = 3;
+    public const int CACHE_VERSION = 3;
 
-    private const ROLLING_BASE = 257;
+    private const int ROLLING_BASE = 257;
 
-    private const ROLLING_MODULUS = 1_000_000_007;
+    private const int ROLLING_MODULUS = 1_000_000_007;
 
     /**
      * @param list<string> $files
@@ -22,7 +22,7 @@ final class DuplicateDetectionEngine
     public function analyze(array $files, array $options): array
     {
         $includeAst = $options['mode'] === 'audit' || $options['nearMiss'];
-        $index = (new DuplicateCodeIndex())->build($files, $options, $includeAst);
+        $index = new DuplicateCodeIndex()->build($files, $options, $includeAst);
         $reducer = new DuplicateCloneReducer();
         $clones = [
             ...$this->tokenClones($index['streams'], $index['blocks'], $options, $reducer),

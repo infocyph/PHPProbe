@@ -12,8 +12,9 @@ Combined reports
      --report-dir=build/phpprobe \
      src tests
 
-The report directory contains per-checker JSON, a Markdown summary, SARIF, and
-a combined JSON summary. Report files are written atomically.
+The report directory contains syntax, duplicate, and comment checker JSON,
+a Markdown summary, SARIF, and a combined JSON summary. Report files are
+written atomically.
 
 GitHub Actions
 --------------
@@ -34,7 +35,7 @@ GitHub Actions
          - uses: actions/checkout@v6
          - uses: shivammathur/setup-php@v2
            with:
-             php-version: "8.2"
+             php-version: "8.4"
              coverage: none
          - run: composer install --prefer-dist --no-interaction
          - run: >-

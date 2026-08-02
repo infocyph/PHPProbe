@@ -200,13 +200,7 @@ final class DuplicateCloneReducer
      */
     private function isContainedInAny(array $clone, array $selected): bool
     {
-        foreach ($selected as $candidate) {
-            if ($this->cloneContainedBy($clone, $candidate)) {
-                return true;
-            }
-        }
-
-        return false;
+        return array_any($selected, fn($candidate) => $this->cloneContainedBy($clone, $candidate));
     }
 
     /**
@@ -235,13 +229,7 @@ final class DuplicateCloneReducer
      */
     private function occurrenceContainedByAny(array $occurrence, array $candidates): bool
     {
-        foreach ($candidates as $candidate) {
-            if ($candidate['file'] === $occurrence['file'] && $candidate['start_line'] <= $occurrence['start_line'] && $candidate['end_line'] >= $occurrence['end_line']) {
-                return true;
-            }
-        }
-
-        return false;
+        return array_any($candidates, fn($candidate) => $candidate['file'] === $occurrence['file'] && $candidate['start_line'] <= $occurrence['start_line'] && $candidate['end_line'] >= $occurrence['end_line']);
     }
 
     /**

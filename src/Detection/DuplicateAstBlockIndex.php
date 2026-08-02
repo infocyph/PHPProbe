@@ -14,7 +14,7 @@ final readonly class DuplicateAstBlockIndex
 
     public function __construct()
     {
-        $this->parser = (new ParserFactory())->createForHostVersion();
+        $this->parser = new ParserFactory()->createForHostVersion();
     }
 
     /**

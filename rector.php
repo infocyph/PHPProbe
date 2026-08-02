@@ -12,4 +12,4 @@ return RectorConfig::configure()
     ])
     ->withPreparedSets(deadCode: true)
     ->withPhpSets()
-    ->withPhpVersion(PhpVersion::PHP_82);
+    ->withPhpVersion(PhpVersion::PHP_84);

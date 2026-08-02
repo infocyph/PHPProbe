@@ -16,7 +16,7 @@ final readonly class PhpProbeConfig
      */
     public static function fromArray(array $config, string $context = 'configuration'): self
     {
-        $errors = (new ConfigValidator())->validate($config);
+        $errors = new ConfigValidator()->validate($config);
 
         if ($errors !== []) {
             throw new \InvalidArgumentException(sprintf(
@@ -52,11 +52,41 @@ final readonly class PhpProbeConfig
      * @param array<string, mixed> $options
      * @return array<string, mixed>
      */
+    public function applyCommentOptions(array $options): array
+    {
+        $comments = $this->section('comments');
+        $options = $this->applyCommon($options, $comments);
+        $options = $this->applyMappedOptions($options, $comments, $this->reportOptionMap());
+
+        $options = $this->applyMappedOptions($options, $comments, [
+            'fail_confidence' => 'failConfidence',
+            'doc_mode' => 'docMode',
+            'doc_signature_consistency' => 'docSignatureConsistency',
+            'doc_type_hygiene' => 'docTypeHygiene',
+            'explain' => 'explain',
+            'scan_markers' => 'scanMarkers',
+            'marker_tags' => 'markerTags',
+            'marker_severity' => 'markerSeverity',
+            'custom_rules' => 'customRules',
+        ]);
+        $this->applyCacheOptions($options, $comments['doc_cache'] ?? null, 'docCacheEnabled', 'docCacheFile');
+
+        $this->applyCommentRules($options, $this->object($comments['rules'] ?? null));
+        $this->applyCommentedOutCode($options, $this->section('commented_out_code'));
+
+        return $this->applyColors($options);
+    }
+
+    /**
+     * @param array<string, mixed> $options
+     * @return array<string, mixed>
+     */
     public function applyDuplicateOptions(array $options): array
     {
         $section = $this->section('duplicates');
         $options = $this->applyCommon($options, $section);
-        $map = [
+        $options = $this->applyMappedOptions($options, $section, $this->reportOptionMap());
+        $options = $this->applyMappedOptions($options, $section, [
             'mode' => 'mode',
             'normalize' => 'normalize',
             'fuzzy' => 'fuzzy',
@@ -66,28 +96,10 @@ final readonly class PhpProbeConfig
             'min_statements' => 'minStatements',
             'min_similarity' => 'minSimilarity',
             'max_near_miss_comparisons' => 'maxNearMissComparisons',
-            'baseline' => 'baseline',
-            'write_baseline' => 'writeBaseline',
             'ignore_fingerprints' => 'ignoreFingerprints',
-            'fail_on' => 'failOn',
             'error_duplicate_percentage' => 'errorDuplicatePercentage',
-        ];
-
-        foreach ($map as $key => $option) {
-            if (array_key_exists($key, $section)) {
-                $options[$option] = $section[$key];
-            }
-        }
-
-        $cache = $this->object($section['cache'] ?? null);
-
-        if (array_key_exists('enabled', $cache)) {
-            $options['cacheEnabled'] = $cache['enabled'];
-        }
-
-        if (is_string($cache['file'] ?? null) && $cache['file'] !== '') {
-            $options['cacheFile'] = $cache['file'];
-        }
+        ]);
+        $this->applyCacheOptions($options, $section['cache'] ?? null, 'cacheEnabled', 'cacheFile');
 
         $output = $this->object($section['output'] ?? null);
 
@@ -146,6 +158,26 @@ final readonly class PhpProbeConfig
 
     /**
      * @param array<string, mixed> $options
+     */
+    private function applyCacheOptions(
+        array &$options,
+        mixed $value,
+        string $enabledOption,
+        string $fileOption,
+    ): void {
+        $cache = $this->object($value);
+
+        if (array_key_exists('enabled', $cache)) {
+            $options[$enabledOption] = $cache['enabled'];
+        }
+
+        if (is_string($cache['file'] ?? null) && $cache['file'] !== '') {
+            $options[$fileOption] = $cache['file'];
+        }
+    }
+
+    /**
+     * @param array<string, mixed> $options
      * @return array<string, mixed>
      */
     private function applyColors(array $options): array
@@ -171,6 +203,97 @@ final readonly class PhpProbeConfig
     /**
      * @param array<string, mixed> $options
      * @param array<string, mixed> $section
+     */
+    private function applyCommentedOutCode(array &$options, array $section): void
+    {
+        foreach ([
+            'enabled' => 'commentedOutEnabled',
+            'policy' => 'policy',
+            'allowed_reason_tags' => 'allowedReasonTags',
+            'optional_reason_tags' => 'optionalReasonTags',
+            'allow_optional_reason_tags_in_strict_mode' => 'allowOptionalReasonTagsInStrictMode',
+            'min_reason_length' => 'minReasonLength',
+            'max_allowed_block_lines' => 'maxAllowedBlockLines',
+            'require_issue_for_blocks_longer_than' => 'requireIssueForBlocksLongerThan',
+            'allowed_issue_patterns' => 'allowedIssuePatterns',
+            'finding_severity' => 'typeSeverity',
+            'finding_severity_strict' => 'strictSeverity',
+        ] as $key => $option) {
+            if (array_key_exists($key, $section)) {
+                $options[$option] = $section[$key];
+            }
+        }
+
+        $ignorePaths = $section['ignore_paths'] ?? [];
+
+        if (is_array($ignorePaths) && array_is_list($ignorePaths)) {
+            $configuredExcludes = is_array($options['excludes'] ?? null) && array_is_list($options['excludes'])
+                ? array_values(array_filter($options['excludes'], is_string(...)))
+                : [];
+            $commentExcludes = array_values(array_filter($ignorePaths, is_string(...)));
+            $options['excludes'] = array_values(array_unique([...$configuredExcludes, ...$commentExcludes]));
+        }
+
+        foreach ([
+            'suppression' => [
+                'enabled' => 'suppressionEnabled',
+                'directive' => 'suppressionDirective',
+            ],
+            'single_line_comments' => [
+                'allow_blank_line_between_reason_and_code' => 'allowBlankLineBetweenReasonAndCode',
+            ],
+            'block_comments' => [
+                'allow_reason_before_block_comment' => 'allowReasonBeforeBlockComment',
+                'allow_blank_line_between_reason_and_code' => 'allowBlankLineBetweenReasonAndCodeInBlock',
+            ],
+            'phpdoc_comments' => [
+                'allow_documentation_examples' => 'allowPhpdocExamples',
+                'example_labels' => 'phpdocExampleLabels',
+            ],
+        ] as $sectionKey => $map) {
+            $nested = $this->object($section[$sectionKey] ?? null);
+
+            foreach ($map as $key => $option) {
+                if (array_key_exists($key, $nested)) {
+                    $options[$option] = $nested[$key];
+                }
+            }
+        }
+    }
+
+    /**
+     * @param array<string, mixed> $options
+     * @param array<string, mixed> $rules
+     */
+    private function applyCommentRules(array &$options, array $rules): void
+    {
+        $enabled = [];
+        $severity = [];
+
+        foreach ($rules as $name => $value) {
+            $rule = $this->object($value);
+
+            if (is_bool($rule['enabled'] ?? null)) {
+                $enabled[$name] = $rule['enabled'];
+            }
+
+            if (is_string($rule['severity'] ?? null)) {
+                $severity[$name] = $rule['severity'];
+            }
+        }
+
+        if ($enabled !== []) {
+            $options['ruleEnabled'] = $enabled;
+        }
+
+        if ($severity !== []) {
+            $options['ruleSeverity'] = $severity;
+        }
+    }
+
+    /**
+     * @param array<string, mixed> $options
+     * @param array<string, mixed> $section
      * @return array<string, mixed>
      */
     private function applyCommon(array $options, array $section): array
@@ -184,6 +307,23 @@ final readonly class PhpProbeConfig
             'changed_base' => 'changedBase',
         ];
 
+        foreach ($map as $key => $option) {
+            if (array_key_exists($key, $section)) {
+                $options[$option] = $section[$key];
+            }
+        }
+
+        return $options;
+    }
+
+    /**
+     * @param array<string, mixed> $options
+     * @param array<string, mixed> $section
+     * @param array<string, string> $map
+     * @return array<string, mixed>
+     */
+    private function applyMappedOptions(array $options, array $section, array $map): array
+    {
         foreach ($map as $key => $option) {
             if (array_key_exists($key, $section)) {
                 $options[$option] = $section[$key];
@@ -243,6 +383,16 @@ final readonly class PhpProbeConfig
         }
 
         return $object;
+    }
+
+    /** @return array<string, string> */
+    private function reportOptionMap(): array
+    {
+        return [
+            'baseline' => 'baseline',
+            'write_baseline' => 'writeBaseline',
+            'fail_on' => 'failOn',
+        ];
     }
 
     /**

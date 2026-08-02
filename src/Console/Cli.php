@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Infocyph\PHPProbe\Console;
 
+use Infocyph\PHPProbe\CommentChecker;
 use Infocyph\PHPProbe\Config\PresetRepository;
 use Infocyph\PHPProbe\DuplicateChecker;
 use Infocyph\PHPProbe\SyntaxChecker;
@@ -18,12 +19,13 @@ final class Cli
         $command = $argv[1] ?? 'help';
 
         return match ($command) {
-            'syntax' => (new SyntaxChecker())->run(array_slice($argv, 2)),
-            'duplicates' => (new DuplicateChecker())->run(array_slice($argv, 2)),
-            'check' => (new CheckCommand())->run(array_slice($argv, 2)),
-            'init' => (new InitCommand())->run(array_slice($argv, 2)),
-            'config' => (new ConfigCommand())->run(array_slice($argv, 2)),
-            'doctor' => (new DoctorCommand())->run(array_slice($argv, 2)),
+            'syntax' => new SyntaxChecker()->run(array_slice($argv, 2)),
+            'duplicates' => new DuplicateChecker()->run(array_slice($argv, 2)),
+            'comments' => new CommentChecker()->run(array_slice($argv, 2)),
+            'check' => new CheckCommand()->run(array_slice($argv, 2)),
+            'init' => new InitCommand()->run(array_slice($argv, 2)),
+            'config' => new ConfigCommand()->run(array_slice($argv, 2)),
+            'doctor' => new DoctorCommand()->run(array_slice($argv, 2)),
             'presets' => $this->presets(),
             'preset' => $this->preset((string) ($argv[2] ?? '')),
             'help', '--help', '-h' => $this->help(),
@@ -33,7 +35,7 @@ final class Cli
 
     private function help(): int
     {
-        fwrite(STDOUT, 'Usage: phpprobe syntax|duplicates|check [options] [paths...] | config validate | init [options] | doctor [options] | presets | preset <name>' . PHP_EOL);
+        fwrite(STDOUT, 'Usage: phpprobe syntax|duplicates|comments|check [options] [paths...] | config validate | init [options] | doctor [options] | presets | preset <name>' . PHP_EOL);
 
         return 0;
     }
@@ -47,7 +49,7 @@ final class Cli
         }
 
         try {
-            fwrite(STDOUT, rtrim((new PresetRepository())->json($name)) . PHP_EOL);
+            fwrite(STDOUT, rtrim(new PresetRepository()->json($name)) . PHP_EOL);
         } catch (\InvalidArgumentException|\RuntimeException $exception) {
             fwrite(STDERR, $exception->getMessage() . PHP_EOL);
 
@@ -59,7 +61,7 @@ final class Cli
 
     private function presets(): int
     {
-        fwrite(STDOUT, implode(PHP_EOL, (new PresetRepository())->names()) . PHP_EOL);
+        fwrite(STDOUT, implode(PHP_EOL, new PresetRepository()->names()) . PHP_EOL);
 
         return 0;
     }

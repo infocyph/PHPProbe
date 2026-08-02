@@ -48,7 +48,7 @@ final class CheckerRuntime
      */
     public static function phpFiles(array $options): array
     {
-        return (new PhpFileFinder())->find(
+        return new PhpFileFinder()->find(
             $options['paths'],
             $options['excludes'],
             ['changedOnly' => $options['changedOnly'], 'changedBase' => $options['changedBase']],

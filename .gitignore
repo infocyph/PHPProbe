@@ -21,4 +21,6 @@ var
 vendor
 d2utmp*
 .phpprobe-duplicates-cache.json
+.phpprobe-comments-baseline.json
+.phpprobe-comments-doc-cache.json
 build/reports/

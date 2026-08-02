@@ -7,7 +7,7 @@ namespace Infocyph\PHPProbe\Config;
 final readonly class PresetRepository
 {
     /** @var non-empty-list<string> */
-    public const NAMES = ['default', 'standard', 'ci', 'strict'];
+    public const array NAMES = ['default', 'standard', 'ci', 'strict'];
 
     public function config(string $name): PhpProbeConfig
     {

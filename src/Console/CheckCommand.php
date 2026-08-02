@@ -31,6 +31,7 @@ final class CheckCommand
 
             if ($results['syntax']['exit_code'] === 0) {
                 $results['duplicates'] = $this->runChecker('duplicates', $options);
+                $results['comments'] = $this->runChecker('comments', $options);
             }
 
             $exitCode = $this->combinedExitCode($results);
@@ -85,12 +86,14 @@ final class CheckCommand
             if ($options['timeout'] !== '') {
                 $args[] = '--timeout=' . $options['timeout'];
             }
-        } else {
+        } elseif ($checker === 'duplicates') {
             if ($options['failOn'] !== '') {
                 $args[] = '--fail-on=' . $options['failOn'];
             }
 
             $args = [...$args, ...$options['duplicateArgs']];
+        } elseif ($options['failOn'] !== '') {
+            $args[] = '--fail-on=' . $options['failOn'];
         }
 
         return [...$args, ...$options['paths']];
@@ -121,7 +124,7 @@ final class CheckCommand
         fwrite(STDOUT, implode(PHP_EOL, [
             'Usage: phpprobe check [options] [paths...]',
             '',
-            'Runs syntax first, then duplicate analysis only when syntax passes.',
+            'Runs syntax first, then duplicate and comment analysis only when syntax passes.',
             '',
             'Options:',
             '  --config=FILE                    read PHPProbe checker settings',
@@ -133,7 +136,7 @@ final class CheckCommand
             '  --changed-base=REF               Git base ref used with --changed-only',
             '  --parallel=N                     pass worker count to syntax checker',
             '  --timeout=SECONDS                pass process timeout to syntax checker',
-            '  --fail-on=error|warning|info     pass threshold to duplicate checker',
+            '  --fail-on=error|warning|info     pass threshold to duplicate and comment checkers',
             '  --exclude=PATH                   exclude a path from both checkers; repeatable',
             '  --mode=gate|audit                select duplicate detector mode',
             '  --exact | --fuzzy | --no-fuzzy  select token normalization',
@@ -305,7 +308,7 @@ final class CheckCommand
     private function runChecker(string $checker, array $options): array
     {
         $binary = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'bin' . DIRECTORY_SEPARATOR . 'phpprobe';
-        $run = (new ProcRunner())->run(
+        $run = new ProcRunner()->run(
             [PHP_BINARY, $binary, $checker, ...$this->checkerArgs($checker, $options)],
             cwd: getcwd() ?: null,
             timeout: 900.0,
@@ -381,6 +384,24 @@ final class CheckCommand
             }
         }
 
+        $comments = $results['comments']['payload']['findings'] ?? [];
+
+        if (is_array($comments)) {
+            foreach ($comments as $finding) {
+                if (!is_array($finding)) {
+                    continue;
+                }
+
+                $severity = is_string($finding['severity'] ?? null) ? strtolower($finding['severity']) : 'warning';
+                $level = in_array($severity, ['error', 'critical', 'high'], true) ? 'error' : ($severity === 'info' || $severity === 'low' ? 'note' : 'warning');
+                $rule = is_string($finding['type'] ?? null) ? $finding['type'] : 'comment_policy';
+                $message = is_string($finding['message'] ?? null) ? $finding['message'] : 'Comment policy finding.';
+                $file = is_string($finding['file'] ?? null) ? $finding['file'] : '';
+                $line = is_int($finding['line'] ?? null) ? $finding['line'] : 1;
+                $findings[] = $this->sarifFinding($rule, $level, $message, $file, $line);
+            }
+        }
+
         return Sarif::payload($findings);
     }
 
@@ -416,7 +437,7 @@ final class CheckCommand
             'checker' => 'check',
             'exit_code' => $exitCode,
             'checks' => $checks,
-            'skipped' => isset($results['duplicates']) ? [] : ['duplicates'],
+            'skipped' => isset($results['duplicates']) ? [] : ['duplicates', 'comments'],
         ];
     }
 

@@ -81,7 +81,7 @@ final class DuplicateChecker
             }
         }
 
-        $result = (new DuplicateDetectionEngine())->analyze($files, $engineOptions);
+        $result = new DuplicateDetectionEngine()->analyze($files, $engineOptions);
         $result['cache_hit'] = false;
 
         if ($options['cacheEnabled']) {
@@ -763,7 +763,7 @@ final class DuplicateChecker
     {
         $result['clones'] = array_values(array_filter($result['clones'], static fn(array $clone): bool => !isset($known[$clone['fingerprint']])));
         $result['new_clones'] = count($result['clones']);
-        $result['duplicated_lines'] = (new DuplicateCloneReducer())->uniqueDuplicatedLines($result['clones']);
+        $result['duplicated_lines'] = new DuplicateCloneReducer()->uniqueDuplicatedLines($result['clones']);
         $result['duplicate_percentage'] = $result['total_lines'] > 0
             ? round(($result['duplicated_lines'] / $result['total_lines']) * 100, 2)
             : 0.0;

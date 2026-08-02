@@ -11,6 +11,7 @@ it('runs check command and writes report artifacts', function (): void {
     $summaryJson = $root.DIRECTORY_SEPARATOR.'build'.DIRECTORY_SEPARATOR.'check-summary.json';
     $syntaxJsonExists = false;
     $duplicatesJsonExists = false;
+    $commentsJsonExists = false;
     $sarifExists = false;
     $markdownExists = false;
     $summary = [];
@@ -29,6 +30,7 @@ PHP);
         $summary = json_decode(file_get_contents($summaryJson) ?: 'null', true);
         $syntaxJsonExists = is_file($reportDir.DIRECTORY_SEPARATOR.'syntax.json');
         $duplicatesJsonExists = is_file($reportDir.DIRECTORY_SEPARATOR.'duplicates.json');
+        $commentsJsonExists = is_file($reportDir.DIRECTORY_SEPARATOR.'comments.json');
         $sarifExists = is_file($reportDir.DIRECTORY_SEPARATOR.'report.sarif');
         $markdownExists = is_file($reportDir.DIRECTORY_SEPARATOR.'summary.md');
     } finally {
@@ -38,10 +40,39 @@ PHP);
     expect($run['exitCode'])->toBe(0)
         ->and($syntaxJsonExists)->toBeTrue()
         ->and($duplicatesJsonExists)->toBeTrue()
+        ->and($commentsJsonExists)->toBeTrue()
         ->and($sarifExists)->toBeTrue()
         ->and($markdownExists)->toBeTrue()
         ->and($summary['checker'])->toBe('check')
         ->and($summary['exit_code'])->toBe(0);
+});
+
+it('includes comment findings in aggregate check results', function (): void {
+    $root = makeCliFixture();
+    $src = $root.DIRECTORY_SEPARATOR.'src';
+
+    mkdir($src, 0755, true);
+    file_put_contents($src.DIRECTORY_SEPARATOR.'Commented.php', <<<'PHP'
+<?php
+
+// SECURITY(auth): rotate the legacy key before deployment.
+final class Commented
+{
+}
+PHP);
+
+    try {
+        $run = runCliCommand($root, ['check', '--format=json', 'src']);
+    } finally {
+        removeCliFixture($root);
+    }
+
+    $payload = json_decode($run['stdout'], true);
+    $findings = $payload['results']['comments']['payload']['findings'] ?? [];
+
+    expect($run['exitCode'])->toBe(1)
+        ->and($payload['summary']['checks']['comments'])->toBe(1)
+        ->and(array_column($findings, 'type'))->toContain('comment_marker');
 });
 
 it('preserves the complete standard duplicate profile through check', function (): void {
@@ -232,6 +263,7 @@ it('initializes phpprobe config and ci workflow', function (): void {
 
     expect($run['exitCode'])->toBe(0)
         ->and($contents['preset'])->toBe('ci')
+        ->and($workflowContent)->toContain('php-version: "8.4"')
         ->and($workflowContent)->toContain('php vendor/bin/phpprobe check --preset=ci');
 });
 
@@ -256,8 +288,9 @@ PHP);
     $payload = json_decode($run['stdout'], true);
 
     expect($run['exitCode'])->toBe(1)
-        ->and($payload['summary']['skipped'])->toBe(['duplicates'])
-        ->and($payload['results'])->not()->toHaveKey('duplicates');
+        ->and($payload['summary']['skipped'])->toBe(['duplicates', 'comments'])
+        ->and($payload['results'])->not()->toHaveKey('duplicates')
+        ->and($payload['results'])->not()->toHaveKey('comments');
 });
 
 it('rejects unknown top-level commands', function (): void {
@@ -283,9 +316,15 @@ it('runs doctor command in json mode', function (): void {
     }
 
     $payload = json_decode($run['stdout'], true);
+    $phpCheck = array_values(array_filter(
+        $payload['checks'] ?? [],
+        static fn (mixed $check): bool => is_array($check) && ($check['name'] ?? null) === 'php_version',
+    ))[0] ?? null;
 
     expect($run['exitCode'])->toBeIn([0, 1])
-        ->and(is_array($payload['checks'] ?? null))->toBeTrue();
+        ->and(is_array($payload['checks'] ?? null))->toBeTrue()
+        ->and($phpCheck)->toBeArray()
+        ->and($phpCheck['message'] ?? null)->toContain('>= 8.4');
 });
 
 function makeCliFixture(): string

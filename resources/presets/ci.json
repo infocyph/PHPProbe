@@ -18,5 +18,12 @@
     "min_tokens": 100,
     "min_statements": 5,
     "min_similarity": 0.9
+  },
+  "comments": {
+    "exclude": [
+      "tests", "vendor", "node_modules", ".git", ".idea", ".vscode", "coverage",
+      ".phpunit.cache", ".psalm-cache", "build", "dist", "tmp", ".tmp",
+      "storage", "bootstrap/cache", "var/cache"
+    ]
   }
 }

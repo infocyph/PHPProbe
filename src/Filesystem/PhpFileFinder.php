@@ -101,7 +101,7 @@ final class PhpFileFinder
         $files = [];
 
         foreach ($commands as $command) {
-            $result = (new ProcRunner())->run($command);
+            $result = new ProcRunner()->run($command);
 
             if (!$result instanceof ProcessResult || !$result->successful()) {
                 return null;
@@ -121,7 +121,7 @@ final class PhpFileFinder
      */
     private function gitPhpFiles(array $paths): ?array
     {
-        $result = (new ProcRunner())->run([
+        $result = new ProcRunner()->run([
             'git',
             'ls-files',
             '-z',
@@ -151,13 +151,7 @@ final class PhpFileFinder
     {
         $normalized = $this->normalizePath($path);
 
-        foreach ($excludes as $exclude) {
-            if ($normalized === $exclude || str_starts_with($normalized, $exclude . DIRECTORY_SEPARATOR)) {
-                return true;
-            }
-        }
-
-        return false;
+        return array_any($excludes, fn($exclude) => $normalized === $exclude || str_starts_with($normalized, $exclude . DIRECTORY_SEPARATOR));
     }
 
     /**

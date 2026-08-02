@@ -18,7 +18,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        php: ["8.2", "8.3", "8.4", "8.5"]
+        php: ["8.4", "8.5"]
 
     steps:
       - name: Checkout PHPProbe
@@ -48,6 +48,9 @@ jobs:
 
       - name: Run duplicate checker
         run: php bin/phpprobe duplicates --config=tests/phpprobe.json --format=markdown --summary-json=build/reports/duplicates-summary.json src tests > build/reports/duplicates.md
+
+      - name: Run comment checker
+        run: php bin/phpprobe comments --config=resources/phpprobe.json --format=markdown --summary-json=build/reports/comments-summary.json src tests > build/reports/comments.md
 
       - name: Upload checker reports
         if: always()

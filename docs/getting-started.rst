@@ -4,7 +4,7 @@ Getting started
 Requirements
 ------------
 
-PHPProbe supports PHP 8.2 and newer. It requires Composer, the tokenizer
+PHPProbe supports PHP 8.4 and newer. It requires Composer, the tokenizer
 extension, and ``proc_open`` for syntax lint processes.
 
 Installation
@@ -25,10 +25,11 @@ First run
 
    php vendor/bin/phpprobe syntax src tests
    php vendor/bin/phpprobe duplicates src
+   php vendor/bin/phpprobe comments src tests
    php vendor/bin/phpprobe check src tests
 
-The combined command runs syntax first and skips duplicate analysis when any
-file is invalid.
+The combined command runs syntax first and skips duplicate and comment analysis
+when any file is invalid.
 
 Operational checks
 ------------------

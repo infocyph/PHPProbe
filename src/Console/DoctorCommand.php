@@ -110,7 +110,7 @@ final class DoctorCommand
         }
 
         try {
-            $errors = (new ConfigValidator())->validateFile($configPath);
+            $errors = new ConfigValidator()->validateFile($configPath);
         } catch (\RuntimeException $exception) {
             return [
                 'name' => 'config',
@@ -196,7 +196,7 @@ final class DoctorCommand
         return [
             'name' => 'php_version',
             'status' => 'pass',
-            'message' => sprintf('PHP %s satisfies >= 8.2.', PHP_VERSION),
+            'message' => sprintf('PHP %s satisfies >= 8.4.', PHP_VERSION),
         ];
     }
 }

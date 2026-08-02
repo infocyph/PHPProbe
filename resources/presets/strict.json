@@ -20,5 +20,18 @@
     "min_tokens": 70,
     "min_statements": 3,
     "min_similarity": 0.8
+  },
+  "comments": {
+    "exclude": [
+      "tests", "vendor", "node_modules", ".git", ".idea", ".vscode", "coverage",
+      ".phpunit.cache", ".psalm-cache", "build", "dist", "tmp", ".tmp",
+      "storage", "bootstrap/cache", "var/cache"
+    ]
+  },
+  "commented_out_code": {
+    "policy": "strict",
+    "min_reason_length": 16,
+    "max_allowed_block_lines": 6,
+    "require_issue_for_blocks_longer_than": 2
   }
 }
