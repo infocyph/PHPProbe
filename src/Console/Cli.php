@@ -4,8 +4,6 @@ declare(strict_types=1);
 
 namespace Infocyph\PHPProbe\Console;
 
-use Infocyph\PHPProbe\ApiSnapshotChecker;
-use Infocyph\PHPProbe\CommentChecker;
 use Infocyph\PHPProbe\Config\PresetRepository;
 use Infocyph\PHPProbe\DuplicateChecker;
 use Infocyph\PHPProbe\SyntaxChecker;
@@ -22,21 +20,20 @@ final class Cli
         return match ($command) {
             'syntax' => (new SyntaxChecker())->run(array_slice($argv, 2)),
             'duplicates' => (new DuplicateChecker())->run(array_slice($argv, 2)),
-            'api' => (new ApiSnapshotChecker())->run(array_slice($argv, 2)),
-            'comments' => (new CommentChecker())->run(array_slice($argv, 2)),
             'check' => (new CheckCommand())->run(array_slice($argv, 2)),
             'init' => (new InitCommand())->run(array_slice($argv, 2)),
             'config' => (new ConfigCommand())->run(array_slice($argv, 2)),
             'doctor' => (new DoctorCommand())->run(array_slice($argv, 2)),
             'presets' => $this->presets(),
             'preset' => $this->preset((string) ($argv[2] ?? '')),
-            default => $this->help(),
+            'help', '--help', '-h' => $this->help(),
+            default => $this->unknown($command),
         };
     }
 
     private function help(): int
     {
-        fwrite(STDOUT, 'Usage: phpprobe syntax|duplicates|api|comments|check [options] [paths...] | config validate | init [options] | doctor [options] | presets | preset <name>' . PHP_EOL);
+        fwrite(STDOUT, 'Usage: phpprobe syntax|duplicates|check [options] [paths...] | config validate | init [options] | doctor [options] | presets | preset <name>' . PHP_EOL);
 
         return 0;
     }
@@ -51,7 +48,7 @@ final class Cli
 
         try {
             fwrite(STDOUT, rtrim((new PresetRepository())->json($name)) . PHP_EOL);
-        } catch (\InvalidArgumentException $exception) {
+        } catch (\InvalidArgumentException|\RuntimeException $exception) {
             fwrite(STDERR, $exception->getMessage() . PHP_EOL);
 
             return 2;
@@ -65,5 +62,12 @@ final class Cli
         fwrite(STDOUT, implode(PHP_EOL, (new PresetRepository())->names()) . PHP_EOL);
 
         return 0;
+    }
+
+    private function unknown(string $command): int
+    {
+        fwrite(STDERR, sprintf('Unknown PHPProbe command: %s', $command) . PHP_EOL);
+
+        return 2;
     }
 }

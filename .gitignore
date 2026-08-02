@@ -3,6 +3,7 @@ Thumbs.db
 composer.lock
 .idea
 .psalm-cache
+.phpstan-cache
 .phpunit.cache
 .vscode
 .windsurf

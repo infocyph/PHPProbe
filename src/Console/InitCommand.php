@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Infocyph\PHPProbe\Console;
 
 use Infocyph\PHPProbe\Config\PresetRepository;
+use Infocyph\PHPProbe\Util\AtomicFileWriter;
 
 final class InitCommand
 {
@@ -39,34 +40,37 @@ final class InitCommand
             return 2;
         }
 
+        $workflow = (getcwd() ?: '.') . DIRECTORY_SEPARATOR . '.github' . DIRECTORY_SEPARATOR . 'workflows' . DIRECTORY_SEPARATOR . 'phpprobe.yml';
+
+        if ($options['withCi'] && is_file($workflow) && !$options['force']) {
+            fwrite(STDERR, sprintf('Workflow already exists: %s (use --force to overwrite)', $workflow) . PHP_EOL);
+
+            return 2;
+        }
+
         $payload = json_encode(['preset' => $options['preset']], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
 
-        if (!is_string($payload) || file_put_contents($options['path'], $payload . PHP_EOL) === false) {
-            fwrite(STDERR, sprintf('Failed to write config file: %s', $options['path']) . PHP_EOL);
+        if (!is_string($payload)) {
+            fwrite(STDERR, 'Failed to encode PHPProbe configuration.' . PHP_EOL);
+
+            return 2;
+        }
+
+        try {
+            AtomicFileWriter::write($options['path'], $payload . PHP_EOL);
+        } catch (\RuntimeException $exception) {
+            fwrite(STDERR, $exception->getMessage() . PHP_EOL);
 
             return 2;
         }
 
         if ($options['withCi']) {
-            $workflow = getcwd() . DIRECTORY_SEPARATOR . '.github' . DIRECTORY_SEPARATOR . 'workflows' . DIRECTORY_SEPARATOR . 'phpprobe.yml';
-            $workflowDir = dirname($workflow);
-
-            if (!is_dir($workflowDir) && !mkdir($workflowDir, 0755, true) && !is_dir($workflowDir)) {
-                fwrite(STDERR, sprintf('Failed to create workflow directory: %s', $workflowDir) . PHP_EOL);
-
-                return 2;
-            }
-
-            if (is_file($workflow) && !$options['force']) {
-                fwrite(STDERR, sprintf('Workflow already exists: %s (use --force to overwrite)', $workflow) . PHP_EOL);
-
-                return 2;
-            }
-
             $contents = $this->workflowTemplate($options['preset']);
 
-            if (file_put_contents($workflow, $contents) === false) {
-                fwrite(STDERR, sprintf('Failed to write workflow file: %s', $workflow) . PHP_EOL);
+            try {
+                AtomicFileWriter::write($workflow, $contents);
+            } catch (\RuntimeException $exception) {
+                fwrite(STDERR, $exception->getMessage() . PHP_EOL);
 
                 return 2;
             }
@@ -158,7 +162,7 @@ final class InitCommand
             '  phpprobe:',
             '    runs-on: ubuntu-latest',
             '    steps:',
-            '      - uses: actions/checkout@v4',
+            '      - uses: actions/checkout@v6',
             '      - uses: shivammathur/setup-php@v2',
             '        with:',
             '          php-version: "8.2"',

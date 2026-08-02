@@ -6,9 +6,21 @@ namespace Infocyph\PHPProbe\Config;
 
 final readonly class PresetRepository
 {
+    /** @var non-empty-list<string> */
+    public const NAMES = ['default', 'standard', 'ci', 'strict'];
+
     public function config(string $name): PhpProbeConfig
     {
-        return PhpProbeConfig::fromFile(Paths::preset($this->normalize($name)));
+        $normalized = $this->normalize($name);
+        $default = PhpProbeConfig::fromFile(Paths::preset('default'));
+
+        if ($normalized === 'default') {
+            return $default;
+        }
+
+        $selected = PhpProbeConfig::fromFile(Paths::preset($normalized));
+
+        return $default->merge($selected);
     }
 
     public function json(string $name): string
@@ -16,7 +28,11 @@ final readonly class PresetRepository
         $path = Paths::preset($this->normalize($name));
         $contents = file_get_contents($path);
 
-        return is_string($contents) ? $contents : '{}';
+        if (!is_string($contents)) {
+            throw new \RuntimeException(sprintf('Failed to read PHPProbe preset: %s', $path));
+        }
+
+        return $contents;
     }
 
     /**
@@ -24,26 +40,18 @@ final readonly class PresetRepository
      */
     public function names(): array
     {
-        return ['default', 'standard', 'ci', 'strict'];
+        return self::NAMES;
     }
 
     private function normalize(string $name): string
     {
         $normalized = strtolower(trim($name));
-        $aliases = [
-            'phpstorm' => 'standard',
-            'legacy-standard' => 'ci',
-        ];
 
-        if (isset($aliases[$normalized])) {
-            $normalized = $aliases[$normalized];
-        }
-
-        if (!in_array($normalized, $this->names(), true)) {
+        if (!in_array($normalized, self::NAMES, true)) {
             throw new \InvalidArgumentException(sprintf(
                 'Unknown PHPProbe preset "%s". Available presets: %s.',
                 $name,
-                implode(', ', $this->names()),
+                implode(', ', self::NAMES),
             ));
         }
 

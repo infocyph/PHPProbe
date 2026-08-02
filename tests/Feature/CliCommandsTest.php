@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-require_once __DIR__ . DIRECTORY_SEPARATOR . 'FixtureSupport.php';
+require_once __DIR__.DIRECTORY_SEPARATOR.'FixtureSupport.php';
 
 it('runs check command and writes report artifacts', function (): void {
     $root = makeCliFixture();
@@ -10,9 +10,9 @@ it('runs check command and writes report artifacts', function (): void {
     $reportDir = $root.DIRECTORY_SEPARATOR.'build'.DIRECTORY_SEPARATOR.'reports';
     $summaryJson = $root.DIRECTORY_SEPARATOR.'build'.DIRECTORY_SEPARATOR.'check-summary.json';
     $syntaxJsonExists = false;
-    $duplicatesMarkdownExists = false;
-    $apiSarifExists = false;
-    $commentsTextExists = false;
+    $duplicatesJsonExists = false;
+    $sarifExists = false;
+    $markdownExists = false;
     $summary = [];
 
     mkdir($src, 0755, true);
@@ -28,20 +28,48 @@ PHP);
         $run = runCliCommand($root, ['check', '--report-dir=build/reports', '--summary-json=build/check-summary.json', 'src']);
         $summary = json_decode(file_get_contents($summaryJson) ?: 'null', true);
         $syntaxJsonExists = is_file($reportDir.DIRECTORY_SEPARATOR.'syntax.json');
-        $duplicatesMarkdownExists = is_file($reportDir.DIRECTORY_SEPARATOR.'duplicates.md');
-        $apiSarifExists = is_file($reportDir.DIRECTORY_SEPARATOR.'api.sarif');
-        $commentsTextExists = is_file($reportDir.DIRECTORY_SEPARATOR.'comments.text');
+        $duplicatesJsonExists = is_file($reportDir.DIRECTORY_SEPARATOR.'duplicates.json');
+        $sarifExists = is_file($reportDir.DIRECTORY_SEPARATOR.'report.sarif');
+        $markdownExists = is_file($reportDir.DIRECTORY_SEPARATOR.'summary.md');
     } finally {
         removeCliFixture($root);
     }
 
     expect($run['exitCode'])->toBe(0)
         ->and($syntaxJsonExists)->toBeTrue()
-        ->and($duplicatesMarkdownExists)->toBeTrue()
-        ->and($apiSarifExists)->toBeTrue()
-        ->and($commentsTextExists)->toBeTrue()
+        ->and($duplicatesJsonExists)->toBeTrue()
+        ->and($sarifExists)->toBeTrue()
+        ->and($markdownExists)->toBeTrue()
         ->and($summary['checker'])->toBe('check')
         ->and($summary['exit_code'])->toBe(0);
+});
+
+it('preserves the complete standard duplicate profile through check', function (): void {
+    $root = makeCliFixture();
+    $src = $root.DIRECTORY_SEPARATOR.'src';
+
+    mkdir($src, 0755, true);
+    file_put_contents($src.DIRECTORY_SEPARATOR.'NearMiss.php', cliNearMissFixture());
+    file_put_contents($root.DIRECTORY_SEPARATOR.'phpprobe.json', json_encode([
+        'preset' => 'standard',
+        'duplicates' => [
+            'min_tokens' => 999,
+            'min_statements' => 3,
+            'min_similarity' => 0.60,
+        ],
+    ], JSON_PRETTY_PRINT));
+
+    try {
+        $run = runCliCommand($root, ['check', '--config', 'phpprobe.json', '--format=json', 'src']);
+    } finally {
+        removeCliFixture($root);
+    }
+
+    $payload = json_decode($run['stdout'], true);
+    $clones = $payload['results']['duplicates']['payload']['clones'] ?? [];
+
+    expect($run['exitCode'])->toBe(1)
+        ->and(array_column($clones, 'source'))->toContain('near_miss');
 });
 
 it('aggregates failures in check command output', function (): void {
@@ -109,13 +137,14 @@ it('validates config files through config validate command', function (): void {
         ->and(implode(' ', $payload['errors']))->toContain('root.unknown');
 });
 
-it('validates enum values in config validate command', function (): void {
+it('validates bounded syntax values in config validate command', function (): void {
     $root = makeCliFixture();
     $bad = $root.DIRECTORY_SEPARATOR.'bad-enum-phpprobe.json';
     file_put_contents($bad, json_encode([
-        'comments' => [
-            'doc_mode' => 'smart',
-            'fail_confidence' => 'certain',
+        'syntax' => [
+            'format' => 'xml',
+            'parallel' => 0,
+            'timeout' => 0,
         ],
     ], JSON_PRETTY_PRINT));
 
@@ -129,8 +158,9 @@ it('validates enum values in config validate command', function (): void {
     $joined = implode(' ', $payload['errors'] ?? []);
 
     expect($run['exitCode'])->toBe(1)
-        ->and($joined)->toContain('comments.doc_mode must be one of')
-        ->and($joined)->toContain('comments.fail_confidence must be one of');
+        ->and($joined)->toContain('syntax.format must be one of')
+        ->and($joined)->toContain('syntax.parallel must be an integer')
+        ->and($joined)->toContain('syntax.timeout must be between');
 });
 
 it('validates duplicate output style and score color values in config validate command', function (): void {
@@ -168,9 +198,7 @@ it('validates global output colors in config validate command', function (): voi
         'output' => [
             'colors' => [
                 'error' => 'orange',
-                'severity' => [
-                    'high' => 'purple',
-                ],
+                'severity' => 'purple',
             ],
         ],
     ], JSON_PRETTY_PRINT));
@@ -186,7 +214,7 @@ it('validates global output colors in config validate command', function (): voi
 
     expect($run['exitCode'])->toBe(1)
         ->and($joined)->toContain('output.colors.error must be one of')
-        ->and($joined)->toContain('output.colors.severity.high must be one of');
+        ->and($joined)->toContain('output.colors.severity is not a supported key');
 });
 
 it('initializes phpprobe config and ci workflow', function (): void {
@@ -207,34 +235,42 @@ it('initializes phpprobe config and ci workflow', function (): void {
         ->and($workflowContent)->toContain('php vendor/bin/phpprobe check --preset=ci');
 });
 
-it('passes comment-specific options through check command', function (): void {
+it('skips duplicate analysis when syntax fails', function (): void {
     $root = makeCliFixture();
     $src = $root.DIRECTORY_SEPARATOR.'src';
 
     mkdir($src, 0755, true);
-    file_put_contents($src.DIRECTORY_SEPARATOR.'DocSnippet.php', <<<'PHP'
+    file_put_contents($src.DIRECTORY_SEPARATOR.'Broken.php', <<<'PHP'
 <?php
 
-final class DocSnippet
+final class Broken
 {
-    /**
-     * $token = $legacy->issue($payload);
-     */
-    public function issue(): void
-    {
-    }
-}
 PHP);
 
     try {
-        $failed = runCliCommand($root, ['check', '--fail-on=warning', 'src']);
-        $passed = runCliCommand($root, ['check', '--fail-on=warning', '--fail-confidence=high', '--doc-mode=hybrid', '--explain', 'src']);
+        $run = runCliCommand($root, ['check', '--format=json', 'src']);
     } finally {
         removeCliFixture($root);
     }
 
-    expect($failed['exitCode'])->toBe(1)
-        ->and($passed['exitCode'])->toBe(0);
+    $payload = json_decode($run['stdout'], true);
+
+    expect($run['exitCode'])->toBe(1)
+        ->and($payload['summary']['skipped'])->toBe(['duplicates'])
+        ->and($payload['results'])->not()->toHaveKey('duplicates');
+});
+
+it('rejects unknown top-level commands', function (): void {
+    $root = makeCliFixture();
+
+    try {
+        $run = runCliCommand($root, ['unknown']);
+    } finally {
+        removeCliFixture($root);
+    }
+
+    expect($run['exitCode'])->toBe(2)
+        ->and($run['stderr'])->toContain('Unknown PHPProbe command: unknown');
 });
 
 it('runs doctor command in json mode', function (): void {
@@ -262,8 +298,38 @@ function removeCliFixture(string $root): void
     removeProbeFixture($root);
 }
 
+function cliNearMissFixture(): string
+{
+    return <<<'PHP'
+<?php
+
+function first(array $items): array
+{
+    $result = [];
+    foreach ($items as $item) {
+        $result[] = trim((string) $item);
+    }
+    sort($result);
+
+    return $result;
+}
+
+function second(array $values): array
+{
+    $output = [];
+    foreach ($values as $value) {
+        $output[] = trim((string) $value);
+    }
+    $output[] = 'extra';
+    sort($output);
+
+    return $output;
+}
+PHP;
+}
+
 /**
- * @param list<string> $args
+ * @param  list<string>  $args
  * @return array{exitCode:int,stdout:string,stderr:string}
  */
 function runCliCommand(string $cwd, array $args): array
@@ -274,7 +340,7 @@ function runCliCommand(string $cwd, array $args): array
         2 => ['pipe', 'w'],
     ], $pipes, $cwd);
 
-    if (!is_resource($process)) {
+    if (! is_resource($process)) {
         throw new RuntimeException('Could not start CLI command.');
     }
 

@@ -9,6 +9,7 @@ final readonly class CliOptions
     /**
      * @param list<string> $args
      * @param array<string, mixed> $options
+     * @param list<string> $configuredPaths
      * @param callable(string,int,array<string,mixed>):bool $parseCliOption
      */
     public function collectPaths(array $args, array &$options, array $configuredPaths, callable $parseCliOption, string $unknownOptionMessage): void
@@ -112,7 +113,7 @@ final readonly class CliOptions
     }
 
     /**
-     * @param array{changedOnly:bool,changedBase:string} $options
+     * @param array<string, mixed> $options
      */
     public function parseChangedOptions(array &$options, string $arg): bool
     {
@@ -126,7 +127,7 @@ final readonly class CliOptions
     }
 
     /**
-     * @param array{color:string} $options
+     * @param array<string, mixed> $options
      */
     public function parseColor(array &$options, string $arg): bool
     {
@@ -211,15 +212,30 @@ final readonly class CliOptions
 
     /**
      * @param list<string> $args
-     * @param array{excludes:list<string>} $options
+     * @param array<string, mixed> $options
      */
     public function parseExclude(array $args, int &$index, array &$options, string $arg): bool
     {
-        return $this->parseRepeatableValue($args, $index, $options['excludes'], '--exclude', $arg);
+        $excludes = $options['excludes'] ?? [];
+
+        if (!is_array($excludes) || !array_is_list($excludes)) {
+            throw new \LogicException('The excludes option must be a list.');
+        }
+
+        foreach ($excludes as $exclude) {
+            if (!is_string($exclude)) {
+                throw new \LogicException('Every excludes option must be a string.');
+            }
+        }
+
+        $parsed = $this->parseRepeatableValue($args, $index, $excludes, '--exclude', $arg);
+        $options['excludes'] = $excludes;
+
+        return $parsed;
     }
 
     /**
-     * @param array{failOn:string} $options
+     * @param array<string, mixed> $options
      */
     public function parseFailOn(array &$options, string $arg): bool
     {
@@ -234,7 +250,7 @@ final readonly class CliOptions
     }
 
     /**
-     * @param array{format:string} $options
+     * @param array<string, mixed> $options
      * @param list<string> $allowed
      */
     public function parseOutputFormat(array &$options, string $arg, array $allowed = ['text', 'json', 'markdown', 'sarif', 'github']): bool
@@ -286,7 +302,7 @@ final readonly class CliOptions
     }
 
     /**
-     * @param array{baseline:string,writeBaseline:string} $options
+     * @param array<string, mixed> $options
      */
     public function parseSnapshotFileOptions(array &$options, string $arg, string $defaultWritePath): bool
     {
@@ -310,7 +326,7 @@ final readonly class CliOptions
     }
 
     /**
-     * @param array{summaryJson:string} $options
+     * @param array<string, mixed> $options
      */
     public function parseSummaryJson(array &$options, string $arg): bool
     {
@@ -323,6 +339,20 @@ final readonly class CliOptions
     public function presetName(array $args): string
     {
         return $this->valuedOption($args, '--preset') ?? '';
+    }
+
+    /**
+     * @param list<string> $args
+     * @param array<string, mixed> $options
+     */
+    public function resolvedConfig(array $args, array &$options): PhpProbeConfig
+    {
+        $options['config'] = $this->configPath($args, OptionValues::string($options, 'config'));
+
+        return $this->mergeConfigWithPreset(
+            PhpProbeConfig::fromFile(OptionValues::string($options, 'config')),
+            $this->presetName($args),
+        );
     }
 
     /**

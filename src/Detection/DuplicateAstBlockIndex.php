@@ -5,20 +5,28 @@ declare(strict_types=1);
 namespace Infocyph\PHPProbe\Detection;
 
 use PhpParser\Node;
+use PhpParser\Parser;
 use PhpParser\ParserFactory;
 
-final class DuplicateAstBlockIndex
+final readonly class DuplicateAstBlockIndex
 {
+    private Parser $parser;
+
+    public function __construct()
+    {
+        $this->parser = (new ParserFactory())->createForHostVersion();
+    }
+
     /**
-     * @param list<array{value:string,exact:string,line:int,statement:int,shape:string}> $tokens
+     * @param list<array{value:string,line:int}> $tokens
      * @return list<array{id:string,type:string,file:string,start_line:int,end_line:int,token_start:int,token_end:int,statement_hashes:list<string>,shape:list<string>}>
      */
     public function blocks(string $contents, string $file, array $tokens): array
     {
         try {
-            $nodes = (new ParserFactory())->createForHostVersion()->parse($contents);
-        } catch (\Throwable) {
-            return [];
+            $nodes = $this->parser->parse($contents);
+        } catch (\PhpParser\Error $error) {
+            throw new \RuntimeException(sprintf('Unable to parse %s for duplicate analysis: %s', $file, $error->getMessage()), previous: $error);
         }
 
         if ($nodes === null) {
@@ -41,7 +49,9 @@ final class DuplicateAstBlockIndex
     private function appendShape(array &$shape, mixed $value): void
     {
         if ($value instanceof Node) {
-            $shape = [...$shape, ...$this->shape($value)];
+            foreach ($this->shape($value) as $item) {
+                $shape[] = $item;
+            }
 
             return;
         }
@@ -150,7 +160,7 @@ final class DuplicateAstBlockIndex
     }
 
     /**
-     * @param list<array{value:string,exact:string,line:int,statement:int,shape:string}> $tokens
+     * @param list<array{value:string,line:int}> $tokens
      * @return array<int, array{first:int,last:int}>
      */
     private function lineTokenMap(array $tokens): array

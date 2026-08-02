@@ -117,6 +117,66 @@ it('rejects unknown syntax command options', function (): void {
         ->and($run['stderr'])->toContain('Unknown option for syntax command: --does-not-exist');
 });
 
+it('fails closed for an invalid explicit config file', function (): void {
+    $root = makeSyntaxCheckerFixture();
+    file_put_contents($root.DIRECTORY_SEPARATOR.'broken.json', '{invalid');
+
+    try {
+        $run = runSyntaxCheckerCommand($root, ['--config=broken.json']);
+    } finally {
+        removeSyntaxCheckerFixture($root);
+    }
+
+    expect($run['exitCode'])->toBe(2)
+        ->and($run['stderr'])->toContain('Invalid config JSON');
+});
+
+it('reports missing scan paths instead of silently passing', function (): void {
+    $root = makeSyntaxCheckerFixture();
+
+    try {
+        $run = runSyntaxCheckerCommand($root, ['missing']);
+    } finally {
+        removeSyntaxCheckerFixture($root);
+    }
+
+    expect($run['exitCode'])->toBe(2)
+        ->and($run['stderr'])->toContain('Scan path does not exist: missing');
+});
+
+it('keeps parallel syntax failures in deterministic path order', function (): void {
+    $root = makeSyntaxCheckerFixture();
+    $src = $root.DIRECTORY_SEPARATOR.'src';
+
+    mkdir($src, 0755, true);
+    file_put_contents($src.DIRECTORY_SEPARATOR.'Zed.php', "<?php\nfunction zed( {\n");
+    file_put_contents($src.DIRECTORY_SEPARATOR.'Alpha.php', "<?php\nfunction alpha( {\n");
+
+    try {
+        $run = runSyntaxCheckerCommand($root, ['--json', '--parallel=2', 'src']);
+    } finally {
+        removeSyntaxCheckerFixture($root);
+    }
+
+    $result = json_decode($run['stdout'], true);
+
+    expect($run['exitCode'])->toBe(1)
+        ->and(array_column($result['failures'], 'file'))->toBe(['src/Alpha.php', 'src/Zed.php']);
+});
+
+it('rejects unsafe syntax worker counts', function (): void {
+    $root = makeSyntaxCheckerFixture();
+
+    try {
+        $run = runSyntaxCheckerCommand($root, ['--parallel=1000']);
+    } finally {
+        removeSyntaxCheckerFixture($root);
+    }
+
+    expect($run['exitCode'])->toBe(2)
+        ->and($run['stderr'])->toContain('--parallel must be an integer between 1 and 64');
+});
+
 /**
  * @return array{exitCode:int,stdout:string,stderr:string}
  */

@@ -42,8 +42,8 @@ jobs:
       - name: Install dependencies
         run: composer install --prefer-dist --no-interaction --no-progress
 
-      - name: Run tests
-        run: composer test
+      - name: Run standalone quality suite
+        run: composer tests
 
       - name: Prepare report directory
         run: mkdir -p build/reports
@@ -52,13 +52,7 @@ jobs:
         run: php bin/phpprobe syntax --config=resources/phpprobe.json --format=markdown --summary-json=build/reports/syntax-summary.json src tests > build/reports/syntax.md
 
       - name: Run duplicate checker
-        run: php bin/phpprobe duplicates --preset=standard --config=resources/phpprobe.json --format=markdown --summary-json=build/reports/duplicates-summary.json src tests > build/reports/duplicates.md
-
-      - name: Run API checker
-        run: php bin/phpprobe api --config=resources/phpprobe.json --format=markdown --summary-json=build/reports/api-summary.json src tests > build/reports/api.md
-
-      - name: Run comment checker
-        run: php bin/phpprobe comments --config=resources/phpprobe.json --format=markdown --summary-json=build/reports/comments-summary.json src tests > build/reports/comments.md
+        run: php bin/phpprobe duplicates --config=tests/phpprobe.json --format=markdown --summary-json=build/reports/duplicates-summary.json src tests > build/reports/duplicates.md
 
       - name: Upload checker reports
         if: always()
@@ -108,17 +102,13 @@ jobs:
       - name: Run PHPForge tests
         working-directory: phpforge
         run: |
-          if composer run --list | grep -qE '^\s+ic:test:code\s'; then
-            composer ic:test:code
-          elif composer run --list | grep -qE '^\s+ic:tests\s'; then
-            composer ic:tests
-          elif [ -x vendor/bin/pest ]; then
+          if [ -x vendor/bin/pest ]; then
             vendor/bin/pest
           elif [ -x vendor/bin/phpunit ]; then
             vendor/bin/phpunit
           elif composer run --list | grep -qE '^\s+test\s'; then
             composer test
           else
-            echo "No supported PHPForge test command found." >&2
+            echo "No standalone PHPForge test runner found." >&2
             exit 1
           fi

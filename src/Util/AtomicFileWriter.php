@@ -23,16 +23,10 @@ final class AtomicFileWriter
             throw new \RuntimeException(sprintf('Failed to write temporary file: %s', $temporary));
         }
 
-        if (is_file($path) && !self::safeUnlink($path)) {
-            self::safeUnlink($temporary);
-
-            throw new \RuntimeException(sprintf('Failed to replace existing file: %s', $path));
-        }
-
         if (!self::safeRename($temporary, $path)) {
             self::safeUnlink($temporary);
 
-            throw new \RuntimeException(sprintf('Failed to move temporary file into place: %s', $path));
+            throw new \RuntimeException(sprintf('Failed to atomically replace file: %s', $path));
         }
     }
 
@@ -71,10 +65,6 @@ final class AtomicFileWriter
 
     private static function suffix(): string
     {
-        try {
-            return bin2hex(random_bytes(6));
-        } catch (\Throwable) {
-            return uniqid('', true);
-        }
+        return bin2hex(random_bytes(8));
     }
 }

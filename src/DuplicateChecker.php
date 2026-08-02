@@ -5,11 +5,12 @@ declare(strict_types=1);
 namespace Infocyph\PHPProbe;
 
 use Infocyph\PHPProbe\Config\CliOptions;
+use Infocyph\PHPProbe\Config\OptionValues;
 use Infocyph\PHPProbe\Config\Paths;
-use Infocyph\PHPProbe\Config\PhpProbeConfig;
 use Infocyph\PHPProbe\Console\Ansi;
 use Infocyph\PHPProbe\Detection\DuplicateCloneReducer;
 use Infocyph\PHPProbe\Detection\DuplicateDetectionEngine;
+use Infocyph\PHPProbe\Util\AtomicFileWriter;
 use Infocyph\PHPProbe\Util\BaselineJson;
 use Infocyph\PHPProbe\Util\CheckerRuntime;
 use Infocyph\PHPProbe\Util\GithubAnnotation;
@@ -17,6 +18,12 @@ use Infocyph\PHPProbe\Util\Sarif;
 use Infocyph\PHPProbe\Util\ScopedTempFile;
 use Infocyph\PHPProbe\Util\SummaryJson;
 
+/**
+ * @phpstan-type CloneOccurrence array{file:string,start_line:int,end_line:int,lines:int,context:string}
+ * @phpstan-type CloneGroup array{fingerprint:string,source:string,score:float,similarity:float,tokens:int,lines:int,statements:int,block_type:string,occurrences:list<CloneOccurrence>}
+ * @phpstan-type DuplicateResult array{files:int,total_lines:int,duplicated_lines:int,duplicate_percentage:float,known_clones:int,new_clones:int,cache_hit:bool,clones:list<CloneGroup>}
+ * @phpstan-type DuplicateOptions array{help:bool,format:string,color:string,failOn:string,summaryJson:string,changedOnly:bool,changedBase:string,textColorSuccess:string,textColorError:string,textColorWarning:string,textColorInfo:string,textColorFile:string,cacheEnabled:bool,cacheFile:string,errorDuplicatePercentage:float,outputStyle:string,scoreColorHighMin:float,scoreColorMediumMin:float,scoreColorLowMin:float,scoreColorHigh:string,scoreColorMedium:string,scoreColorLow:string,scoreColorBase:string,config:string,mode:string,normalize:bool,fuzzy:bool,nearMiss:bool,minLines:int,minTokens:int,minStatements:int,minSimilarity:float,maxNearMissComparisons:int,baseline:string,writeBaseline:string,ignoreFingerprints:list<string>,paths:list<string>,excludes:list<string>}
+ */
 final class DuplicateChecker
 {
     /**
@@ -37,8 +44,9 @@ final class DuplicateChecker
     }
 
     /**
-     * @param array<string, mixed> $options
-     * @return array{files:int,total_lines:int,duplicated_lines:int,duplicate_percentage:float,known_clones:int,new_clones:int,cache_hit:bool,clones:list<array{fingerprint:string,source:string,score:float,similarity:float,tokens:int,lines:int,statements:int,block_type:string,occurrences:list<array{file:string,start_line:int,end_line:int,lines:int,context:string}>}>}
+     * @param list<string> $files
+     * @param DuplicateOptions $options
+     * @return DuplicateResult
      */
     private function analyzeWithCache(array $files, array $options): array
     {
@@ -51,15 +59,21 @@ final class DuplicateChecker
             'minTokens' => $options['minTokens'],
             'minStatements' => $options['minStatements'],
             'minSimilarity' => $options['minSimilarity'],
+            'maxNearMissComparisons' => $options['maxNearMissComparisons'],
         ];
         $cacheKey = $this->cacheKey($files, $engineOptions);
 
         if ($options['cacheEnabled']) {
             $cache = $this->loadCache($options['cacheFile']);
 
-            if (isset($cache[$cacheKey]) && is_array($cache[$cacheKey])) {
-                $hit = $cache[$cacheKey];
+            $hit = $this->cachedResult(
+                $cache['version'] ?? null,
+                $cache['key'] ?? null,
+                $cache['result'] ?? null,
+                $cacheKey,
+            );
 
+            if ($hit !== null) {
                 return [
                     ...$hit,
                     'cache_hit' => true,
@@ -71,20 +85,19 @@ final class DuplicateChecker
         $result['cache_hit'] = false;
 
         if ($options['cacheEnabled']) {
-            $cache = $this->loadCache($options['cacheFile']);
-            $cache[$cacheKey] = [
-                ...$result,
-                'cache_hit' => false,
-            ];
-            $this->saveCache($options['cacheFile'], $cache);
+            $this->saveCache($options['cacheFile'], [
+                'version' => DuplicateDetectionEngine::CACHE_VERSION,
+                'key' => $cacheKey,
+                'result' => [...$result, 'cache_hit' => false],
+            ]);
         }
 
         return $result;
     }
 
     /**
-     * @param array<string, mixed> $options
-     * @return array{files:int,total_lines:int,duplicated_lines:int,duplicate_percentage:float,known_clones:int,new_clones:int,cache_hit:bool,clones:list<array{fingerprint:string,source:string,score:float,similarity:float,tokens:int,lines:int,statements:int,block_type:string,occurrences:list<array{file:string,start_line:int,end_line:int,lines:int,context:string}>}>}
+     * @param DuplicateOptions $options
+     * @return DuplicateResult
      */
     private function buildResult(array $options): array
     {
@@ -94,7 +107,7 @@ final class DuplicateChecker
             $result = $this->withoutBaselineClones($result, $options['baseline']);
         }
 
-        if (($options['ignoreFingerprints'] ?? []) !== []) {
+        if ($options['ignoreFingerprints'] !== []) {
             $result = $this->withoutIgnoredFingerprints($result, $options['ignoreFingerprints']);
         }
 
@@ -105,15 +118,151 @@ final class DuplicateChecker
         return $result;
     }
 
+    /** @return CloneGroup|null */
+    private function cachedClone(mixed $value): ?array
+    {
+        if (!is_array($value)) {
+            return null;
+        }
+
+        foreach (['fingerprint', 'source', 'block_type'] as $field) {
+            if (!is_string($value[$field] ?? null)) {
+                return null;
+            }
+        }
+
+        foreach (['tokens', 'lines', 'statements'] as $field) {
+            if (!is_int($value[$field] ?? null)) {
+                return null;
+            }
+        }
+
+        $score = $value['score'] ?? null;
+        $similarity = $value['similarity'] ?? null;
+        $occurrences = $value['occurrences'] ?? null;
+
+        if (
+            (!is_int($score) && !is_float($score))
+            || (!is_int($similarity) && !is_float($similarity))
+            || !is_array($occurrences)
+            || !array_is_list($occurrences)
+        ) {
+            return null;
+        }
+
+        $typedOccurrences = [];
+
+        foreach ($occurrences as $occurrence) {
+            $typed = $this->cachedOccurrence($occurrence);
+
+            if ($typed === null) {
+                return null;
+            }
+
+            $typedOccurrences[] = $typed;
+        }
+
+        return [
+            'fingerprint' => $value['fingerprint'],
+            'source' => $value['source'],
+            'score' => (float) $score,
+            'similarity' => (float) $similarity,
+            'tokens' => $value['tokens'],
+            'lines' => $value['lines'],
+            'statements' => $value['statements'],
+            'block_type' => $value['block_type'],
+            'occurrences' => $typedOccurrences,
+        ];
+    }
+
+    /** @return CloneOccurrence|null */
+    private function cachedOccurrence(mixed $value): ?array
+    {
+        if (!is_array($value)) {
+            return null;
+        }
+
+        if (!is_string($value['file'] ?? null) || !is_string($value['context'] ?? null)) {
+            return null;
+        }
+
+        foreach (['start_line', 'end_line', 'lines'] as $field) {
+            if (!is_int($value[$field] ?? null)) {
+                return null;
+            }
+        }
+
+        return [
+            'file' => $value['file'],
+            'start_line' => $value['start_line'],
+            'end_line' => $value['end_line'],
+            'lines' => $value['lines'],
+            'context' => $value['context'],
+        ];
+    }
+
     /**
-     * @param array<string, mixed> $engineOptions
+     * @return DuplicateResult|null
+     */
+    private function cachedResult(mixed $version, mixed $key, mixed $value, string $expectedKey): ?array
+    {
+        if ($version !== DuplicateDetectionEngine::CACHE_VERSION || $key !== $expectedKey || !is_array($value)) {
+            return null;
+        }
+
+        foreach (['files', 'total_lines', 'duplicated_lines', 'known_clones', 'new_clones'] as $field) {
+            if (!is_int($value[$field] ?? null)) {
+                return null;
+            }
+        }
+
+        $percentage = $value['duplicate_percentage'] ?? null;
+        $clones = $value['clones'] ?? null;
+
+        if ((!is_int($percentage) && !is_float($percentage)) || !is_array($clones) || !array_is_list($clones)) {
+            return null;
+        }
+
+        $typedClones = [];
+
+        foreach ($clones as $clone) {
+            $typed = $this->cachedClone($clone);
+
+            if ($typed === null) {
+                return null;
+            }
+
+            $typedClones[] = $typed;
+        }
+
+        return [
+            'files' => $value['files'],
+            'total_lines' => $value['total_lines'],
+            'duplicated_lines' => $value['duplicated_lines'],
+            'duplicate_percentage' => (float) $percentage,
+            'known_clones' => $value['known_clones'],
+            'new_clones' => $value['new_clones'],
+            'cache_hit' => true,
+            'clones' => $typedClones,
+        ];
+    }
+
+    /**
+     * @param list<string> $files
+     * @param array<string, bool|float|int|string> $engineOptions
      */
     private function cacheKey(array $files, array $engineOptions): string
     {
         $fingerprint = [];
 
         foreach ($files as $file) {
-            $fingerprint[] = [$file, $this->safeFilesize($file), $this->safeFilemtime($file)];
+            $digest = hash_file('sha256', $file);
+
+            if (!is_string($digest)) {
+                throw new \RuntimeException(sprintf('Failed to fingerprint PHP source file: %s', $file));
+            }
+
+            $fingerprint[] = [$file, $digest];
         }
 
         return hash('sha256', json_encode([$engineOptions, $fingerprint], JSON_UNESCAPED_SLASHES) ?: '');
@@ -125,7 +274,7 @@ final class DuplicateChecker
     }
 
     /**
-     * @return array<string, mixed>
+     * @return DuplicateOptions
      */
     private function defaultOptions(): array
     {
@@ -162,6 +311,7 @@ final class DuplicateChecker
             'minTokens' => 70,
             'minStatements' => 4,
             'minSimilarity' => 0.85,
+            'maxNearMissComparisons' => 100000,
             'baseline' => '',
             'writeBaseline' => '',
             'ignoreFingerprints' => [],
@@ -181,7 +331,7 @@ final class DuplicateChecker
     }
 
     /**
-     * @param array<string, mixed> $options
+     * @param DuplicateOptions $options
      * @param array{files:int,total_lines:int,duplicated_lines:int,duplicate_percentage:float,known_clones:int,new_clones:int,cache_hit:bool,clones:list<array{fingerprint:string,source:string,score:float,similarity:float,tokens:int,lines:int,statements:int,block_type:string,occurrences:list<array{file:string,start_line:int,end_line:int,lines:int,context:string}>}>} $result
      */
     private function finishRun(array $result, array $options): int
@@ -208,6 +358,7 @@ final class DuplicateChecker
             '  --min-tokens=N                   token fingerprint window size (default: 70)',
             '  --min-statements=N               statement window size for audit mode (default: 4)',
             '  --min-similarity=N               near-miss threshold, 0.0-1.0 or 0-100 (default: 0.85)',
+            '  --max-near-miss-comparisons=N    hard ceiling for structural comparisons (default: 100000)',
             '  --near-miss                      enable bounded statement/shape similarity matching',
             '  --exact                          do not normalize variables/literals',
             '  --fuzzy                          also normalize identifiers/calls',
@@ -238,11 +389,17 @@ final class DuplicateChecker
     }
 
     /**
-     * @return array<string, array<string, mixed>>
+     * @return array<string, mixed>
      */
     private function loadCache(string $path): array
     {
         if ($path === '' || !is_file($path) || !is_readable($path)) {
+            return [];
+        }
+
+        $size = filesize($path);
+
+        if (!is_int($size) || $size > 67_108_864) {
             return [];
         }
 
@@ -258,7 +415,21 @@ final class DuplicateChecker
             return [];
         }
 
-        return is_array($decoded) ? $decoded : [];
+        if (!is_array($decoded) || array_is_list($decoded)) {
+            return [];
+        }
+
+        $cache = [];
+
+        foreach ($decoded as $key => $value) {
+            if (!is_string($key)) {
+                return [];
+            }
+
+            $cache[$key] = $value;
+        }
+
+        return $cache;
     }
 
     /**
@@ -267,7 +438,8 @@ final class DuplicateChecker
      */
     private function normalizeMode(array $options): array
     {
-        $options['mode'] = in_array($options['mode'], ['gate', 'audit'], true) ? $options['mode'] : 'gate';
+        $mode = OptionValues::string($options, 'mode');
+        $options['mode'] = in_array($mode, ['gate', 'audit'], true) ? $mode : 'gate';
 
         if ($options['mode'] === 'audit') {
             $options['nearMiss'] = true;
@@ -278,17 +450,15 @@ final class DuplicateChecker
 
     /**
      * @param list<string> $args
-     * @return array<string, mixed>
+     * @return DuplicateOptions
      */
     private function parseArgs(array $args): array
     {
         $cli = new CliOptions();
         $options = $this->defaultOptions();
-        $options['config'] = $cli->configPath($args, $options['config']);
-        $config = PhpProbeConfig::fromFile($options['config']);
-        $options = $cli->mergeConfigWithPreset($config, $cli->presetName($args))->applyDuplicateOptions($options);
+        $options = $cli->resolvedConfig($args, $options)->applyDuplicateOptions($options);
         $options = $this->normalizeMode($options);
-        $configuredPaths = $options['paths'];
+        $configuredPaths = OptionValues::strings($options, 'paths');
         $cli->collectPaths(
             $args,
             $options,
@@ -297,7 +467,7 @@ final class DuplicateChecker
             'Unknown option for duplicates command: %s',
         );
 
-        return $options;
+        return $this->typedOptions($options);
     }
 
     /**
@@ -309,7 +479,11 @@ final class DuplicateChecker
         $mode = $cli->optionValue($arg, '--mode');
 
         if ($mode !== null) {
-            $options['mode'] = in_array($mode, ['gate', 'audit'], true) ? $mode : 'gate';
+            if (!in_array($mode, ['gate', 'audit'], true)) {
+                throw new \InvalidArgumentException('--mode must be one of: gate, audit.');
+            }
+
+            $options['mode'] = $mode;
             $options['nearMiss'] = $options['mode'] === 'audit';
 
             return true;
@@ -318,7 +492,11 @@ final class DuplicateChecker
         $errorDuplicatePercentage = $cli->optionValue($arg, '--error-duplicate-percentage');
 
         if ($errorDuplicatePercentage !== null) {
-            $options['errorDuplicatePercentage'] = max(0.0, min(100.0, (float) $errorDuplicatePercentage));
+            if (!is_numeric($errorDuplicatePercentage) || (float) $errorDuplicatePercentage < 0.0 || (float) $errorDuplicatePercentage > 100.0) {
+                throw new \InvalidArgumentException('--error-duplicate-percentage must be between 0 and 100.');
+            }
+
+            $options['errorDuplicatePercentage'] = (float) $errorDuplicatePercentage;
 
             return true;
         }
@@ -387,11 +565,24 @@ final class DuplicateChecker
      */
     private function parseNumericOption(array &$options, string $arg, CliOptions $cli): bool
     {
-        foreach (['--min-lines' => 'minLines', '--min-tokens' => 'minTokens', '--min-statements' => 'minStatements'] as $name => $key) {
+        foreach ([
+            '--min-lines' => 'minLines',
+            '--min-tokens' => 'minTokens',
+            '--min-statements' => 'minStatements',
+            '--max-near-miss-comparisons' => 'maxNearMissComparisons',
+        ] as $name => $key) {
             $value = $cli->optionValue($arg, $name);
 
             if ($value !== null) {
-                $options[$key] = max(1, (int) $value);
+                if (filter_var($value, FILTER_VALIDATE_INT) === false || (int) $value < 1) {
+                    throw new \InvalidArgumentException(sprintf('%s must be a positive integer.', $name));
+                }
+
+                if ($name === '--max-near-miss-comparisons' && (int) $value > 10_000_000) {
+                    throw new \InvalidArgumentException('--max-near-miss-comparisons must not exceed 10000000.');
+                }
+
+                $options[$key] = (int) $value;
 
                 return true;
             }
@@ -403,51 +594,23 @@ final class DuplicateChecker
             return false;
         }
 
+        if (!is_numeric($similarity)) {
+            throw new \InvalidArgumentException('--min-similarity must be a number between 0 and 1, or 0 and 100.');
+        }
+
         $value = (float) $similarity;
+
+        if ($value < 0.0 || $value > 100.0) {
+            throw new \InvalidArgumentException('--min-similarity must be a number between 0 and 1, or 0 and 100.');
+        }
+
         $options['minSimilarity'] = $value > 1.0 ? min(100.0, $value) / 100.0 : max(0.0, min(1.0, $value));
 
         return true;
     }
 
-    private function safeFilemtime(string $file): int
-    {
-        set_error_handler(static fn(): bool => true);
-
-        try {
-            $value = filemtime($file);
-        } finally {
-            restore_error_handler();
-        }
-
-        return is_int($value) ? $value : 0;
-    }
-
-    private function safeFilePutContents(string $path, string $contents): void
-    {
-        set_error_handler(static fn(): bool => true);
-
-        try {
-            file_put_contents($path, $contents);
-        } finally {
-            restore_error_handler();
-        }
-    }
-
-    private function safeFilesize(string $file): int
-    {
-        set_error_handler(static fn(): bool => true);
-
-        try {
-            $value = filesize($file);
-        } finally {
-            restore_error_handler();
-        }
-
-        return is_int($value) ? $value : 0;
-    }
-
     /**
-     * @param array<string, array<string, mixed>> $cache
+     * @param array<string, mixed> $cache
      */
     private function saveCache(string $path, array $cache): void
     {
@@ -461,25 +624,25 @@ final class DuplicateChecker
             return;
         }
 
-        $this->safeFilePutContents($path, $encoded);
+        AtomicFileWriter::write($path, $encoded);
     }
 
     /**
-     * @param array<string, mixed> $options
+     * @param DuplicateOptions $options
      */
     private function scoreColor(float $score, array $options): string
     {
         return match (true) {
-            $score >= (float) ($options['scoreColorHighMin'] ?? 260.0) => (string) ($options['scoreColorHigh'] ?? 'red'),
-            $score >= (float) ($options['scoreColorMediumMin'] ?? 180.0) => (string) ($options['scoreColorMedium'] ?? 'yellow'),
-            $score >= (float) ($options['scoreColorLowMin'] ?? 120.0) => (string) ($options['scoreColorLow'] ?? 'cyan'),
-            default => (string) ($options['scoreColorBase'] ?? 'gray'),
+            $score >= $options['scoreColorHighMin'] => $options['scoreColorHigh'],
+            $score >= $options['scoreColorMediumMin'] => $options['scoreColorMedium'],
+            $score >= $options['scoreColorLowMin'] => $options['scoreColorLow'],
+            default => $options['scoreColorBase'],
         };
     }
 
     /**
      * @param array{files:int,total_lines:int,duplicated_lines:int,duplicate_percentage:float,known_clones:int,new_clones:int,cache_hit:bool,clones:list<array{fingerprint:string,source:string,score:float,similarity:float,tokens:int,lines:int,statements:int,block_type:string,occurrences:list<array{file:string,start_line:int,end_line:int,lines:int,context:string}>}>} $result
-     * @param array<string, mixed> $options
+     * @param DuplicateOptions $options
      */
     private function shouldFail(array $result, array $options): bool
     {
@@ -496,7 +659,7 @@ final class DuplicateChecker
 
     /**
      * @param array{files:int,total_lines:int,duplicated_lines:int,duplicate_percentage:float,known_clones:int,new_clones:int,cache_hit:bool,clones:list<array{fingerprint:string,source:string,score:float,similarity:float,tokens:int,lines:int,statements:int,block_type:string,occurrences:list<array{file:string,start_line:int,end_line:int,lines:int,context:string}>}>} $result
-     * @param array{failOn:string} $options
+     * @param DuplicateOptions $options
      */
     private function summaryFooter(array $result, array $options, bool $failed): string
     {
@@ -510,6 +673,57 @@ final class DuplicateChecker
             $result['cache_hit'] ? 'HIT' : 'MISS',
             $failed ? 'FAIL' : 'PASS',
         );
+    }
+
+    /**
+     * @param array<string, mixed> $options
+     * @return DuplicateOptions
+     */
+    private function typedOptions(array $options): array
+    {
+        /** @var DuplicateOptions $typed */
+        $typed = OptionValues::coerce($options, [
+            'help' => 'bool',
+            'format' => 'string',
+            'color' => 'string',
+            'failOn' => 'string',
+            'summaryJson' => 'string',
+            'changedOnly' => 'bool',
+            'changedBase' => 'string',
+            'textColorSuccess' => 'string',
+            'textColorError' => 'string',
+            'textColorWarning' => 'string',
+            'textColorInfo' => 'string',
+            'textColorFile' => 'string',
+            'cacheEnabled' => 'bool',
+            'cacheFile' => 'string',
+            'errorDuplicatePercentage' => 'float',
+            'outputStyle' => 'string',
+            'scoreColorHighMin' => 'float',
+            'scoreColorMediumMin' => 'float',
+            'scoreColorLowMin' => 'float',
+            'scoreColorHigh' => 'string',
+            'scoreColorMedium' => 'string',
+            'scoreColorLow' => 'string',
+            'scoreColorBase' => 'string',
+            'config' => 'string',
+            'mode' => 'string',
+            'normalize' => 'bool',
+            'fuzzy' => 'bool',
+            'nearMiss' => 'bool',
+            'minLines' => 'int',
+            'minTokens' => 'int',
+            'minStatements' => 'int',
+            'minSimilarity' => 'float',
+            'maxNearMissComparisons' => 'int',
+            'baseline' => 'string',
+            'writeBaseline' => 'string',
+            'ignoreFingerprints' => 'strings',
+            'paths' => 'strings',
+            'excludes' => 'strings',
+        ]);
+
+        return $typed;
     }
 
     /**
@@ -564,7 +778,6 @@ final class DuplicateChecker
     {
         $payload = [
             'version' => 1,
-            'generated_at' => gmdate('c'),
             'clones' => array_map(static fn(array $clone): array => [
                 'fingerprint' => $clone['fingerprint'],
                 'source' => $clone['source'],
@@ -609,7 +822,7 @@ final class DuplicateChecker
 
     /**
      * @param array{files:int,total_lines:int,duplicated_lines:int,duplicate_percentage:float,known_clones:int,new_clones:int,cache_hit:bool,clones:list<array{fingerprint:string,source:string,score:float,similarity:float,tokens:int,lines:int,statements:int,block_type:string,occurrences:list<array{file:string,start_line:int,end_line:int,lines:int,context:string}>}>} $result
-     * @param array{failOn:string} $options
+     * @param DuplicateOptions $options
      */
     private function writeMarkdown(array $result, array $options, bool $failed): void
     {
@@ -653,7 +866,7 @@ final class DuplicateChecker
 
     /**
      * @param array{files:int,total_lines:int,duplicated_lines:int,duplicate_percentage:float,known_clones:int,new_clones:int,cache_hit:bool,clones:list<array{fingerprint:string,source:string,score:float,similarity:float,tokens:int,lines:int,statements:int,block_type:string,occurrences:list<array{file:string,start_line:int,end_line:int,lines:int,context:string}>}>} $result
-     * @param array<string, mixed> $options
+     * @param DuplicateOptions $options
      */
     private function writeResult(array $result, array $options, bool $failed): void
     {
@@ -712,7 +925,7 @@ final class DuplicateChecker
 
     /**
      * @param array{files:int,total_lines:int,duplicated_lines:int,duplicate_percentage:float,known_clones:int,new_clones:int,cache_hit:bool,clones:list<array{fingerprint:string,source:string,score:float,similarity:float,tokens:int,lines:int,statements:int,block_type:string,occurrences:list<array{file:string,start_line:int,end_line:int,lines:int,context:string}>}>} $result
-     * @param array{summaryJson:string,failOn:string} $options
+     * @param DuplicateOptions $options
      */
     private function writeSummaryJson(array $result, array $options, int $exitCode): void
     {
@@ -740,18 +953,18 @@ final class DuplicateChecker
 
     /**
      * @param array{files:int,total_lines:int,duplicated_lines:int,duplicate_percentage:float,known_clones:int,new_clones:int,cache_hit:bool,clones:list<array{fingerprint:string,source:string,score:float,similarity:float,tokens:int,lines:int,statements:int,block_type:string,occurrences:list<array{file:string,start_line:int,end_line:int,lines:int,context:string}>}>} $result
-     * @param array{writeBaseline:string,failOn:string} $options
+     * @param DuplicateOptions $options
      */
     private function writeText(array $result, array $options, bool $failed): void
     {
         if ($options['writeBaseline'] !== '') {
-            fwrite(STDOUT, Ansi::color(sprintf('Duplicate baseline written: %s', $options['writeBaseline']), (string) $options['textColorInfo'], STDOUT) . PHP_EOL);
+            fwrite(STDOUT, Ansi::color(sprintf('Duplicate baseline written: %s', $options['writeBaseline']), $options['textColorInfo'], STDOUT) . PHP_EOL);
         }
 
         if ($result['clones'] === []) {
             fwrite(STDOUT, Ansi::color(
                 sprintf('No new duplicated code found (%d PHP files, %d lines checked).', $result['files'], $result['total_lines']),
-                (string) $options['textColorSuccess'],
+                $options['textColorSuccess'],
                 STDOUT,
             ) . PHP_EOL);
             fwrite(STDOUT, $this->summaryFooter($result, $options, $failed) . PHP_EOL);
@@ -764,13 +977,13 @@ final class DuplicateChecker
             count($result['clones']),
             $result['duplicated_lines'],
             $result['files'],
-        ), (string) $options['textColorError'], STDERR) . PHP_EOL);
+        ), $options['textColorError'], STDERR) . PHP_EOL);
 
         foreach ($result['clones'] as $index => $clone) {
             $first = $clone['occurrences'][0];
             $score = Ansi::color(sprintf('%.1f', $clone['score']), $this->scoreColor((float) $clone['score'], $options), STDERR);
 
-            if (($options['outputStyle'] ?? 'compact') === 'classic') {
+            if ($options['outputStyle'] === 'classic') {
                 fwrite(STDERR, sprintf(
                     '  %d) %d lines, %.0f%% similar, %s, score %s',
                     $index + 1,
@@ -785,7 +998,7 @@ final class DuplicateChecker
                     $index + 1,
                     $clone['lines'],
                     $clone['similarity'] * 100,
-                    $this->engineLabel((string) $clone['source']),
+                    $this->engineLabel($clone['source']),
                     $score,
                 ) . PHP_EOL);
             }
@@ -793,7 +1006,7 @@ final class DuplicateChecker
                 STDERR,
                 '     ' . Ansi::color(
                     sprintf('%s:%d-%d', $first['file'], $first['start_line'], $first['end_line']),
-                    (string) $options['textColorFile'],
+                    $options['textColorFile'],
                     STDERR,
                 ) . PHP_EOL,
             );
@@ -803,14 +1016,14 @@ final class DuplicateChecker
                     STDERR,
                     '     ' . Ansi::color(
                         sprintf('%s:%d-%d', $occurrence['file'], $occurrence['start_line'], $occurrence['end_line']),
-                        (string) $options['textColorFile'],
+                        $options['textColorFile'],
                         STDERR,
                     ) . PHP_EOL,
                 );
             }
         }
 
-        fwrite(STDERR, Ansi::color(sprintf('%.2f%% duplicated lines.', $result['duplicate_percentage']), (string) $options['textColorWarning'], STDERR) . PHP_EOL);
+        fwrite(STDERR, Ansi::color(sprintf('%.2f%% duplicated lines.', $result['duplicate_percentage']), $options['textColorWarning'], STDERR) . PHP_EOL);
         fwrite(STDERR, $this->summaryFooter($result, $options, $failed) . PHP_EOL);
     }
 }

@@ -29,29 +29,31 @@ Typical contributor workflow:
 3. Run quality checks locally.
 4. Open a pull request with context and verification notes.
 
-Recommended checks:
+Run the complete standalone quality suite:
 
 ```bash
-composer ic:tests
+composer tests
 ```
 
 Useful targeted commands:
 
 ```bash
-composer ic:test:syntax
-composer ic:test:code
-composer ic:test:lint
-composer ic:test:sniff
-composer ic:test:static
-composer ic:test:security
-composer ic:test:architecture
+composer test
+composer test:types
+composer test:sniff
+composer test:pint
+composer test:rector
+composer check
 ```
 
 Auto-fix and processing helpers:
 
 ```bash
-composer ic:process
+composer process
 ```
+
+Performance-sensitive duplicate-detection changes should also run
+``composer benchmark`` and include the before/after output in the pull request.
 
 ## Pull Request Guidelines
 
