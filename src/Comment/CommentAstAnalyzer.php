@@ -15,6 +15,13 @@ use PHPStan\PhpDocParser\Lexer\Lexer;
 use PHPStan\PhpDocParser\Parser\PhpDocParser;
 use PHPStan\PhpDocParser\Parser\TokenIterator;
 
+/**
+ * @phpstan-type Symbol array{id:string,aliases:list<string>,start_line:int,end_line:int}
+ * @phpstan-type Finding array{line:int,end_line:int,type:string,message:string,confidence:string,subtype:?string,explanation:?string,suggestion:?string,raw:?string}
+ * @phpstan-type Symbols list<Symbol>
+ * @phpstan-type Findings list<Finding>
+ * @phpstan-type Options array<string, mixed>
+ */
 final class CommentAstAnalyzer
 {
     private ?Lexer $phpDocLexer = null;
@@ -22,20 +29,10 @@ final class CommentAstAnalyzer
     private ?PhpDocParser $phpDocParser = null;
 
     /**
-     * @param array<string, mixed> $options
+     * @param Options $options
      * @return array{
-     *     symbols:list<array{id:string,aliases:list<string>,start_line:int,end_line:int}>,
-     *     findings:list<array{
-     *         line:int,
-     *         end_line:int,
-     *         type:string,
-     *         message:string,
-     *         confidence:string,
-     *         subtype:?string,
-     *         explanation:?string,
-     *         suggestion:?string,
-     *         raw:?string
-     *     }>
+     *     symbols: Symbols,
+     *     findings: Findings
      * }
      */
     public function analyze(string $file, array $options): array
@@ -64,7 +61,7 @@ final class CommentAstAnalyzer
     }
 
     /**
-     * @param list<array{id:string,aliases:list<string>,start_line:int,end_line:int}> $symbols
+     * @param Symbols $symbols
      * @param list<string> $aliases
      */
     private function addSymbol(array &$symbols, string $id, array $aliases, int $startLine, int $endLine): void
@@ -89,32 +86,11 @@ final class CommentAstAnalyzer
         ];
     }
 
-    private function analyzeClassConstantNode(
-        Node\Stmt\ClassConst $node,
-        string $fqcn,
-        string $localClassName,
-        array &$symbols,
-    ): void {
-        $startLine = $node->getStartLine();
-        $endLine = $node->getEndLine();
-
-        foreach ($node->consts as $constant) {
-            $name = $constant->name->toString();
-            $qualifiedConstant = $fqcn . '::' . $name;
-
-            $this->addSymbol(
-                $symbols,
-                $qualifiedConstant,
-                [
-                    $qualifiedConstant,
-                    $localClassName . '::' . $name,
-                ],
-                $startLine,
-                $endLine,
-            );
-        }
-    }
-
+    /**
+     * @param Symbols $symbols
+     * @param Findings $findings
+     * @param Options $options
+     */
     private function analyzeClassLikeNode(
         Node\Stmt\ClassLike $node,
         string $namespace,
@@ -152,16 +128,22 @@ final class CommentAstAnalyzer
                     $findings,
                     $options,
                 ),
-                $statement instanceof Node\Stmt\Property => $this->analyzePropertyNode(
-                    $statement,
+                $statement instanceof Node\Stmt\Property => $this->analyzeClassMemberNodes(
+                    array_values($statement->props),
                     $fqcn,
                     $localClassName,
+                    '::$',
+                    $statement->getStartLine(),
+                    $statement->getEndLine(),
                     $symbols,
                 ),
-                $statement instanceof Node\Stmt\ClassConst => $this->analyzeClassConstantNode(
-                    $statement,
+                $statement instanceof Node\Stmt\ClassConst => $this->analyzeClassMemberNodes(
+                    array_values($statement->consts),
                     $fqcn,
                     $localClassName,
+                    '::',
+                    $statement->getStartLine(),
+                    $statement->getEndLine(),
                     $symbols,
                 ),
                 default => null,
@@ -169,6 +151,41 @@ final class CommentAstAnalyzer
         }
     }
 
+    /**
+     * @param list<Node\Const_|Node\PropertyItem> $members
+     * @param Symbols $symbols
+     */
+    private function analyzeClassMemberNodes(
+        array $members,
+        string $fqcn,
+        string $localClassName,
+        string $separator,
+        int $startLine,
+        int $endLine,
+        array &$symbols,
+    ): void {
+        foreach ($members as $member) {
+            $name = $member->name->toString();
+            $qualifiedMember = $fqcn . $separator . $name;
+
+            $this->addSymbol(
+                $symbols,
+                $qualifiedMember,
+                [
+                    $qualifiedMember,
+                    $localClassName . $separator . $name,
+                ],
+                $startLine,
+                $endLine,
+            );
+        }
+    }
+
+    /**
+     * @param Symbols $symbols
+     * @param Findings $findings
+     * @param Options $options
+     */
     private function analyzeClassMethodNode(
         Node\Stmt\ClassMethod $node,
         string $fqcn,
@@ -200,6 +217,7 @@ final class CommentAstAnalyzer
         );
     }
 
+    /** @param Symbols $symbols */
     private function analyzeConstantNode(
         Node\Stmt\Const_ $node,
         string $namespace,
@@ -225,8 +243,8 @@ final class CommentAstAnalyzer
     }
 
     /**
-     * @param list<array{line:int,end_line:int,type:string,message:string,confidence:string,subtype:?string,explanation:?string,suggestion:?string,raw:?string}> $findings
-     * @param array<string, mixed> $options
+     * @param Findings $findings
+     * @param Options $options
      */
     private function analyzeFunctionLike(Node\FunctionLike $node, string $symbol, array &$findings, array $options): void
     {
@@ -277,6 +295,11 @@ final class CommentAstAnalyzer
         }
     }
 
+    /**
+     * @param Symbols $symbols
+     * @param Findings $findings
+     * @param Options $options
+     */
     private function analyzeFunctionNode(
         Node\Stmt\Function_ $node,
         string $namespace,
@@ -308,6 +331,11 @@ final class CommentAstAnalyzer
         );
     }
 
+    /**
+     * @param Symbols $symbols
+     * @param Findings $findings
+     * @param Options $options
+     */
     private function analyzeNamespaceNode(
         Node\Stmt\Namespace_ $node,
         array &$symbols,
@@ -325,9 +353,9 @@ final class CommentAstAnalyzer
 
     /**
      * @param list<Node> $nodes
-     * @param list<array{id:string,aliases:list<string>,start_line:int,end_line:int}> $symbols
-     * @param list<array{line:int,end_line:int,type:string,message:string,confidence:string,subtype:?string,explanation:?string,suggestion:?string,raw:?string}> $findings
-     * @param array<string, mixed> $options
+     * @param Symbols $symbols
+     * @param Findings $findings
+     * @param Options $options
      */
     private function analyzeNodes(
         array $nodes,
@@ -365,32 +393,6 @@ final class CommentAstAnalyzer
                 ),
                 default => null,
             };
-        }
-    }
-
-    private function analyzePropertyNode(
-        Node\Stmt\Property $node,
-        string $fqcn,
-        string $localClassName,
-        array &$symbols,
-    ): void {
-        $startLine = $node->getStartLine();
-        $endLine = $node->getEndLine();
-
-        foreach ($node->props as $property) {
-            $name = $property->name->toString();
-            $qualifiedProperty = $fqcn . '::$' . $name;
-
-            $this->addSymbol(
-                $symbols,
-                $qualifiedProperty,
-                [
-                    $qualifiedProperty,
-                    $localClassName . '::$' . $name,
-                ],
-                $startLine,
-                $endLine,
-            );
         }
     }
 
@@ -473,7 +475,7 @@ final class CommentAstAnalyzer
      * @param array<string, string> $signatureParams
      * @param array<string, string> $docParamTypes
      * @param array<string, true> $docParamNames
-     * @param array<int, array<string, mixed>> $findings
+     * @param Findings $findings
      */
     private function collectParameterSignatureFindings(
         array $signatureParams,
@@ -562,7 +564,7 @@ final class CommentAstAnalyzer
     }
 
     /**
-     * @param array<int, array<string, mixed>> $findings
+     * @param Findings $findings
      */
     private function collectReturnSignatureFinding(
         Node\FunctionLike $node,
@@ -614,8 +616,8 @@ final class CommentAstAnalyzer
     }
 
     /**
-     * @param list<array{line:int,end_line:int,type:string,message:string,confidence:string,subtype:?string,explanation:?string,suggestion:?string,raw:?string}> $findings
-     * @param array<string, mixed> $options
+     * @param Findings $findings
+     * @param Options $options
      */
     private function collectSignatureFindings(
         Node\FunctionLike $node,
@@ -673,8 +675,8 @@ final class CommentAstAnalyzer
     }
 
     /**
-     * @param list<array{line:int,end_line:int,type:string,message:string,confidence:string,subtype:?string,explanation:?string,suggestion:?string,raw:?string}> $findings
-     * @param array<string, mixed> $options
+     * @param Findings $findings
+     * @param Options $options
      */
     private function collectTypeHygieneFindings(
         PhpDocNode $docNode,
@@ -762,17 +764,7 @@ final class CommentAstAnalyzer
     }
 
     /**
-     * @return array{
-     *     line: int,
-     *     end_line: int,
-     *     type: string,
-     *     message: string,
-     *     confidence: string,
-     *     subtype: string,
-     *     explanation: ?string,
-     *     suggestion: string,
-     *     raw: null
-     * }
+     * @return Finding
      */
     private function signatureFinding(
         int $line,
