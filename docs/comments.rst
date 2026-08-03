@@ -132,7 +132,10 @@ PHPDoc analysis
    This is the default.
 
 ``doc_signature_consistency`` detects missing, unknown, or mismatched
-``@param`` entries and mismatched ``@return`` types.
+``@param`` entries and mismatched ``@return`` types. Valid refinements of a
+native declaration remain compatible, including array shapes, generic arrays,
+lists, callable signatures, scalar refinements, intersections, and nullable
+unions composed from those types.
 ``doc_type_hygiene`` reports invalid PHPDoc tag values. Parsed results use a
 content-addressed cache that is schema-checked before use and written atomically;
 ``comments.doc_cache`` controls that cache.
