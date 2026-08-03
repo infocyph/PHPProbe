@@ -89,6 +89,141 @@ final class CommentAstAnalyzer
         ];
     }
 
+    private function analyzeClassConstantNode(
+        Node\Stmt\ClassConst $node,
+        string $fqcn,
+        string $localClassName,
+        array &$symbols,
+    ): void {
+        $startLine = $node->getStartLine();
+        $endLine = $node->getEndLine();
+
+        foreach ($node->consts as $constant) {
+            $name = $constant->name->toString();
+            $qualifiedConstant = $fqcn . '::' . $name;
+
+            $this->addSymbol(
+                $symbols,
+                $qualifiedConstant,
+                [
+                    $qualifiedConstant,
+                    $localClassName . '::' . $name,
+                ],
+                $startLine,
+                $endLine,
+            );
+        }
+    }
+
+    private function analyzeClassLikeNode(
+        Node\Stmt\ClassLike $node,
+        string $namespace,
+        array &$symbols,
+        array &$findings,
+        array $options,
+    ): void {
+        if ($node->name === null) {
+            return;
+        }
+
+        $localClassName = $node->name->toString();
+        $fqcn = $this->qualifiedName($namespace, $localClassName);
+
+        $this->addSymbol(
+            $symbols,
+            $fqcn,
+            [
+                $fqcn,
+                $localClassName,
+                'class ' . $fqcn,
+                'class ' . $localClassName,
+            ],
+            $node->getStartLine(),
+            $node->getEndLine(),
+        );
+
+        foreach ($node->stmts as $statement) {
+            match (true) {
+                $statement instanceof Node\Stmt\ClassMethod => $this->analyzeClassMethodNode(
+                    $statement,
+                    $fqcn,
+                    $localClassName,
+                    $symbols,
+                    $findings,
+                    $options,
+                ),
+                $statement instanceof Node\Stmt\Property => $this->analyzePropertyNode(
+                    $statement,
+                    $fqcn,
+                    $localClassName,
+                    $symbols,
+                ),
+                $statement instanceof Node\Stmt\ClassConst => $this->analyzeClassConstantNode(
+                    $statement,
+                    $fqcn,
+                    $localClassName,
+                    $symbols,
+                ),
+                default => null,
+            };
+        }
+    }
+
+    private function analyzeClassMethodNode(
+        Node\Stmt\ClassMethod $node,
+        string $fqcn,
+        string $localClassName,
+        array &$symbols,
+        array &$findings,
+        array $options,
+    ): void {
+        $method = $node->name->toString();
+        $qualifiedMethod = $fqcn . '::' . $method;
+
+        $this->addSymbol(
+            $symbols,
+            $qualifiedMethod,
+            [
+                $qualifiedMethod,
+                $localClassName . '::' . $method,
+                $method,
+            ],
+            $node->getStartLine(),
+            $node->getEndLine(),
+        );
+
+        $this->analyzeFunctionLike(
+            $node,
+            $qualifiedMethod,
+            $findings,
+            $options,
+        );
+    }
+
+    private function analyzeConstantNode(
+        Node\Stmt\Const_ $node,
+        string $namespace,
+        array &$symbols,
+    ): void {
+        foreach ($node->consts as $constant) {
+            $name = $this->qualifiedName(
+                $namespace,
+                $constant->name->toString(),
+            );
+
+            $this->addSymbol(
+                $symbols,
+                $name,
+                [
+                    $name,
+                    'constant ' . $name,
+                ],
+                $constant->getStartLine(),
+                $constant->getEndLine(),
+            );
+        }
+    }
+
     /**
      * @param list<array{line:int,end_line:int,type:string,message:string,confidence:string,subtype:?string,explanation:?string,suggestion:?string,raw:?string}> $findings
      * @param array<string, mixed> $options
@@ -142,6 +277,52 @@ final class CommentAstAnalyzer
         }
     }
 
+    private function analyzeFunctionNode(
+        Node\Stmt\Function_ $node,
+        string $namespace,
+        array &$symbols,
+        array &$findings,
+        array $options,
+    ): void {
+        $function = $node->name->toString();
+        $fqfn = $this->qualifiedName($namespace, $function);
+
+        $this->addSymbol(
+            $symbols,
+            $fqfn,
+            [
+                $fqfn,
+                $function,
+                'function ' . $fqfn,
+                'function ' . $function,
+            ],
+            $node->getStartLine(),
+            $node->getEndLine(),
+        );
+
+        $this->analyzeFunctionLike(
+            $node,
+            $fqfn,
+            $findings,
+            $options,
+        );
+    }
+
+    private function analyzeNamespaceNode(
+        Node\Stmt\Namespace_ $node,
+        array &$symbols,
+        array &$findings,
+        array $options,
+    ): void {
+        $this->analyzeNodes(
+            array_values($node->stmts),
+            $node->name?->toString() ?? '',
+            $symbols,
+            $findings,
+            $options,
+        );
+    }
+
     /**
      * @param list<Node> $nodes
      * @param list<array{id:string,aliases:list<string>,start_line:int,end_line:int}> $symbols
@@ -156,89 +337,280 @@ final class CommentAstAnalyzer
         array $options,
     ): void {
         foreach ($nodes as $node) {
-            if ($node instanceof Node\Stmt\Namespace_) {
-                $this->analyzeNodes(array_values($node->stmts), $node->name?->toString() ?? '', $symbols, $findings, $options);
+            match (true) {
+                $node instanceof Node\Stmt\Namespace_ => $this->analyzeNamespaceNode(
+                    $node,
+                    $symbols,
+                    $findings,
+                    $options,
+                ),
+                $node instanceof Node\Stmt\ClassLike => $this->analyzeClassLikeNode(
+                    $node,
+                    $namespace,
+                    $symbols,
+                    $findings,
+                    $options,
+                ),
+                $node instanceof Node\Stmt\Function_ => $this->analyzeFunctionNode(
+                    $node,
+                    $namespace,
+                    $symbols,
+                    $findings,
+                    $options,
+                ),
+                $node instanceof Node\Stmt\Const_ => $this->analyzeConstantNode(
+                    $node,
+                    $namespace,
+                    $symbols,
+                ),
+                default => null,
+            };
+        }
+    }
 
+    private function analyzePropertyNode(
+        Node\Stmt\Property $node,
+        string $fqcn,
+        string $localClassName,
+        array &$symbols,
+    ): void {
+        $startLine = $node->getStartLine();
+        $endLine = $node->getEndLine();
+
+        foreach ($node->props as $property) {
+            $name = $property->name->toString();
+            $qualifiedProperty = $fqcn . '::$' . $name;
+
+            $this->addSymbol(
+                $symbols,
+                $qualifiedProperty,
+                [
+                    $qualifiedProperty,
+                    $localClassName . '::$' . $name,
+                ],
+                $startLine,
+                $endLine,
+            );
+        }
+    }
+
+    private function atomicTypeIsCompatible(string $documented, string $native): bool
+    {
+        if ($documented === $native || $native === 'mixed') {
+            return true;
+        }
+
+        $intersection = $this->topLevelTypeParts($documented, '&');
+
+        if (count($intersection) > 1) {
+            return in_array($native, $intersection, true);
+        }
+
+        return match ($native) {
+            'array' => preg_match(
+                '/^(?:array|list|non-empty-array|non-empty-list)(?:[<{]|$)/',
+                $documented,
+            ) === 1 || str_ends_with($documented, '[]'),
+
+            'iterable' => preg_match(
+                '/^(?:array|list|iterable|non-empty-array|non-empty-list)(?:[<{]|$)/',
+                $documented,
+            ) === 1 || str_ends_with($documented, '[]'),
+
+            'callable' => str_starts_with($documented, 'callable('),
+
+            'bool' => $documented === 'false' || $documented === 'true',
+
+            'int' => preg_match(
+                '/^(?:int<|negative-int$|non-negative-int$|non-positive-int$|positive-int$)/',
+                $documented,
+            ) === 1,
+
+            'string' => preg_match(
+                '/^(?:callable-string|class-string|literal-string|lowercase-string|non-empty-string|non-falsy-string|numeric-string|trait-string|uppercase-string)(?:<|$)/',
+                $documented,
+            ) === 1,
+
+            default => ($genericOffset = strpos($documented, '<')) !== false
+                && substr($documented, 0, $genericOffset) === $native,
+        };
+    }
+
+    /**
+     * @return array{
+     *     0: array<string, string>,
+     *     1: array<string, true>
+     * }
+     */
+    private function collectDocumentedParameters(PhpDocNode $docNode): array
+    {
+        $types = [];
+        $names = [];
+
+        foreach ($docNode->getParamTagValues() as $tag) {
+            $name = ltrim($tag->parameterName, '$');
+
+            if ($name === '') {
                 continue;
             }
 
-            if ($node instanceof Node\Stmt\ClassLike) {
-                if ($node->name === null) {
-                    continue;
-                }
+            $names[$name] = true;
+            $types[$name] = $this->normalizeType((string) $tag->type);
+        }
 
-                $localClassName = $node->name->toString();
-                $fqcn = $this->qualifiedName($namespace, $localClassName);
-                $this->addSymbol($symbols, $fqcn, [
-                    $fqcn,
-                    $localClassName,
-                    'class ' . $fqcn,
-                    'class ' . $localClassName,
-                ], $node->getStartLine(), $node->getEndLine());
+        foreach ($docNode->getTypelessParamTagValues() as $tag) {
+            $name = ltrim($tag->parameterName, '$');
 
-                foreach ($node->stmts as $statement) {
-                    if ($statement instanceof Node\Stmt\ClassMethod) {
-                        $method = $statement->name->toString();
-                        $this->addSymbol($symbols, $fqcn . '::' . $method, [
-                            $fqcn . '::' . $method,
-                            $localClassName . '::' . $method,
-                            $method,
-                        ], $statement->getStartLine(), $statement->getEndLine());
-                        $this->analyzeFunctionLike($statement, $fqcn . '::' . $method, $findings, $options);
-
-                        continue;
-                    }
-
-                    if ($statement instanceof Node\Stmt\Property) {
-                        foreach ($statement->props as $property) {
-                            $name = $property->name->toString();
-                            $this->addSymbol($symbols, $fqcn . '::$' . $name, [
-                                $fqcn . '::$' . $name,
-                                $localClassName . '::$' . $name,
-                            ], $statement->getStartLine(), $statement->getEndLine());
-                        }
-
-                        continue;
-                    }
-
-                    if ($statement instanceof Node\Stmt\ClassConst) {
-                        foreach ($statement->consts as $constant) {
-                            $name = $constant->name->toString();
-                            $this->addSymbol($symbols, $fqcn . '::' . $name, [
-                                $fqcn . '::' . $name,
-                                $localClassName . '::' . $name,
-                            ], $statement->getStartLine(), $statement->getEndLine());
-                        }
-                    }
-                }
-
-                continue;
-            }
-
-            if ($node instanceof Node\Stmt\Function_) {
-                $function = $node->name->toString();
-                $fqfn = $this->qualifiedName($namespace, $function);
-                $this->addSymbol($symbols, $fqfn, [
-                    $fqfn,
-                    $function,
-                    'function ' . $fqfn,
-                    'function ' . $function,
-                ], $node->getStartLine(), $node->getEndLine());
-                $this->analyzeFunctionLike($node, $fqfn, $findings, $options);
-
-                continue;
-            }
-
-            if ($node instanceof Node\Stmt\Const_) {
-                foreach ($node->consts as $constant) {
-                    $name = $this->qualifiedName($namespace, $constant->name->toString());
-                    $this->addSymbol($symbols, $name, [
-                        $name,
-                        'constant ' . $name,
-                    ], $constant->getStartLine(), $constant->getEndLine());
-                }
+            if ($name !== '') {
+                $names[$name] = true;
             }
         }
+
+        return [$types, $names];
+    }
+
+    /**
+     * @param array<string, string> $signatureParams
+     * @param array<string, string> $docParamTypes
+     * @param array<string, true> $docParamNames
+     * @param array<int, array<string, mixed>> $findings
+     */
+    private function collectParameterSignatureFindings(
+        array $signatureParams,
+        array $docParamTypes,
+        array $docParamNames,
+        string $symbol,
+        int $docLine,
+        bool $explain,
+        array &$findings,
+    ): void {
+        foreach ($docParamNames as $name => $_present) {
+            if (array_key_exists($name, $signatureParams)) {
+                continue;
+            }
+
+            $findings[] = $this->signatureFinding(
+                line: $docLine,
+                type: 'phpdoc_unknown_param',
+                message: sprintf(
+                    'PHPDoc references unknown parameter "$%s" on symbol "%s".',
+                    $name,
+                    $symbol,
+                ),
+                confidence: 'high',
+                subtype: 'param_not_in_signature',
+                explanation: $explain
+                    ? 'Parameter exists in PHPDoc but not in function signature.'
+                    : null,
+                suggestion: 'Rename or remove the extra @param tag.',
+            );
+        }
+
+        foreach ($signatureParams as $name => $nativeType) {
+            $finding = match (true) {
+                !isset($docParamNames[$name]) => $this->signatureFinding(
+                    line: $docLine,
+                    type: 'phpdoc_missing_param',
+                    message: sprintf(
+                        'PHPDoc is missing @param for "$%s" on symbol "%s".',
+                        $name,
+                        $symbol,
+                    ),
+                    confidence: 'medium',
+                    subtype: 'signature_param_missing_in_phpdoc',
+                    explanation: $explain
+                        ? 'Every signature parameter should be documented for stable API expectations.'
+                        : null,
+                    suggestion: sprintf('Add @param for "$%s".', $name),
+                ),
+
+                $nativeType === '' || !isset($docParamTypes[$name]) => null,
+
+                !$this->typesAreCompatible(
+                    $docParamTypes[$name],
+                    $nativeType,
+                ) => $this->signatureFinding(
+                    line: $docLine,
+                    type: 'phpdoc_signature_mismatch',
+                    message: sprintf(
+                        'PHPDoc @param type for "$%s" does not match native signature on "%s".',
+                        $name,
+                        $symbol,
+                    ),
+                    confidence: 'high',
+                    subtype: 'param_type_mismatch',
+                    explanation: $explain
+                        ? sprintf(
+                            'PHPDoc=%s, signature=%s.',
+                            $docParamTypes[$name],
+                            $nativeType,
+                        )
+                        : null,
+                    suggestion: sprintf(
+                        'Update @param "$%s" to match the signature type.',
+                        $name,
+                    ),
+                ),
+
+                default => null,
+            };
+
+            if ($finding !== null) {
+                $findings[] = $finding;
+            }
+        }
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $findings
+     */
+    private function collectReturnSignatureFinding(
+        Node\FunctionLike $node,
+        PhpDocNode $docNode,
+        string $symbol,
+        int $docLine,
+        bool $explain,
+        array &$findings,
+    ): void {
+        $signatureReturn = $this->normalizeType(
+            PhpNodeTypeString::fromNode($node->getReturnType()),
+        );
+
+        $returnTags = $docNode->getReturnTagValues();
+
+        if ($signatureReturn === '' || $returnTags === []) {
+            return;
+        }
+
+        $docReturn = $this->normalizeType(
+            (string) $returnTags[0]->type,
+        );
+
+        if (
+            $docReturn === ''
+            || $this->typesAreCompatible($docReturn, $signatureReturn)
+        ) {
+            return;
+        }
+
+        $findings[] = $this->signatureFinding(
+            line: $docLine,
+            type: 'phpdoc_signature_mismatch',
+            message: sprintf(
+                'PHPDoc @return type does not match native return type on "%s".',
+                $symbol,
+            ),
+            confidence: 'high',
+            subtype: 'return_type_mismatch',
+            explanation: $explain
+                ? sprintf(
+                    'PHPDoc=%s, signature=%s.',
+                    $docReturn,
+                    $signatureReturn,
+                )
+                : null,
+            suggestion: 'Update @return to match the signature return type.',
+        );
     }
 
     /**
@@ -253,121 +625,51 @@ final class CommentAstAnalyzer
         array &$findings,
         array $options,
     ): void {
-        $signatureParams = [];
+        $signatureParams = $this->collectSignatureParameters($node);
+        [$docParamTypes, $docParamNames] = $this->collectDocumentedParameters($docNode);
 
-        foreach ($node->getParams() as $param) {
-            if (!$param->var instanceof Node\Expr\Variable || !is_string($param->var->name)) {
+        $explain = ($options['explain'] ?? false) === true;
+
+        $this->collectParameterSignatureFindings(
+            $signatureParams,
+            $docParamTypes,
+            $docParamNames,
+            $symbol,
+            $docLine,
+            $explain,
+            $findings,
+        );
+
+        $this->collectReturnSignatureFinding(
+            $node,
+            $docNode,
+            $symbol,
+            $docLine,
+            $explain,
+            $findings,
+        );
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    private function collectSignatureParameters(Node\FunctionLike $node): array
+    {
+        $parameters = [];
+
+        foreach ($node->getParams() as $parameter) {
+            $variable = $parameter->var;
+
+            if (!$variable instanceof Node\Expr\Variable || !is_string($variable->name)) {
                 continue;
             }
 
-            $name = $param->var->name;
-            $signatureParams[$name] = $this->normalizeType(PhpNodeTypeString::fromNode($param->type));
+            $parameters[$variable->name] = $this->normalizeType(
+                PhpNodeTypeString::fromNode($parameter->type),
+            );
         }
 
-        $docParamTypes = [];
-        $docParamNames = [];
-
-        foreach ($docNode->getParamTagValues() as $tag) {
-            $name = ltrim($tag->parameterName, '$');
-            if ($name === '') {
-                continue;
-            }
-
-            $docParamNames[$name] = true;
-            $docParamTypes[$name] = $this->normalizeType((string) $tag->type);
-        }
-
-        foreach ($docNode->getTypelessParamTagValues() as $tag) {
-            $name = ltrim($tag->parameterName, '$');
-            if ($name !== '') {
-                $docParamNames[$name] = true;
-            }
-        }
-
-        foreach ($docParamNames as $name => $_present) {
-            if (!array_key_exists($name, $signatureParams)) {
-                $findings[] = [
-                    'line' => $docLine,
-                    'end_line' => $docLine,
-                    'type' => 'phpdoc_unknown_param',
-                    'message' => sprintf('PHPDoc references unknown parameter "$%s" on symbol "%s".', $name, $symbol),
-                    'confidence' => 'high',
-                    'subtype' => 'param_not_in_signature',
-                    'explanation' => ($options['explain'] ?? false) === true
-                        ? 'Parameter exists in PHPDoc but not in function signature.'
-                        : null,
-                    'suggestion' => 'Rename or remove the extra @param tag.',
-                    'raw' => null,
-                ];
-            }
-        }
-
-        foreach ($signatureParams as $name => $nativeType) {
-            if (!isset($docParamNames[$name])) {
-                $findings[] = [
-                    'line' => $docLine,
-                    'end_line' => $docLine,
-                    'type' => 'phpdoc_missing_param',
-                    'message' => sprintf('PHPDoc is missing @param for "$%s" on symbol "%s".', $name, $symbol),
-                    'confidence' => 'medium',
-                    'subtype' => 'signature_param_missing_in_phpdoc',
-                    'explanation' => ($options['explain'] ?? false) === true
-                        ? 'Every signature parameter should be documented for stable API expectations.'
-                        : null,
-                    'suggestion' => sprintf('Add @param for "$%s".', $name),
-                    'raw' => null,
-                ];
-
-                continue;
-            }
-
-            if ($nativeType === '' || !isset($docParamTypes[$name])) {
-                continue;
-            }
-
-            if ($docParamTypes[$name] !== $nativeType) {
-                $findings[] = [
-                    'line' => $docLine,
-                    'end_line' => $docLine,
-                    'type' => 'phpdoc_signature_mismatch',
-                    'message' => sprintf('PHPDoc @param type for "$%s" does not match native signature on "%s".', $name, $symbol),
-                    'confidence' => 'high',
-                    'subtype' => 'param_type_mismatch',
-                    'explanation' => ($options['explain'] ?? false) === true
-                        ? sprintf('PHPDoc=%s, signature=%s.', $docParamTypes[$name], $nativeType)
-                        : null,
-                    'suggestion' => sprintf('Update @param "$%s" to match the signature type.', $name),
-                    'raw' => null,
-                ];
-            }
-        }
-
-        $signatureReturn = $this->normalizeType(PhpNodeTypeString::fromNode($node->getReturnType()));
-        $returnTags = $docNode->getReturnTagValues();
-
-        if ($signatureReturn === '' || $returnTags === []) {
-            return;
-        }
-
-        $returnTag = $returnTags[0];
-        $docReturn = $this->normalizeType((string) $returnTag->type);
-        if ($docReturn === '' || $docReturn === $signatureReturn) {
-            return;
-        }
-
-        $findings[] = [
-            'line' => $docLine,
-            'end_line' => $docLine,
-            'type' => 'phpdoc_signature_mismatch',
-            'message' => sprintf('PHPDoc @return type does not match native return type on "%s".', $symbol),
-            'confidence' => 'high',
-            'subtype' => 'return_type_mismatch',
-            'explanation' => ($options['explain'] ?? false) === true
-                ? sprintf('PHPDoc=%s, signature=%s.', $docReturn, $signatureReturn)
-                : null,
-            'suggestion' => 'Update @return to match the signature return type.',
-            'raw' => null,
-        ];
+        return $parameters;
     }
 
     /**
@@ -457,5 +759,115 @@ final class CommentAstAnalyzer
     private function qualifiedName(string $namespace, string $name): string
     {
         return $namespace === '' ? $name : $namespace . '\\' . $name;
+    }
+
+    /**
+     * @return array{
+     *     line: int,
+     *     end_line: int,
+     *     type: string,
+     *     message: string,
+     *     confidence: string,
+     *     subtype: string,
+     *     explanation: ?string,
+     *     suggestion: string,
+     *     raw: null
+     * }
+     */
+    private function signatureFinding(
+        int $line,
+        string $type,
+        string $message,
+        string $confidence,
+        string $subtype,
+        ?string $explanation,
+        string $suggestion,
+    ): array {
+        return [
+            'line' => $line,
+            'end_line' => $line,
+            'type' => $type,
+            'message' => $message,
+            'confidence' => $confidence,
+            'subtype' => $subtype,
+            'explanation' => $explanation,
+            'suggestion' => $suggestion,
+            'raw' => null,
+        ];
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function topLevelTypeParts(string $type, string $separator): array
+    {
+        $parts = [];
+        $part = '';
+        $depth = 0;
+        $quote = '';
+        $escaped = false;
+        $length = strlen($type);
+
+        for ($index = 0; $index < $length; $index++) {
+            $character = $type[$index];
+
+            if ($quote !== '') {
+                $part .= $character;
+
+                if ($escaped) {
+                    $escaped = false;
+                } elseif ($character === '\\') {
+                    $escaped = true;
+                } elseif ($character === $quote) {
+                    $quote = '';
+                }
+
+                continue;
+            }
+
+            if ($character === "'" || $character === '"') {
+                $quote = $character;
+                $part .= $character;
+
+                continue;
+            }
+
+            if (str_contains('(<[{', $character)) {
+                $depth++;
+            } elseif (str_contains(')>]}', $character)) {
+                $depth = max(0, $depth - 1);
+            }
+
+            if ($character === $separator && $depth === 0) {
+                $parts[] = $part;
+                $part = '';
+
+                continue;
+            }
+
+            $part .= $character;
+        }
+
+        $parts[] = $part;
+
+        return array_values(array_filter($parts, static fn(string $part): bool => $part !== ''));
+    }
+
+    private function typesAreCompatible(string $documented, string $native): bool
+    {
+        if ($documented === $native) {
+            return true;
+        }
+
+        $nativeTypes = $this->topLevelTypeParts($native, '|');
+
+        foreach ($this->topLevelTypeParts($documented, '|') as $documentedType) {
+            $compatible = array_any($nativeTypes, fn($nativeType) => $this->atomicTypeIsCompatible($documentedType, $nativeType));
+            if (!$compatible) {
+                return false;
+            }
+        }
+
+        return true;
     }
 }

@@ -563,7 +563,7 @@ final class ShapeDoc
 PHP);
 
     try {
-        $run = runCommentCheckerCommand($root, ['--json', '--doc-mode=hybrid', '--fail-on=error', 'src']);
+        $run = runCommentCheckerCommand($root, ['--json', '--preset=strict', '--ci', 'src']);
     } finally {
         removeCommentCheckerFixture($root);
     }
@@ -572,8 +572,53 @@ PHP);
     $types = array_column($result['findings'], 'type');
 
     expect($run['exitCode'])->toBe(0)
+        ->and($types)->not()->toContain('phpdoc_signature_mismatch')
         ->and($types)->not()->toContain('commented_out_code_without_reason')
         ->and($types)->not()->toContain('commented_out_code_without_valid_reason');
+});
+
+it('accepts PHPDoc refinements while retaining strict signature mismatch checks', function (): void {
+    $root = makeCommentCheckerFixture();
+    $src = $root.DIRECTORY_SEPARATOR.'src';
+
+    mkdir($src, 0755, true);
+    file_put_contents($src.DIRECTORY_SEPARATOR.'RefinedDoc.php', <<<'PHP'
+<?php
+
+final class RefinedDoc
+{
+    /**
+     * @param non-empty-list<string>|null $items
+     * @param callable(string):?string|null $mapper
+     * @return array{items:list<string>, valid:true}
+     */
+    public function run(?array $items, ?callable $mapper): array
+    {
+        return ['items' => $items ?? [], 'valid' => true];
+    }
+
+    /**
+     * @param string $id
+     */
+    public function invalid(int $id): void
+    {
+    }
+}
+PHP);
+
+    try {
+        $run = runCommentCheckerCommand($root, ['--json', '--preset=strict', '--ci', 'src']);
+    } finally {
+        removeCommentCheckerFixture($root);
+    }
+
+    $payload = json_decode($run['stdout'], true);
+    $findings = $payload['findings'] ?? [];
+
+    expect($run['exitCode'])->toBe(1)
+        ->and($findings)->toHaveCount(1)
+        ->and($findings[0]['type'] ?? null)->toBe('phpdoc_signature_mismatch')
+        ->and($findings[0]['subtype'] ?? null)->toBe('param_type_mismatch');
 });
 
 it('does not flag multiline param descriptions in phpdoc', function (): void {
