@@ -21,9 +21,13 @@ use PHPStan\PhpDocParser\Parser\TokenIterator;
  * @phpstan-type Symbols list<Symbol>
  * @phpstan-type Findings list<Finding>
  * @phpstan-type Options array<string, mixed>
+ * @phpstan-type TypeContext array{aliases:array<string,string>,templates:array<string,string>}
  */
 final class CommentAstAnalyzer
 {
+    /** @var TypeContext */
+    private array $classTypeContext = ['aliases' => [], 'templates' => []];
+
     private ?Lexer $phpDocLexer = null;
 
     private ?PhpDocParser $phpDocParser = null;
@@ -37,6 +41,7 @@ final class CommentAstAnalyzer
      */
     public function analyze(string $file, array $options): array
     {
+        $this->classTypeContext = ['aliases' => [], 'templates' => []];
         $contents = file_get_contents($file);
 
         if (!is_string($contents) || trim($contents) === '') {
@@ -118,36 +123,43 @@ final class CommentAstAnalyzer
             $node->getEndLine(),
         );
 
-        foreach ($node->stmts as $statement) {
-            match (true) {
-                $statement instanceof Node\Stmt\ClassMethod => $this->analyzeClassMethodNode(
-                    $statement,
-                    $fqcn,
-                    $localClassName,
-                    $symbols,
-                    $findings,
-                    $options,
-                ),
-                $statement instanceof Node\Stmt\Property => $this->analyzeClassMemberNodes(
-                    array_values($statement->props),
-                    $fqcn,
-                    $localClassName,
-                    '::$',
-                    $statement->getStartLine(),
-                    $statement->getEndLine(),
-                    $symbols,
-                ),
-                $statement instanceof Node\Stmt\ClassConst => $this->analyzeClassMemberNodes(
-                    array_values($statement->consts),
-                    $fqcn,
-                    $localClassName,
-                    '::',
-                    $statement->getStartLine(),
-                    $statement->getEndLine(),
-                    $symbols,
-                ),
-                default => null,
-            };
+        $previousTypeContext = $this->classTypeContext;
+        $this->classTypeContext = $this->typeContextFromDocComment($node->getDocComment());
+
+        try {
+            foreach ($node->stmts as $statement) {
+                match (true) {
+                    $statement instanceof Node\Stmt\ClassMethod => $this->analyzeClassMethodNode(
+                        $statement,
+                        $fqcn,
+                        $localClassName,
+                        $symbols,
+                        $findings,
+                        $options,
+                    ),
+                    $statement instanceof Node\Stmt\Property => $this->analyzeClassMemberNodes(
+                        array_values($statement->props),
+                        $fqcn,
+                        $localClassName,
+                        '::$',
+                        $statement->getStartLine(),
+                        $statement->getEndLine(),
+                        $symbols,
+                    ),
+                    $statement instanceof Node\Stmt\ClassConst => $this->analyzeClassMemberNodes(
+                        array_values($statement->consts),
+                        $fqcn,
+                        $localClassName,
+                        '::',
+                        $statement->getStartLine(),
+                        $statement->getEndLine(),
+                        $symbols,
+                    ),
+                    default => null,
+                };
+            }
+        } finally {
+            $this->classTypeContext = $previousTypeContext;
         }
     }
 
@@ -291,7 +303,20 @@ final class CommentAstAnalyzer
         }
 
         if ($checkSignatures) {
-            $this->collectSignatureFindings($node, $docNode, $symbol, $docLine, $findings, $options);
+            $methodTypeContext = $this->typeContextFromPhpDoc($docNode);
+            $typeContext = [
+                'aliases' => [...$this->classTypeContext['aliases'], ...$methodTypeContext['aliases']],
+                'templates' => [...$this->classTypeContext['templates'], ...$methodTypeContext['templates']],
+            ];
+            $this->collectSignatureFindings(
+                $node,
+                $docNode,
+                $symbol,
+                $docLine,
+                $findings,
+                $options,
+                $typeContext,
+            );
         }
     }
 
@@ -398,7 +423,14 @@ final class CommentAstAnalyzer
 
     private function atomicTypeIsCompatible(string $documented, string $native): bool
     {
+        $documented = ltrim($documented, '\\');
+        $native = ltrim($native, '\\');
+
         if ($documented === $native || $native === 'mixed') {
+            return true;
+        }
+
+        if ($native === 'self' && $documented === 'static') {
             return true;
         }
 
@@ -419,7 +451,11 @@ final class CommentAstAnalyzer
                 $documented,
             ) === 1 || str_ends_with($documented, '[]'),
 
-            'callable' => str_starts_with($documented, 'callable('),
+            'callable' => $documented === 'closure'
+                || str_starts_with($documented, 'callable(')
+                || str_starts_with($documented, 'closure('),
+
+            'closure' => str_starts_with($documented, 'closure('),
 
             'bool' => $documented === 'false' || $documented === 'true',
 
@@ -476,6 +512,7 @@ final class CommentAstAnalyzer
      * @param array<string, string> $docParamTypes
      * @param array<string, true> $docParamNames
      * @param Findings $findings
+     * @param TypeContext $typeContext
      */
     private function collectParameterSignatureFindings(
         array $signatureParams,
@@ -485,6 +522,7 @@ final class CommentAstAnalyzer
         int $docLine,
         bool $explain,
         array &$findings,
+        array $typeContext,
     ): void {
         foreach ($docParamNames as $name => $_present) {
             if (array_key_exists($name, $signatureParams)) {
@@ -531,6 +569,7 @@ final class CommentAstAnalyzer
                 !$this->typesAreCompatible(
                     $docParamTypes[$name],
                     $nativeType,
+                    $typeContext,
                 ) => $this->signatureFinding(
                     line: $docLine,
                     type: 'phpdoc_signature_mismatch',
@@ -565,6 +604,7 @@ final class CommentAstAnalyzer
 
     /**
      * @param Findings $findings
+     * @param TypeContext $typeContext
      */
     private function collectReturnSignatureFinding(
         Node\FunctionLike $node,
@@ -573,6 +613,7 @@ final class CommentAstAnalyzer
         int $docLine,
         bool $explain,
         array &$findings,
+        array $typeContext,
     ): void {
         $signatureReturn = $this->normalizeType(
             PhpNodeTypeString::fromNode($node->getReturnType()),
@@ -590,7 +631,7 @@ final class CommentAstAnalyzer
 
         if (
             $docReturn === ''
-            || $this->typesAreCompatible($docReturn, $signatureReturn)
+            || $this->typesAreCompatible($docReturn, $signatureReturn, $typeContext)
         ) {
             return;
         }
@@ -618,6 +659,7 @@ final class CommentAstAnalyzer
     /**
      * @param Findings $findings
      * @param Options $options
+     * @param TypeContext $typeContext
      */
     private function collectSignatureFindings(
         Node\FunctionLike $node,
@@ -626,6 +668,7 @@ final class CommentAstAnalyzer
         int $docLine,
         array &$findings,
         array $options,
+        array $typeContext,
     ): void {
         $signatureParams = $this->collectSignatureParameters($node);
         [$docParamTypes, $docParamNames] = $this->collectDocumentedParameters($docNode);
@@ -640,6 +683,7 @@ final class CommentAstAnalyzer
             $docLine,
             $explain,
             $findings,
+            $typeContext,
         );
 
         $this->collectReturnSignatureFinding(
@@ -649,6 +693,7 @@ final class CommentAstAnalyzer
             $docLine,
             $explain,
             $findings,
+            $typeContext,
         );
     }
 
@@ -704,6 +749,28 @@ final class CommentAstAnalyzer
                 'raw' => $raw !== '' ? $raw : null,
             ];
         }
+    }
+
+    /** @return array{string,string}|null */
+    private function conditionalResultTypes(string $type): ?array
+    {
+        if (!str_starts_with($type, '$')) {
+            return null;
+        }
+
+        $question = strpos($type, '?');
+        if ($question === false) {
+            return null;
+        }
+        $colon = strpos($type, ':', $question + 1);
+        if ($colon === false) {
+            return null;
+        }
+
+        $if = substr($type, $question + 1, $colon - $question - 1);
+        $else = substr($type, $colon + 1);
+
+        return $if !== '' && $else !== '' ? [$if, $else] : null;
     }
 
     private function normalizeType(string $value): string
@@ -845,8 +912,60 @@ final class CommentAstAnalyzer
         return array_values(array_filter($parts, static fn(string $part): bool => $part !== ''));
     }
 
-    private function typesAreCompatible(string $documented, string $native): bool
+    /** @return TypeContext */
+    private function typeContextFromDocComment(?\PhpParser\Comment\Doc $doc): array
     {
+        if ($doc === null) {
+            return ['aliases' => [], 'templates' => []];
+        }
+
+        try {
+            $docNode = $this->phpDocParser()->parse(
+                new TokenIterator($this->phpDocLexer()->tokenize($doc->getText())),
+            );
+        } catch (\Throwable) {
+            return ['aliases' => [], 'templates' => []];
+        }
+
+        return $this->typeContextFromPhpDoc($docNode);
+    }
+
+    /** @return TypeContext */
+    private function typeContextFromPhpDoc(PhpDocNode $docNode): array
+    {
+        $aliases = [];
+        foreach (['@phpstan-type', '@psalm-type'] as $tagName) {
+            foreach ($docNode->getTypeAliasTagValues($tagName) as $tag) {
+                $alias = $this->normalizeType($tag->alias);
+                if ($alias !== '') {
+                    $aliases[$alias] = $this->normalizeType((string) $tag->type);
+                }
+            }
+        }
+
+        $templates = [];
+        foreach (['@template', '@phpstan-template', '@psalm-template'] as $tagName) {
+            foreach ($docNode->getTemplateTagValues($tagName) as $tag) {
+                $name = $this->normalizeType($tag->name);
+                if ($name !== '' && $tag->bound !== null) {
+                    $templates[$name] = $this->normalizeType((string) $tag->bound);
+                }
+            }
+        }
+
+        return ['aliases' => $aliases, 'templates' => $templates];
+    }
+
+    /**
+     * @param TypeContext $typeContext
+     * @param array<string, true> $resolving
+     */
+    private function typesAreCompatible(
+        string $documented,
+        string $native,
+        array $typeContext,
+        array $resolving = [],
+    ): bool {
         if ($documented === $native) {
             return true;
         }
@@ -854,6 +973,31 @@ final class CommentAstAnalyzer
         $nativeTypes = $this->topLevelTypeParts($native, '|');
 
         foreach ($this->topLevelTypeParts($documented, '|') as $documentedType) {
+            $resolved = $typeContext['aliases'][$documentedType]
+                ?? $typeContext['templates'][$documentedType]
+                ?? null;
+            if ($resolved !== null) {
+                if (isset($resolving[$documentedType])) {
+                    return false;
+                }
+                $resolving[$documentedType] = true;
+                if (!$this->typesAreCompatible($resolved, $native, $typeContext, $resolving)) {
+                    return false;
+                }
+
+                continue;
+            }
+
+            $conditional = $this->conditionalResultTypes($documentedType);
+            if ($conditional !== null) {
+                if (!$this->typesAreCompatible($conditional[0], $native, $typeContext, $resolving)
+                    || !$this->typesAreCompatible($conditional[1], $native, $typeContext, $resolving)) {
+                    return false;
+                }
+
+                continue;
+            }
+
             $compatible = array_any($nativeTypes, fn($nativeType) => $this->atomicTypeIsCompatible($documentedType, $nativeType));
             if (!$compatible) {
                 return false;

@@ -621,6 +621,103 @@ PHP);
         ->and($findings[0]['subtype'] ?? null)->toBe('param_type_mismatch');
 });
 
+it('resolves PHPDoc aliases templates closure signatures and conditional refinements', function (): void {
+    $root = makeCommentCheckerFixture();
+    $src = $root.DIRECTORY_SEPARATOR.'src';
+
+    mkdir($src, 0755, true);
+    file_put_contents($src.DIRECTORY_SEPARATOR.'AdvancedRefinement.php', <<<'PHP'
+<?php
+
+/**
+ * @phpstan-type Payload array{id:positive-int, labels:list<string>}
+ * @phpstan-type InvalidAlias string
+ * @template T of self
+ */
+final class AdvancedRefinement
+{
+    /**
+     * @param Payload $payload
+     * @param Closure(string):non-empty-string $mapper
+     * @return ($key is null ? Payload : list<string>)
+     */
+    public function map(array $payload, Closure $mapper, ?string $key): array
+    {
+        return $payload;
+    }
+
+    /** @return static */
+    public function copy(): self
+    {
+        return $this;
+    }
+
+    /**
+     * @param T $value
+     * @return T
+     */
+    public function identity(self $value): self
+    {
+        return $value;
+    }
+
+    /** @param InvalidAlias $payload */
+    public function invalid(array $payload): void
+    {
+    }
+}
+PHP);
+
+    try {
+        $run = runCommentCheckerCommand($root, ['--json', '--preset=strict', '--ci', 'src']);
+    } finally {
+        removeCommentCheckerFixture($root);
+    }
+
+    $payload = json_decode($run['stdout'], true);
+    $findings = $payload['findings'] ?? [];
+
+    expect($run['exitCode'])->toBe(1)
+        ->and($findings)->toHaveCount(1)
+        ->and($findings[0]['type'] ?? null)->toBe('phpdoc_signature_mismatch')
+        ->and($findings[0]['subtype'] ?? null)->toBe('param_type_mismatch');
+});
+
+it('treats fenced PHPDoc samples as examples and prose references as documentation', function (): void {
+    $root = makeCommentCheckerFixture();
+    $src = $root.DIRECTORY_SEPARATOR.'src';
+
+    mkdir($src, 0755, true);
+    file_put_contents($src.DIRECTORY_SEPARATOR.'DocumentedExample.php', <<<'PHP'
+<?php
+
+/**
+ * Handles Transport::send() results.
+ *
+ * - Defaults to Policy::STRICT when no policy is supplied.
+ * - NEL (Network Error Logging) remains optional.
+ *
+ * ```php
+ * $result = Transport::send($payload);
+ * ```
+ */
+final class DocumentedExample
+{
+}
+PHP);
+
+    try {
+        $run = runCommentCheckerCommand($root, ['--json', '--preset=strict', '--ci', 'src']);
+    } finally {
+        removeCommentCheckerFixture($root);
+    }
+
+    $payload = json_decode($run['stdout'], true);
+
+    expect($run['exitCode'])->toBe(0)
+        ->and($payload['findings'] ?? [])->toBe([]);
+});
+
 it('does not flag multiline param descriptions in phpdoc', function (): void {
     $root = makeCommentCheckerFixture();
     $src = $root.DIRECTORY_SEPARATOR.'src';
