@@ -717,6 +717,16 @@ final class CommentScanner
             return false;
         }
 
+        if (preg_match('/^```(?:php)?$/i', $normalizedText) === 1
+            || str_starts_with($normalizedText, '{@example')
+            || preg_match('/^(?:signature|contract|shape):$/', $normalizedText) === 1) {
+            return true;
+        }
+
+        if (str_starts_with($normalizedText, 'typical ')) {
+            $normalizedText = substr($normalizedText, 8);
+        }
+
         return array_any($labels, fn($label) => $normalizedText === strtolower(trim((string) $label)));
     }
 
@@ -860,7 +870,24 @@ final class CommentScanner
             return false;
         }
 
-        return preg_match('/^\s*\$[A-Za-z_][A-Za-z0-9_]*\s*=|^\s*(if|else|elseif|foreach|for|while|switch|try|catch|finally)\b|^\s*(return|throw|new|class|interface|trait|enum|function|namespace|use)\b|->|::|;\s*$|<\?php\b|^\s*[A-Za-z_][A-Za-z0-9_]*\s*\([^)]*\)\s*;?\s*$/', $trimmed) === 1;
+        $patterns = [
+            '/^<\?php\b/',
+            '/^\$[A-Za-z_][A-Za-z0-9_]*(?:\s*=|\s*\[|(?:->[A-Za-z_][A-Za-z0-9_]*)+(?:\s*\(|\s*=|\s*;))/',
+            '/^(?:if|elseif|foreach|for|while|switch|catch)\s*\(/',
+            '/^(?:else|try|finally)\s*\{?\s*$/',
+            '/^(?:return|throw|yield|new)\b/',
+            '/^(?:(?:final|abstract|readonly)\s+)?(?:class|interface|trait|enum)\s+[A-Za-z_]/',
+            '/^function\s*(?:&\s*)?(?:[A-Za-z_]|\()/',
+            '/^(?:public|protected|private)\s+(?:(?:static|readonly)\s+)*(?:function\b|const\b|\??[A-Za-z_\\][A-Za-z0-9_\\|&?]*\s+\$)/',
+            '/^(?:static\s+\$|const\s+[A-Za-z_])/',
+            '/^(?:namespace|use)\s+[^;]+;\s*$/',
+            '/^->\s*[A-Za-z_]/',
+            '/^(?:\\\\)?(?:[A-Za-z_][A-Za-z0-9_]*\\\\)*[A-Za-z_][A-Za-z0-9_]*::(?:class\b|[A-Z_][A-Z0-9_]*\b|[A-Za-z_][A-Za-z0-9_]*\s*\()/',
+            '/^[\'\"][^\'\"]+[\'\"]\s*=>/',
+            '/^[A-Za-z_][A-Za-z0-9_]*\s*\([^)]*\)\s*;\s*$/',
+        ];
+
+        return array_any($patterns, static fn(string $pattern): bool => preg_match($pattern, $trimmed) === 1);
     }
 
     /** @return list<CommentLine> */
@@ -1375,9 +1402,7 @@ final class CommentScanner
                     $reasonCandidate = null;
                 }
 
-                if ($source === 'doc'
-                    && $hasExampleLabel
-                    && ($reasonCandidate === null || $this->isExampleLabel($reasonCandidate['text'], $options['phpdocExampleLabels']))) {
+                if ($source === 'doc' && $hasExampleLabel) {
                     continue;
                 }
 

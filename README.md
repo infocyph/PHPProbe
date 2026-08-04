@@ -95,7 +95,7 @@ php vendor/bin/phpprobe comments \
   src tests
 ```
 
-Commented-out code must have a nearby tagged reason such as `TODO(PROJ-123): retain until the legacy endpoint is retired`. Large blocks can require an issue reference. PHPProbe also detects marker tags, malformed or stale suppressions, genuine PHPDoc signature drift, invalid PHPDoc tag values, and configured custom regex rules. Refined PHPDoc types such as array shapes, lists, generics, callable signatures, and compatible nullable unions are accepted against their broader native declarations. Existing findings can be managed with a fingerprint baseline:
+Commented-out code must have a nearby tagged reason such as `TODO(PROJ-123): retain until the legacy endpoint is retired`. Large blocks can require an issue reference. PHPProbe also detects marker tags, malformed or stale suppressions, genuine PHPDoc signature drift, invalid PHPDoc tag values, and configured custom regex rules. Refined PHPDoc types such as array shapes, lists, generics, callable and `Closure` signatures, local PHPStan/Psalm type aliases, bounded templates, conditional returns, `static`/`self`, and compatible nullable unions are accepted against their broader native declarations. Fenced PHP examples and configured example labels are treated as documentation, while genuine commented-out executable code remains enforced. Existing findings can be managed with a fingerprint baseline:
 
 ```bash
 php vendor/bin/phpprobe comments --write-baseline=.phpprobe-comments-baseline.json src
