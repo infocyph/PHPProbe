@@ -34,7 +34,8 @@ use Infocyph\PHPProbe\Util\SummaryJson;
  *     requireIssueForBlocksLongerThan:int, allowedIssuePatterns:list<string>,
  *     allowBlankLineBetweenReasonAndCode:bool, allowReasonBeforeBlockComment:bool,
  *     allowBlankLineBetweenReasonAndCodeInBlock:bool, allowPhpdocExamples:bool,
- *     phpdocExampleLabels:list<string>, typeSeverity:array<string,string>, strictSeverity:array<string,string>,
+ *     applyLimitsToPhpdoc:bool, phpdocExampleLabels:list<string>,
+ *     typeSeverity:array<string,string>, strictSeverity:array<string,string>,
  *     ruleEnabled:array<string,bool>, ruleSeverity:array<string,string>, customRules:list<CustomRule>
  * }
  */
@@ -80,9 +81,9 @@ final readonly class CommentChecker
             'strict' => [
                 ...$options,
                 'strict' => true,
-                'minReasonLength' => max(16, $options['minReasonLength']),
+                'minReasonLength' => max(24, $options['minReasonLength']),
                 'maxAllowedBlockLines' => min(6, $options['maxAllowedBlockLines']),
-                'requireIssueForBlocksLongerThan' => min(2, $options['requireIssueForBlocksLongerThan']),
+                'requireIssueForBlocksLongerThan' => min(4, $options['requireIssueForBlocksLongerThan']),
             ],
             default => throw new \InvalidArgumentException(sprintf(
                 'Invalid --policy value "%s". Expected: relaxed, standard, strict.',
@@ -246,14 +247,15 @@ final readonly class CommentChecker
             'allowedReasonTags' => ['TODO', 'FIXME', 'BUG', 'HACK', 'SECURITY', 'REVIEW', 'DEPRECATED'],
             'optionalReasonTags' => ['TEMP', 'DEBUG', 'EXPERIMENTAL'],
             'allowOptionalReasonTagsInStrictMode' => false,
-            'minReasonLength' => 12,
+            'minReasonLength' => 16,
             'maxAllowedBlockLines' => 10,
-            'requireIssueForBlocksLongerThan' => 3,
-            'allowedIssuePatterns' => ['/#\d+/', '/[A-Z]+-\d+/'],
+            'requireIssueForBlocksLongerThan' => 6,
+            'allowedIssuePatterns' => ['/#\d+/', '/[A-Z][A-Z0-9]+-\d+/'],
             'allowBlankLineBetweenReasonAndCode' => false,
             'allowReasonBeforeBlockComment' => true,
             'allowBlankLineBetweenReasonAndCodeInBlock' => true,
             'allowPhpdocExamples' => true,
+            'applyLimitsToPhpdoc' => false,
             'phpdocExampleLabels' => ['Example:', 'Examples:', 'Usage:', 'Snippet:', 'Code sample:'],
             'typeSeverity' => [
                 'comment_marker' => 'info',
@@ -457,6 +459,7 @@ final readonly class CommentChecker
             'allowReasonBeforeBlockComment' => $this->boolOption($options, 'allowReasonBeforeBlockComment', $defaults['allowReasonBeforeBlockComment']),
             'allowBlankLineBetweenReasonAndCodeInBlock' => $this->boolOption($options, 'allowBlankLineBetweenReasonAndCodeInBlock', $defaults['allowBlankLineBetweenReasonAndCodeInBlock']),
             'allowPhpdocExamples' => $this->boolOption($options, 'allowPhpdocExamples', $defaults['allowPhpdocExamples']),
+            'applyLimitsToPhpdoc' => $this->boolOption($options, 'applyLimitsToPhpdoc', $defaults['applyLimitsToPhpdoc']),
             'phpdocExampleLabels' => $this->stringListOption($options, 'phpdocExampleLabels', $defaults['phpdocExampleLabels']),
             'typeSeverity' => $this->stringMapOption($options, 'typeSeverity', $defaults['typeSeverity']),
             'strictSeverity' => $this->stringMapOption($options, 'strictSeverity', $defaults['strictSeverity']),

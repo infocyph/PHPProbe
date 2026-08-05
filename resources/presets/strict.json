@@ -30,8 +30,8 @@
   },
   "commented_out_code": {
     "policy": "strict",
-    "min_reason_length": 16,
+    "min_reason_length": 24,
     "max_allowed_block_lines": 6,
-    "require_issue_for_blocks_longer_than": 2
+    "require_issue_for_blocks_longer_than": 4
   }
 }

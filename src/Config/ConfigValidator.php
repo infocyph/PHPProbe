@@ -292,6 +292,7 @@ final class ConfigValidator
         ], $errors);
         $this->nestedObject('commented_out_code.phpdoc_comments', $value['phpdoc_comments'] ?? null, [
             'allow_documentation_examples' => 'bool',
+            'apply_limits_to_phpdoc' => 'bool',
             'example_labels' => 'strings',
         ], $errors);
         $this->severityMap('commented_out_code.finding_severity', $value['finding_severity'] ?? null, $errors);

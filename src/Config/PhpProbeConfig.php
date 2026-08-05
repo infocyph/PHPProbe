@@ -248,6 +248,7 @@ final readonly class PhpProbeConfig
             ],
             'phpdoc_comments' => [
                 'allow_documentation_examples' => 'allowPhpdocExamples',
+                'apply_limits_to_phpdoc' => 'applyLimitsToPhpdoc',
                 'example_labels' => 'phpdocExampleLabels',
             ],
         ] as $sectionKey => $map) {
