@@ -58,6 +58,152 @@ PHP);
         ->and($result['duplicated_lines'])->toBeGreaterThanOrEqual(10);
 });
 
+it('preserves associative array keys during fuzzy normalization', function (): void {
+    $root = makeDuplicateCheckerFixture();
+    $src = $root.DIRECTORY_SEPARATOR.'src';
+
+    mkdir($src, 0755, true);
+    file_put_contents($src.DIRECTORY_SEPARATOR.'Alpha.php', <<<'PHP'
+<?php
+
+final class Alpha
+{
+    public function options(array $options): array
+    {
+        return [
+            'alpha' => $this->option($options, 'value'),
+            'bravo' => $this->option($options, 'value'),
+            'charlie' => $this->option($options, 'value'),
+            'delta' => $this->option($options, 'value'),
+            'echo' => $this->option($options, 'value'),
+            'foxtrot' => $this->option($options, 'value'),
+            'golf' => $this->option($options, 'value'),
+            'hotel' => $this->option($options, 'value'),
+        ];
+    }
+}
+PHP);
+    file_put_contents($src.DIRECTORY_SEPARATOR.'Beta.php', <<<'PHP'
+<?php
+
+final class Beta
+{
+    public function options(array $options): array
+    {
+        return [
+            'india' => $this->option($options, 'value'),
+            'juliet' => $this->option($options, 'value'),
+            'kilo' => $this->option($options, 'value'),
+            'lima' => $this->option($options, 'value'),
+            'mike' => $this->option($options, 'value'),
+            'november' => $this->option($options, 'value'),
+            'oscar' => $this->option($options, 'value'),
+            'papa' => $this->option($options, 'value'),
+        ];
+    }
+}
+PHP);
+
+    try {
+        $run = runDuplicateCheckerCommand($root, [
+            '--json',
+            '--mode=gate',
+            '--fuzzy',
+            '--min-lines=5',
+            '--min-tokens=40',
+            'src',
+        ]);
+    } finally {
+        removeDuplicateCheckerFixture($root);
+    }
+
+    $result = json_decode($run['stdout'], true);
+
+    expect($run['exitCode'])->toBe(0)
+        ->and($result['clones'])->toBe([]);
+});
+
+it('does not extend token clones across function boundaries', function (): void {
+    $root = makeDuplicateCheckerFixture();
+    $src = $root.DIRECTORY_SEPARATOR.'src';
+
+    mkdir($src, 0755, true);
+    file_put_contents($src.DIRECTORY_SEPARATOR.'Alpha.php', <<<'PHP'
+<?php
+
+final class Alpha
+{
+    private function parseArgs(array $args): array
+    {
+        $cli = new CliOptions();
+        $options = $this->alphaDefaults();
+        $configuredPaths = OptionValues::strings($options, 'paths');
+        $cli->collectPaths(
+            $args,
+            $options,
+            $configuredPaths,
+            fn(string $arg, int &$index, array &$items): bool => $this->parseCliOption($args, $index, $items, $arg, $cli),
+            'Unknown option: %s',
+        );
+
+        return $this->typedOptions($options);
+    }
+
+    private function parseCliOption(array $args, int &$index, array &$options, string $arg, CliOptions $cli): bool
+    {
+        return $this->parseAlphaOption($args, $index, $options, $arg, $cli);
+    }
+}
+PHP);
+    file_put_contents($src.DIRECTORY_SEPARATOR.'Beta.php', <<<'PHP'
+<?php
+
+final class Beta
+{
+    private function parseArgs(array $args): array
+    {
+        $cli = new CliOptions();
+        $options = $this->betaDefaults();
+        $configuredPaths = OptionValues::strings($options, 'paths');
+        $cli->collectPaths(
+            $args,
+            $options,
+            $configuredPaths,
+            fn(string $arg, int &$index, array &$items): bool => $this->parseCliOption($args, $index, $items, $arg, $cli),
+            'Unsupported argument: %s',
+        );
+
+        return $this->typedOptions($options);
+    }
+
+    private function parseCliOption(array $args, int &$index, array &$options, string $arg, CliOptions $cli): bool
+    {
+        return $this->parseBetaOption($args, $index, $options, $arg, $cli);
+    }
+}
+PHP);
+
+    try {
+        $run = runDuplicateCheckerCommand($root, [
+            '--json',
+            '--mode=audit',
+            '--fuzzy',
+            '--min-lines=5',
+            '--min-tokens=90',
+            '--min-statements=999',
+            '--min-similarity=1',
+            'src',
+        ]);
+    } finally {
+        removeDuplicateCheckerFixture($root);
+    }
+
+    $result = json_decode($run['stdout'], true);
+
+    expect($run['exitCode'])->toBe(0)
+        ->and($result['clones'])->toBe([]);
+});
+
 it('passes when no duplicate reaches the configured threshold', function (): void {
     $root = makeDuplicateCheckerFixture();
     $src = $root.DIRECTORY_SEPARATOR.'src';

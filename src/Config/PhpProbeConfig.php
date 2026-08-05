@@ -78,6 +78,8 @@ final readonly class PhpProbeConfig
     }
 
     /**
+     * Apply Options for Duplication
+     *
      * @param array<string, mixed> $options
      * @return array<string, mixed>
      */
