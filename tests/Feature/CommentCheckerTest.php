@@ -152,7 +152,10 @@ it('requires an issue reference for long commented-out blocks', function (): voi
 // TODO(auth): restore after auth migration is complete
 // $gateway = new LegacyGateway();
 // $gateway->setMode('safe');
+// $gateway->setTimeout(30);
+// $gateway->setRetryLimit(2);
 // $gateway->charge($invoice);
+// $gateway->flush();
 // $gateway->close();
 final class IssueRequired
 {
@@ -169,6 +172,114 @@ PHP);
 
     expect($run['exitCode'])->toBe(1)
         ->and(array_column($result['findings'], 'type'))->toContain('commented_out_code_requires_issue_reference');
+});
+
+it('allows five commented-out lines without an issue reference in the standard policy', function (): void {
+    $root = makeCommentCheckerFixture();
+    $src = $root.DIRECTORY_SEPARATOR.'src';
+
+    mkdir($src, 0755, true);
+    file_put_contents($src.DIRECTORY_SEPARATOR.'IssueBoundary.php', <<<'PHP'
+<?php
+
+// TODO(auth): restore after auth migration is complete
+// $gateway = new LegacyGateway();
+// $gateway->setMode('safe');
+// $gateway->setTimeout(30);
+// $gateway->setRetryLimit(2);
+// $gateway->close();
+final class IssueBoundary
+{
+}
+PHP);
+
+    try {
+        $run = runCommentCheckerCommand($root, ['--json', '--fail-on=warning', 'src']);
+    } finally {
+        removeCommentCheckerFixture($root);
+    }
+
+    $result = json_decode($run['stdout'], true);
+    $types = array_column($result['findings'], 'type');
+
+    expect($run['exitCode'])->toBe(0)
+        ->and($types)->not()->toContain('commented_out_code_requires_issue_reference');
+});
+
+it('accepts alphanumeric project issue references for long blocks', function (): void {
+    $root = makeCommentCheckerFixture();
+    $src = $root.DIRECTORY_SEPARATOR.'src';
+
+    mkdir($src, 0755, true);
+    file_put_contents($src.DIRECTORY_SEPARATOR.'AlphanumericIssue.php', <<<'PHP'
+<?php
+
+// TODO(PHP8-123): restore after auth migration is complete
+// $gateway = new LegacyGateway();
+// $gateway->setMode('safe');
+// $gateway->setTimeout(30);
+// $gateway->setRetryLimit(2);
+// $gateway->charge($invoice);
+// $gateway->flush();
+// $gateway->close();
+final class AlphanumericIssue
+{
+}
+PHP);
+
+    try {
+        $run = runCommentCheckerCommand($root, ['--json', '--fail-on=warning', 'src']);
+    } finally {
+        removeCommentCheckerFixture($root);
+    }
+
+    $result = json_decode($run['stdout'], true);
+    $types = array_column($result['findings'], 'type');
+
+    expect($run['exitCode'])->toBe(0)
+        ->and($types)->not()->toContain('commented_out_code_requires_issue_reference');
+});
+
+it('exempts PHPDoc snippets from numeric commented-out-code limits by default', function (): void {
+    $root = makeCommentCheckerFixture();
+    $src = $root.DIRECTORY_SEPARATOR.'src';
+
+    mkdir($src, 0755, true);
+    file_put_contents($src.DIRECTORY_SEPARATOR.'PhpDocLimits.php', <<<'PHP'
+<?php
+
+/**
+ * TODO: keep
+ * $first = 1;
+ * $second = 2;
+ * $third = 3;
+ * $fourth = 4;
+ * $fifth = 5;
+ * $sixth = 6;
+ * $seventh = 7;
+ * $eighth = 8;
+ * $ninth = 9;
+ * $tenth = 10;
+ * $eleventh = 11;
+ */
+final class PhpDocLimits
+{
+}
+PHP);
+
+    try {
+        $run = runCommentCheckerCommand($root, ['--json', '--fail-on=warning', 'src']);
+    } finally {
+        removeCommentCheckerFixture($root);
+    }
+
+    $result = json_decode($run['stdout'], true);
+    $types = array_column($result['findings'], 'type');
+
+    expect($run['exitCode'])->toBe(0)
+        ->and($types)->not()->toContain('commented_out_code_with_weak_reason')
+        ->and($types)->not()->toContain('commented_out_code_requires_issue_reference')
+        ->and($types)->not()->toContain('commented_out_code_block_too_large');
 });
 
 it('ignores PHPDoc usage examples with an example label', function (): void {
