@@ -70,6 +70,7 @@ final class DuplicateCodeIndex
         array &$state,
         bool $normalize,
         bool $fuzzy,
+        ?int $nextTokenId,
     ): void {
         [$id, $text, $line] = $rawToken;
         $state['currentLine'] = $line + substr_count($text, "\n");
@@ -91,7 +92,7 @@ final class DuplicateCodeIndex
 
         $tokens[] = [
             'value' => $normalize
-                ? $this->normalizeToken($id, $text, $fuzzy, $state['previousTokenId'])
+                ? $this->normalizeToken($id, $text, $fuzzy, $state['previousTokenId'], $nextTokenId)
                 : token_name($id) . ':' . $text,
             'line' => $line,
         ];
@@ -155,6 +156,7 @@ final class DuplicateCodeIndex
         string $text,
         bool $fuzzy,
         ?int $previousTokenId,
+        ?int $nextTokenId,
     ): string {
         if ($this->isIdentifierToken($id)) {
             if (! $fuzzy || $this->shouldPreserveIdentifier($previousTokenId)) {
@@ -167,7 +169,9 @@ final class DuplicateCodeIndex
         return match ($id) {
             T_VARIABLE => 'VAR',
             T_LNUMBER, T_DNUMBER => 'NUM',
-            T_CONSTANT_ENCAPSED_STRING,
+            T_CONSTANT_ENCAPSED_STRING => $fuzzy && $nextTokenId === T_DOUBLE_ARROW
+                ? 'KEY:' . $text
+                : 'STR',
             T_ENCAPSED_AND_WHITESPACE => 'STR',
             default => token_name($id) . ':' . strtolower($text),
         };
@@ -213,10 +217,19 @@ final class DuplicateCodeIndex
     {
         $tokens = [];
         $state = $this->newTokenizerState();
+        $rawTokens = token_get_all($contents);
+        $nextTokenIds = $this->nextSignificantTokenIds($rawTokens);
 
-        foreach (token_get_all($contents) as $rawToken) {
+        foreach ($rawTokens as $index => $rawToken) {
             if (is_array($rawToken)) {
-                $this->appendArrayToken($rawToken, $tokens, $state, $normalize, $fuzzy);
+                $this->appendArrayToken(
+                    $rawToken,
+                    $tokens,
+                    $state,
+                    $normalize,
+                    $fuzzy,
+                    $nextTokenIds[$index],
+                );
 
                 continue;
             }
@@ -225,6 +238,35 @@ final class DuplicateCodeIndex
         }
 
         return $tokens;
+    }
+
+    /**
+     * @param list<array{0:int,1:string,2:int}|string> $rawTokens
+     * @return list<int|null>
+     */
+    private function nextSignificantTokenIds(array $rawTokens): array
+    {
+        $nextTokenIds = array_fill(0, count($rawTokens), null);
+        $nextTokenId = null;
+
+        for ($index = count($rawTokens) - 1; $index >= 0; $index--) {
+            $nextTokenIds[$index] = $nextTokenId;
+            $rawToken = $rawTokens[$index];
+
+            if (! is_array($rawToken)) {
+                $nextTokenId = null;
+
+                continue;
+            }
+
+            $id = $rawToken[0];
+
+            if (! in_array($id, self::IGNORED_TOKEN_IDS, true)) {
+                $nextTokenId = $id;
+            }
+        }
+
+        return $nextTokenIds;
     }
 
     /** @param TokenizerState $state */

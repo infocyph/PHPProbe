@@ -123,6 +123,34 @@ PHP);
         ->and($result['clones'])->toBe([]);
 });
 
+it('keeps associative keys normalized outside fuzzy mode', function (): void {
+    $root = makeDuplicateCheckerFixture();
+    $file = $root.DIRECTORY_SEPARATOR.'Options.php';
+    file_put_contents($file, <<<'PHP'
+<?php
+
+return [
+    'alpha' => 'first',
+    'bravo' => 'second',
+];
+PHP);
+
+    try {
+        $index = (new DuplicateCodeIndex)->build(
+            [$file],
+            ['normalize' => true, 'fuzzy' => false],
+            false,
+        );
+    } finally {
+        removeDuplicateCheckerFixture($root);
+    }
+
+    $values = array_column($index['streams'][$file], 'value');
+
+    expect($values)->not->toContain("KEY:'alpha'")
+        ->and(array_count_values($values)['STR'] ?? 0)->toBe(4);
+});
+
 it('does not extend token clones across function boundaries', function (): void {
     $root = makeDuplicateCheckerFixture();
     $src = $root.DIRECTORY_SEPARATOR.'src';

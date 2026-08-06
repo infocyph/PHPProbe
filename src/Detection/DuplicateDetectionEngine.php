@@ -8,7 +8,7 @@ use Infocyph\PHPProbe\Util\ProjectPath;
 
 final class DuplicateDetectionEngine
 {
-    public const int CACHE_VERSION = 5;
+    public const int CACHE_VERSION = 6;
 
     private const int ROLLING_BASE = 257;
 
