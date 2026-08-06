@@ -78,6 +78,8 @@ final readonly class PhpProbeConfig
     }
 
     /**
+     * Apply Options for Duplication
+     *
      * @param array<string, mixed> $options
      * @return array<string, mixed>
      */
@@ -248,6 +250,7 @@ final readonly class PhpProbeConfig
             ],
             'phpdoc_comments' => [
                 'allow_documentation_examples' => 'allowPhpdocExamples',
+                'apply_limits_to_phpdoc' => 'applyLimitsToPhpdoc',
                 'example_labels' => 'phpdocExampleLabels',
             ],
         ] as $sectionKey => $map) {

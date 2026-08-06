@@ -38,14 +38,15 @@ PHP;
         'allowedReasonTags' => ['TODO', 'FIXME', 'BUG', 'HACK', 'SECURITY', 'REVIEW', 'DEPRECATED'],
         'optionalReasonTags' => ['TEMP', 'DEBUG', 'EXPERIMENTAL'],
         'allowOptionalReasonTagsInStrictMode' => false,
-        'minReasonLength' => 12,
-        'maxAllowedBlockLines' => 10,
-        'requireIssueForBlocksLongerThan' => 3,
-        'allowedIssuePatterns' => ['/#\d+/', '/[A-Z]+-\d+/'],
+        'minReasonLength' => 20,
+        'maxAllowedBlockLines' => 8,
+        'requireIssueForBlocksLongerThan' => 5,
+        'allowedIssuePatterns' => ['/#\d+/', '/[A-Z][A-Z0-9]+-\d+/'],
         'allowBlankLineBetweenReasonAndCode' => false,
         'allowReasonBeforeBlockComment' => true,
         'allowBlankLineBetweenReasonAndCodeInBlock' => true,
         'allowPhpdocExamples' => true,
+        'applyLimitsToPhpdoc' => false,
         'phpdocExampleLabels' => ['Example:', 'Examples:', 'Usage:', 'Snippet:', 'Code sample:'],
         'suppressionEnabled' => true,
         'suppressionDirective' => '@phpprobe-ignore',
@@ -83,4 +84,3 @@ PHP;
 
     expect($elapsedMs)->toBeLessThan(3000.0);
 });
-

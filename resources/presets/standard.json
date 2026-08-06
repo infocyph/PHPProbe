@@ -27,5 +27,11 @@
       ".phpunit.cache", ".psalm-cache", "build", "dist", "tmp", ".tmp",
       "storage", "bootstrap/cache", "var/cache"
     ]
+  },
+  "commented_out_code": {
+    "policy": "standard",
+    "min_reason_length": 20,
+    "max_allowed_block_lines": 8,
+    "require_issue_for_blocks_longer_than": 5
   }
 }

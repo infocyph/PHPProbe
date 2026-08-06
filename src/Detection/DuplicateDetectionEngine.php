@@ -8,7 +8,7 @@ use Infocyph\PHPProbe\Util\ProjectPath;
 
 final class DuplicateDetectionEngine
 {
-    public const int CACHE_VERSION = 3;
+    public const int CACHE_VERSION = 8;
 
     private const int ROLLING_BASE = 257;
 
@@ -106,7 +106,7 @@ final class DuplicateDetectionEngine
     }
 
     /**
-     * @param list<array{value:string,line:int}> $tokens
+     * @param list<array{value:string,semantic:string,line:int}> $tokens
      */
     private function cloneSignature(array $tokens, int $start, int $tokenCount): string
     {
@@ -115,7 +115,7 @@ final class DuplicateDetectionEngine
 
     /**
      * @param array<string, array{tokens:int,occurrences:array<string, array{file:string,start_line:int,end_line:int,lines:int,context:string}>}> $cloneMap
-     * @param array<string, list<array{value:string,line:int}>> $streams
+     * @param array<string, list<array{value:string,semantic:string,line:int}>> $streams
      * @param array<string, list<array{id:string,type:string,file:string,start_line:int,end_line:int,token_start:int,token_end:int,statement_hashes:list<string>,shape:list<string>}>> $blocks
      * @param array{file:string,index:int} $left
      * @param array{file:string,index:int} $right
@@ -127,13 +127,17 @@ final class DuplicateDetectionEngine
             return;
         }
 
-        $tokenCount = $this->extendLength($streams[$left['file']], $left['index'], $streams[$right['file']], $right['index']);
+        $tokenCount = $this->tokenCloneLength($streams, $blocks, $left, $right);
 
         if ($tokenCount < $options['minTokens']) {
             return;
         }
 
         if ($this->isOverlapping($left, $right, $tokenCount)) {
+            return;
+        }
+
+        if (!$this->hasCompatibleSemantics($streams, $blocks, $left, $right, $tokenCount)) {
             return;
         }
 
@@ -152,7 +156,7 @@ final class DuplicateDetectionEngine
 
     /**
      * @param array<string, array{tokens:int,occurrences:array<string, array{file:string,start_line:int,end_line:int,lines:int,context:string}>}> $cloneMap
-     * @param array<string, list<array{value:string,line:int}>> $streams
+     * @param array<string, list<array{value:string,semantic:string,line:int}>> $streams
      * @param array<string, list<array{id:string,type:string,file:string,start_line:int,end_line:int,token_start:int,token_end:int,statement_hashes:list<string>,shape:list<string>}>> $blocks
      * @param list<array{file:string,index:int}> $occurrences
      * @param array{minLines:int,minTokens:int} $options
@@ -174,8 +178,8 @@ final class DuplicateDetectionEngine
     }
 
     /**
-     * @param list<array{value:string,line:int}> $left
-     * @param list<array{value:string,line:int}> $right
+     * @param list<array{value:string,semantic:string,line:int}> $left
+     * @param list<array{value:string,semantic:string,line:int}> $right
      */
     private function extendLength(array $left, int $leftStart, array $right, int $rightStart): int
     {
@@ -209,7 +213,52 @@ final class DuplicateDetectionEngine
     }
 
     /**
-     * @param array<string, list<array{value:string,line:int}>> $streams
+     * @param list<array{id:string,type:string,file:string,start_line:int,end_line:int,token_start:int,token_end:int,statement_hashes:list<string>,shape:list<string>}> $blocks
+     */
+    private function functionScopeLength(array $blocks, int $tokenStart, int $maxLength): int
+    {
+        if ($maxLength <= 0) {
+            return 0;
+        }
+
+        $scope = $this->smallestContainingFunctionBlock($blocks, $tokenStart);
+
+        return $scope === null
+            ? $maxLength
+            : min($maxLength, $scope['token_end'] - $tokenStart + 1);
+    }
+
+    /**
+     * @param array<string, list<array{value:string,semantic:string,line:int}>> $streams
+     * @param array<string, list<array{id:string,type:string,file:string,start_line:int,end_line:int,token_start:int,token_end:int,statement_hashes:list<string>,shape:list<string>}>> $blocks
+     * @param array{file:string,index:int} $left
+     * @param array{file:string,index:int} $right
+     */
+    private function hasCompatibleSemantics(
+        array $streams,
+        array $blocks,
+        array $left,
+        array $right,
+        int $tokenCount,
+    ): bool {
+        if ($this->isSameFunctionScope($blocks, $left, $right)) {
+            return true;
+        }
+
+        for ($offset = 0; $offset < $tokenCount; $offset++) {
+            $leftToken = $streams[$left['file']][$left['index'] + $offset];
+            $rightToken = $streams[$right['file']][$right['index'] + $offset];
+
+            if ($leftToken['semantic'] !== $rightToken['semantic']) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * @param array<string, list<array{value:string,semantic:string,line:int}>> $streams
      * @param array{file:string,index:int} $left
      * @param array{file:string,index:int} $right
      */
@@ -229,6 +278,26 @@ final class DuplicateDetectionEngine
     private function isOverlapping(array $left, array $right, int $minTokens): bool
     {
         return $left['file'] === $right['file'] && abs($left['index'] - $right['index']) < $minTokens;
+    }
+
+    /**
+     * @param array<string, list<array{id:string,type:string,file:string,start_line:int,end_line:int,token_start:int,token_end:int,statement_hashes:list<string>,shape:list<string>}>> $blocks
+     * @param array{file:string,index:int} $left
+     * @param array{file:string,index:int} $right
+     */
+    private function isSameFunctionScope(array $blocks, array $left, array $right): bool
+    {
+        if ($left['file'] !== $right['file']) {
+            return false;
+        }
+
+        $fileBlocks = $blocks[$left['file']] ?? [];
+        $leftScope = $this->smallestContainingFunctionBlock($fileBlocks, $left['index']);
+        $rightScope = $this->smallestContainingFunctionBlock($fileBlocks, $right['index']);
+
+        return $leftScope !== null
+            && $rightScope !== null
+            && $leftScope['id'] === $rightScope['id'];
     }
 
     /**
@@ -397,6 +466,35 @@ final class DuplicateDetectionEngine
     }
 
     /**
+     * @param list<array{id:string,type:string,file:string,start_line:int,end_line:int,token_start:int,token_end:int,statement_hashes:list<string>,shape:list<string>}> $blocks
+     * @return array{id:string,type:string,file:string,start_line:int,end_line:int,token_start:int,token_end:int,statement_hashes:list<string>,shape:list<string>}|null
+     */
+    private function smallestContainingFunctionBlock(array $blocks, int $tokenIndex): ?array
+    {
+        $best = null;
+
+        foreach ($blocks as $block) {
+            if (
+                $block['type'] !== 'function'
+                || $block['token_start'] > $tokenIndex
+                || $block['token_end'] < $tokenIndex
+            ) {
+                continue;
+            }
+
+            if (
+                $best === null
+                || ($block['token_end'] - $block['token_start'])
+                    < ($best['token_end'] - $best['token_start'])
+            ) {
+                $best = $block;
+            }
+        }
+
+        return $best;
+    }
+
+    /**
      * @param array<string, array{statements:int,occurrences:array<string, array{file:string,start_line:int,end_line:int,lines:int,context:string}>}> $cloneMap
      * @return list<array{fingerprint:string,source:string,score:float,similarity:float,tokens:int,lines:int,statements:int,block_type:string,occurrences:list<array{file:string,start_line:int,end_line:int,lines:int,context:string}>}>
      */
@@ -476,6 +574,28 @@ final class DuplicateDetectionEngine
     }
 
     /**
+     * @param array<string, list<array{value:string,semantic:string,line:int}>> $streams
+     * @param array<string, list<array{id:string,type:string,file:string,start_line:int,end_line:int,token_start:int,token_end:int,statement_hashes:list<string>,shape:list<string>}>> $blocks
+     * @param array{file:string,index:int} $left
+     * @param array{file:string,index:int} $right
+     */
+    private function tokenCloneLength(array $streams, array $blocks, array $left, array $right): int
+    {
+        $length = $this->extendLength(
+            $streams[$left['file']],
+            $left['index'],
+            $streams[$right['file']],
+            $right['index'],
+        );
+
+        return min(
+            $length,
+            $this->functionScopeLength($blocks[$left['file']] ?? [], $left['index'], $length),
+            $this->functionScopeLength($blocks[$right['file']] ?? [], $right['index'], $length),
+        );
+    }
+
+    /**
      * @param array<string, array{tokens:int,occurrences:array<string, array{file:string,start_line:int,end_line:int,lines:int,context:string}>}> $cloneMap
      * @return list<array{fingerprint:string,source:string,score:float,similarity:float,tokens:int,lines:int,statements:int,block_type:string,occurrences:list<array{file:string,start_line:int,end_line:int,lines:int,context:string}>}>
      */
@@ -493,7 +613,7 @@ final class DuplicateDetectionEngine
     }
 
     /**
-     * @param array<string, list<array{value:string,line:int}>> $streams
+     * @param array<string, list<array{value:string,semantic:string,line:int}>> $streams
      * @param array<string, list<array{id:string,type:string,file:string,start_line:int,end_line:int,token_start:int,token_end:int,statement_hashes:list<string>,shape:list<string>}>> $blocks
      * @param array{minLines:int,minTokens:int} $options
      * @return list<array{fingerprint:string,source:string,score:float,similarity:float,tokens:int,lines:int,statements:int,block_type:string,occurrences:list<array{file:string,start_line:int,end_line:int,lines:int,context:string}>}>
@@ -510,7 +630,7 @@ final class DuplicateDetectionEngine
     }
 
     /**
-     * @param list<array{value:string,line:int}> $tokens
+     * @param list<array{value:string,semantic:string,line:int}> $tokens
      * @param list<array{id:string,type:string,file:string,start_line:int,end_line:int,token_start:int,token_end:int,statement_hashes:list<string>,shape:list<string>}> $blocks
      * @return array{file:string,start_line:int,end_line:int,lines:int,context:string}
      */
@@ -535,7 +655,7 @@ final class DuplicateDetectionEngine
     }
 
     /**
-     * @param list<array{value:string,line:int}> $tokens
+     * @param list<array{value:string,semantic:string,line:int}> $tokens
      */
     private function tokenValueHash(array $tokens, int $start, int $length): string
     {
@@ -554,7 +674,7 @@ final class DuplicateDetectionEngine
     }
 
     /**
-     * @param array<string, list<array{value:string,line:int}>> $streams
+     * @param array<string, list<array{value:string,semantic:string,line:int}>> $streams
      * @return array<string, list<array{file:string,index:int}>>
      */
     private function tokenWindows(array $streams, int $minTokens): array

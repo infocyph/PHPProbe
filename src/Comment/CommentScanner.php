@@ -38,6 +38,7 @@ use PHPStan\PhpDocParser\Parser\TokenIterator;
  *     allowReasonBeforeBlockComment:bool,
  *     allowBlankLineBetweenReasonAndCodeInBlock:bool,
  *     allowPhpdocExamples:bool,
+ *     applyLimitsToPhpdoc:bool,
  *     phpdocExampleLabels:list<string>,
  *     typeSeverity:array<string,string>,
  *     strictSeverity:array<string,string>,
@@ -450,6 +451,7 @@ final class CommentScanner
         array $options,
     ): \Infocyph\PHPProbe\Comment\CommentFinding {
         $isDoc = $source === 'doc';
+        $applyLimits = !$isDoc || $options['applyLimitsToPhpdoc'];
         $fallbackExplain = $parserFallback ? 'PHPDoc parser fallback was used for this comment.' : null;
 
         if ($reasonCandidate === null) {
@@ -522,7 +524,7 @@ final class CommentScanner
             );
         }
 
-        if ($this->isWeakReason($parsed['message'], $options['minReasonLength'])) {
+        if ($applyLimits && $this->isWeakReason($parsed['message'], $options['minReasonLength'])) {
             return $this->finding(
                 $file,
                 $startLine,
@@ -541,7 +543,9 @@ final class CommentScanner
             );
         }
 
-        if ($codeLines > $options['requireIssueForBlocksLongerThan'] && !$this->hasIssueReference($parsed, $options['allowedIssuePatterns'])) {
+        if ($applyLimits
+            && $codeLines > $options['requireIssueForBlocksLongerThan']
+            && !$this->hasIssueReference($parsed, $options['allowedIssuePatterns'])) {
             return $this->finding(
                 $file,
                 $startLine,
@@ -573,7 +577,11 @@ final class CommentScanner
             raw: $reasonCandidate['text'],
             confidence: 'high',
             subtype: 'snippet_valid_reason',
-            explanation: $options['explain'] ? 'Reason tag, strength, and issue-reference policy checks passed.' : null,
+            explanation: $options['explain']
+                ? ((!$applyLimits)
+                    ? 'Reason tag is valid; numeric commented-out-code limits are exempt for PHPDoc.'
+                    : 'Reason tag, strength, and issue-reference policy checks passed.')
+                : null,
         );
     }
 
@@ -1373,6 +1381,7 @@ final class CommentScanner
             }
 
             $source = $comment['type'] === 'doc_comment' ? 'doc' : 'block';
+            $applyLimits = $source !== 'doc' || $options['applyLimitsToPhpdoc'];
             $analysis = $this->effectiveCommentAnalysis($comment, $options);
 
             if ($analysis['skip']) {
@@ -1422,7 +1431,7 @@ final class CommentScanner
                     $findings[] = $reason;
                 }
 
-                if ($group['lines'] > $options['maxAllowedBlockLines']) {
+                if ($applyLimits && $group['lines'] > $options['maxAllowedBlockLines']) {
                     $findings[] = $this->finding(
                         $file,
                         $group['start_line'],
