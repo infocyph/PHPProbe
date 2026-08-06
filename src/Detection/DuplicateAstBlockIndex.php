@@ -18,7 +18,7 @@ final readonly class DuplicateAstBlockIndex
     }
 
     /**
-     * @param list<array{value:string,line:int}> $tokens
+     * @param list<array{value:string,semantic:string,line:int}> $tokens
      * @return list<array{id:string,type:string,file:string,start_line:int,end_line:int,token_start:int,token_end:int,statement_hashes:list<string>,shape:list<string>}>
      */
     public function blocks(string $contents, string $file, array $tokens): array
@@ -160,7 +160,7 @@ final readonly class DuplicateAstBlockIndex
     }
 
     /**
-     * @param list<array{value:string,line:int}> $tokens
+     * @param list<array{value:string,semantic:string,line:int}> $tokens
      * @return array<int, array{first:int,last:int}>
      */
     private function lineTokenMap(array $tokens): array

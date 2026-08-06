@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Infocyph\PHPProbe\Detection;
 
 /**
- * @phpstan-type Token array{value:string,line:int}
+ * @phpstan-type Token array{value:string,semantic:string,line:int}
  * @phpstan-type TokenizerState array{
  *     currentLine:int, braceDepth:int, namespaceDepth:int,
  *     namespacePending:bool, statementStart:bool,
@@ -38,12 +38,12 @@ final class DuplicateCodeIndex
         $streams = [];
         $blocks = [];
         $totalLines = 0;
-        $ast = $includeAst ? new DuplicateAstBlockIndex : null;
+        $ast = $includeAst ? new DuplicateAstBlockIndex() : null;
 
         foreach ($files as $file) {
             $contents = file_get_contents($file);
 
-            if (! is_string($contents)) {
+            if (!is_string($contents)) {
                 throw new \RuntimeException(sprintf('Failed to read PHP source file: %s', $file));
             }
 
@@ -90,10 +90,15 @@ final class DuplicateCodeIndex
             $state['namespacePending'] = true;
         }
 
+        $values = $normalize
+            ? $this->normalizeToken($id, $text, $fuzzy, $state['previousTokenId'], $nextTokenId)
+            : [
+                'value' => token_name($id) . ':' . $text,
+                'semantic' => token_name($id) . ':' . $text,
+            ];
+
         $tokens[] = [
-            'value' => $normalize
-                ? $this->normalizeToken($id, $text, $fuzzy, $state['previousTokenId'], $nextTokenId)
-                : token_name($id) . ':' . $text,
+            ...$values,
             'line' => $line,
         ];
 
@@ -115,6 +120,7 @@ final class DuplicateCodeIndex
 
         $tokens[] = [
             'value' => $rawToken,
+            'semantic' => $rawToken,
             'line' => $state['currentLine'],
         ];
 
@@ -151,32 +157,6 @@ final class DuplicateCodeIndex
         return str_ends_with($contents, "\n") ? $newlines : $newlines + 1;
     }
 
-    private function normalizeToken(
-        int $id,
-        string $text,
-        bool $fuzzy,
-        ?int $previousTokenId,
-        ?int $nextTokenId,
-    ): string {
-        if ($this->isIdentifierToken($id)) {
-            if (! $fuzzy || $this->shouldPreserveIdentifier($previousTokenId)) {
-                return token_name($id) . ':' . strtolower($text);
-            }
-
-            return 'ID';
-        }
-
-        return match ($id) {
-            T_VARIABLE => 'VAR',
-            T_LNUMBER, T_DNUMBER => 'NUM',
-            T_CONSTANT_ENCAPSED_STRING => $fuzzy && $nextTokenId === T_DOUBLE_ARROW
-                ? 'KEY:' . $text
-                : 'STR',
-            T_ENCAPSED_AND_WHITESPACE => 'STR',
-            default => token_name($id) . ':' . strtolower($text),
-        };
-    }
-
     /** @return TokenizerState */
     private function newTokenizerState(): array
     {
@@ -189,6 +169,68 @@ final class DuplicateCodeIndex
             'skippingImport' => false,
             'previousTokenId' => null,
         ];
+    }
+
+    /**
+     * @param list<array{0:int,1:string,2:int}|string> $rawTokens
+     * @return list<int|null>
+     */
+    private function nextSignificantTokenIds(array $rawTokens): array
+    {
+        $nextTokenIds = array_fill(0, count($rawTokens), null);
+        $nextTokenId = null;
+
+        for ($index = count($rawTokens) - 1; $index >= 0; $index--) {
+            $nextTokenIds[$index] = $nextTokenId;
+            $rawToken = $rawTokens[$index];
+
+            if (!is_array($rawToken)) {
+                $nextTokenId = null;
+
+                continue;
+            }
+
+            $id = $rawToken[0];
+
+            if (!in_array($id, self::IGNORED_TOKEN_IDS, true)) {
+                $nextTokenId = $id;
+            }
+        }
+
+        return array_values($nextTokenIds);
+    }
+
+    /** @return array{value:string,semantic:string} */
+    private function normalizeToken(
+        int $id,
+        string $text,
+        bool $fuzzy,
+        ?int $previousTokenId,
+        ?int $nextTokenId,
+    ): array {
+        if ($this->isIdentifierToken($id)) {
+            $value = !$fuzzy || $this->shouldPreserveIdentifier($previousTokenId)
+                ? token_name($id) . ':' . strtolower($text)
+                : 'ID';
+
+            return ['value' => $value, 'semantic' => $value];
+        }
+
+        $value = match ($id) {
+            T_VARIABLE => 'VAR',
+            T_LNUMBER, T_DNUMBER => 'NUM',
+            T_CONSTANT_ENCAPSED_STRING,
+            T_ENCAPSED_AND_WHITESPACE => 'STR',
+            default => token_name($id) . ':' . strtolower($text),
+        };
+
+        $semantic = $fuzzy
+            && $id === T_CONSTANT_ENCAPSED_STRING
+            && $nextTokenId === T_DOUBLE_ARROW
+                ? 'KEY:' . $text
+                : $value;
+
+        return ['value' => $value, 'semantic' => $semantic];
     }
 
     private function shouldPreserveIdentifier(?int $previousTokenId): bool
@@ -238,35 +280,6 @@ final class DuplicateCodeIndex
         }
 
         return $tokens;
-    }
-
-    /**
-     * @param list<array{0:int,1:string,2:int}|string> $rawTokens
-     * @return list<int|null>
-     */
-    private function nextSignificantTokenIds(array $rawTokens): array
-    {
-        $nextTokenIds = array_fill(0, count($rawTokens), null);
-        $nextTokenId = null;
-
-        for ($index = count($rawTokens) - 1; $index >= 0; $index--) {
-            $nextTokenIds[$index] = $nextTokenId;
-            $rawToken = $rawTokens[$index];
-
-            if (! is_array($rawToken)) {
-                $nextTokenId = null;
-
-                continue;
-            }
-
-            $id = $rawToken[0];
-
-            if (! in_array($id, self::IGNORED_TOKEN_IDS, true)) {
-                $nextTokenId = $id;
-            }
-        }
-
-        return $nextTokenIds;
     }
 
     /** @param TokenizerState $state */
