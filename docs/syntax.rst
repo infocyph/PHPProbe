@@ -17,10 +17,15 @@ Execution model
 ---------------
 
 The default is one lint process at a time. ``--parallel=N`` keeps at most N
-child processes active, with a hard range of 1–64. Each child receives an
-argument-vector command rather than shell text. Output is consumed while the
-process runs, every child has its own 0.1–600 second timeout, and final failures
-are sorted by path for deterministic CI output.
+child processes active, with a hard range of 1–64. Supplied paths are preserved
+as work groups. PHPProbe takes one file from each group in turn, so
+``--parallel=2 src tests`` starts work from both trees instead of exhausting
+``src`` before reaching ``tests``. The worker limit is global; PHP's native
+``-l`` command still receives one file per process.
+
+Each child receives an argument-vector command rather than shell text. Output
+is consumed while the process runs, every child has its own 0.1–600 second
+timeout, and final failures are sorted by path for deterministic CI output.
 
 ``proc_open`` is required. A process that cannot start, times out, or exits
 non-zero is a syntax failure; it is never treated as a clean file.
@@ -53,9 +58,14 @@ Options
 Output contract
 ---------------
 
-JSON output contains ``files_checked`` and a ``failures`` list. Each failure has
-``file`` and ``message``. Markdown, SARIF, GitHub annotations, and deterministic
-text output represent the same result. Summary JSON is written atomically.
+Text output uses CLI-safe tables containing a per-input-path summary and, when
+needed, a diagnostic table with group, file, line, and message columns.
+
+JSON output contains ``files_checked``, a ``failures`` list, and group totals.
+Each failure has ``file`` and ``message``. Use ``--format=phpstan-json`` for the
+PHPStan error-formatter shape: ``totals``, file-keyed ``messages``, and global
+``errors``. Markdown, SARIF, GitHub annotations, and deterministic text output
+represent the same result. Summary JSON is written atomically.
 
 An empty but valid file set passes with zero files checked. Invalid
 configuration or discovery/execution errors return exit code 2; one or more

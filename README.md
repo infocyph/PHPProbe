@@ -1,3 +1,5 @@
+ i
+
 # PHPProbe
 
 [![CI](https://github.com/infocyph/PHPProbe/actions/workflows/ci.yml/badge.svg)](https://github.com/infocyph/PHPProbe/actions/workflows/ci.yml)
@@ -32,16 +34,16 @@ php vendor/bin/phpprobe check src tests
 
 `check` runs syntax first. Duplicate and comment analysis only run when syntax succeeds, preventing parser noise and wasted work on invalid source.
 
-| Command | Purpose |
-| --- | --- |
-| `syntax` | Lint PHP files, sequentially or with bounded parallel workers. |
-| `duplicates` | Detect exact, normalized, fuzzy, structural, and near-miss clones. |
-| `comments` | Enforce marker, commented-out-code, PHPDoc, custom-rule, and suppression policies. |
-| `check` | Run syntax and the configured duplicate/comment profiles, then optionally write report artifacts. |
-| `config validate` | Validate a configuration file without running a scan. |
-| `init` | Create a minimal configuration and optional CI workflow. |
-| `doctor` | Check the runtime, required extension, process support, and config. |
-| `presets` / `preset <name>` | List or inspect bundled presets. |
+| Command                         | Purpose                                                                                           |
+| ------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `syntax`                      | Lint PHP files, sequentially or with bounded parallel workers.                                    |
+| `duplicates`                  | Detect exact, normalized, fuzzy, structural, and near-miss clones.                                |
+| `comments`                    | Enforce marker, commented-out-code, PHPDoc, custom-rule, and suppression policies.                |
+| `check`                       | Run syntax and the configured duplicate/comment profiles, then optionally write report artifacts. |
+| `config validate`             | Validate a configuration file without running a scan.                                             |
+| `init`                        | Create a minimal configuration and optional CI workflow.                                          |
+| `doctor`                      | Check the runtime, required extension, process support, and config.                               |
+| `presets` / `preset <name>` | List or inspect bundled presets.                                                                  |
 
 ## Duplicate detection
 
@@ -107,10 +109,10 @@ See [comment policy](docs/comments.rst) for rules, suppressions, configuration, 
 ## Syntax checking
 
 ```bash
-php vendor/bin/phpprobe syntax --parallel=4 --timeout=30 src tests
+php vendor/bin/phpprobe syntax --parallel=2 --timeout=30 src tests
 ```
 
-Workers are bounded to 1–64, each lint process has a configurable timeout, and failures are sorted by path for deterministic output. Missing scan paths and invalid configuration are errors rather than silent passes.
+Workers are bounded to 1–64, each lint process has a configurable timeout, and supplied parent paths are scheduled round-robin. For example, `--parallel=2 src tests` starts work from both trees while retaining a global two-process limit. Failures remain sorted by path for deterministic output. Missing scan paths and invalid configuration are errors rather than silent passes.
 
 ## Configuration
 
@@ -288,7 +290,9 @@ CLI paths replace configured paths. Repeat `--exclude=PATH` to add exclusions. G
 
 ## Output and automation
 
-Every checker supports `text`, `json`, `markdown`, `sarif`, and `github` formats. Exit codes are stable:
+Every checker supports `text`, `json`, `phpstan-json`, `markdown`, `sarif`, and `github` formats. Text reports use terminal-safe tables grouped by each supplied parent path. Native JSON retains checker-specific details and adds group summaries; `phpstan-json` emits PHPStan's file-keyed error-formatter shape. Exit codes are stable:
+
+For comment reports, `--fail-on` is also the emission threshold: `error` shows only error/critical findings, `warning` adds warning/high findings, and `info` shows everything.
 
 - `0`: the configured gate passed;
 - `1`: findings crossed the configured failure threshold;

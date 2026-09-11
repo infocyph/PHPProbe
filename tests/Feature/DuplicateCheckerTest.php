@@ -3,14 +3,14 @@
 declare(strict_types=1);
 use Infocyph\PHPProbe\Detection\DuplicateCodeIndex;
 
-require_once __DIR__.DIRECTORY_SEPARATOR.'FixtureSupport.php';
+require_once __DIR__ . DIRECTORY_SEPARATOR . 'FixtureSupport.php';
 
 it('detects fuzzy token duplicates across php files', function (): void {
     $root = makeDuplicateCheckerFixture();
-    $src = $root.DIRECTORY_SEPARATOR.'src';
+    $src = $root . DIRECTORY_SEPARATOR . 'src';
 
     mkdir($src, 0755, true);
-    file_put_contents($src.DIRECTORY_SEPARATOR.'Alpha.php', <<<'PHP'
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'Alpha.php', <<<'PHP'
 <?php
 
 final class Alpha
@@ -26,7 +26,7 @@ final class Alpha
     }
 }
 PHP);
-    file_put_contents($src.DIRECTORY_SEPARATOR.'Beta.php', <<<'PHP'
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'Beta.php', <<<'PHP'
 <?php
 
 final class Beta
@@ -55,15 +55,59 @@ PHP);
 
     expect($result['clones'])->toHaveCount(1)
         ->and($result['clones'][0]['occurrences'])->toHaveCount(2)
+        ->and($result['groups'])->toBe([[
+            'name' => 'src',
+            'files' => 2,
+            'clone_groups' => 1,
+            'occurrences' => 2,
+        ]])
         ->and($result['duplicated_lines'])->toBeGreaterThanOrEqual(10);
+});
+
+it('keeps cross-group clone detection and supports PHPStan compatible JSON', function (): void {
+    $root = makeDuplicateCheckerFixture();
+    $src = $root . DIRECTORY_SEPARATOR . 'src';
+    $tests = $root . DIRECTORY_SEPARATOR . 'tests';
+
+    mkdir($src, 0755, true);
+    mkdir($tests, 0755, true);
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'Alpha.php', duplicateBaselineFixture('Alpha'));
+    file_put_contents($tests . DIRECTORY_SEPARATOR . 'BetaTest.php', duplicateBaselineFixture('BetaTest'));
+
+    try {
+        $options = [
+            '--preset=default',
+            '--fuzzy',
+            '--min-lines=5',
+            '--min-tokens=20',
+            'src',
+            'tests',
+        ];
+        $native = runDuplicateCheckerCommand($root, ['--json', ...$options]);
+        $run = runDuplicateCheckerCommand($root, ['--format=phpstan-json', ...$options]);
+    } finally {
+        removeDuplicateCheckerFixture($root);
+    }
+
+    $nativePayload = json_decode($native['stdout'], true);
+    $payload = json_decode($run['stdout'], true);
+
+    expect($nativePayload['groups'])->toBe([
+        ['name' => 'src', 'files' => 1, 'clone_groups' => 1, 'occurrences' => 1],
+        ['name' => 'tests', 'files' => 1, 'clone_groups' => 1, 'occurrences' => 1],
+    ])
+        ->and($run['exitCode'])->toBe(1)
+        ->and($payload['totals']['file_errors'])->toBe(2)
+        ->and(array_keys($payload['files']))->toBe(['src/Alpha.php', 'tests/BetaTest.php'])
+        ->and($payload['files']['src/Alpha.php']['messages'][0]['identifier'])->toBe('duplicate_code_clone');
 });
 
 it('preserves associative array keys during fuzzy normalization', function (): void {
     $root = makeDuplicateCheckerFixture();
-    $src = $root.DIRECTORY_SEPARATOR.'src';
+    $src = $root . DIRECTORY_SEPARATOR . 'src';
 
     mkdir($src, 0755, true);
-    file_put_contents($src.DIRECTORY_SEPARATOR.'Alpha.php', <<<'PHP'
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'Alpha.php', <<<'PHP'
 <?php
 
 final class Alpha
@@ -83,7 +127,7 @@ final class Alpha
     }
 }
 PHP);
-    file_put_contents($src.DIRECTORY_SEPARATOR.'Beta.php', <<<'PHP'
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'Beta.php', <<<'PHP'
 <?php
 
 final class Beta
@@ -125,7 +169,7 @@ PHP);
 
 it('keeps associative keys normalized outside fuzzy mode', function (): void {
     $root = makeDuplicateCheckerFixture();
-    $file = $root.DIRECTORY_SEPARATOR.'Options.php';
+    $file = $root . DIRECTORY_SEPARATOR . 'Options.php';
     file_put_contents($file, <<<'PHP'
 <?php
 
@@ -136,7 +180,7 @@ return [
 PHP);
 
     try {
-        $index = (new DuplicateCodeIndex)->build(
+        $index = (new DuplicateCodeIndex())->build(
             [$file],
             ['normalize' => true, 'fuzzy' => false],
             false,
@@ -153,10 +197,10 @@ PHP);
 
 it('does not extend token clones across function boundaries', function (): void {
     $root = makeDuplicateCheckerFixture();
-    $src = $root.DIRECTORY_SEPARATOR.'src';
+    $src = $root . DIRECTORY_SEPARATOR . 'src';
 
     mkdir($src, 0755, true);
-    file_put_contents($src.DIRECTORY_SEPARATOR.'Alpha.php', <<<'PHP'
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'Alpha.php', <<<'PHP'
 <?php
 
 final class Alpha
@@ -183,7 +227,7 @@ final class Alpha
     }
 }
 PHP);
-    file_put_contents($src.DIRECTORY_SEPARATOR.'Beta.php', <<<'PHP'
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'Beta.php', <<<'PHP'
 <?php
 
 final class Beta
@@ -234,10 +278,10 @@ PHP);
 
 it('passes when no duplicate reaches the configured threshold', function (): void {
     $root = makeDuplicateCheckerFixture();
-    $src = $root.DIRECTORY_SEPARATOR.'src';
+    $src = $root . DIRECTORY_SEPARATOR . 'src';
 
     mkdir($src, 0755, true);
-    file_put_contents($src.DIRECTORY_SEPARATOR.'Solo.php', <<<'PHP'
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'Solo.php', <<<'PHP'
 <?php
 
 final class Solo
@@ -263,10 +307,10 @@ PHP);
 
 it('does not report overlapping token windows as separate clones', function (): void {
     $root = makeDuplicateCheckerFixture();
-    $src = $root.DIRECTORY_SEPARATOR.'src';
+    $src = $root . DIRECTORY_SEPARATOR . 'src';
 
     mkdir($src, 0755, true);
-    file_put_contents($src.DIRECTORY_SEPARATOR.'Options.php', <<<'PHP'
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'Options.php', <<<'PHP'
 <?php
 
 final class Options
@@ -325,10 +369,10 @@ PHP);
 
 it('ignores repeated top-level import blocks', function (): void {
     $root = makeDuplicateCheckerFixture();
-    $src = $root.DIRECTORY_SEPARATOR.'src';
+    $src = $root . DIRECTORY_SEPARATOR . 'src';
 
     mkdir($src, 0755, true);
-    file_put_contents($src.DIRECTORY_SEPARATOR.'One.php', <<<'PHP'
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'One.php', <<<'PHP'
 <?php
 
 namespace Fixture\One;
@@ -339,7 +383,7 @@ use function array_map;
 use const PHP_VERSION;
 use Fixture\Shared\{Alpha, Beta, Gamma};
 PHP);
-    file_put_contents($src.DIRECTORY_SEPARATOR.'Two.php', <<<'PHP'
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'Two.php', <<<'PHP'
 <?php
 
 namespace Fixture\Two;
@@ -365,7 +409,7 @@ PHP);
 
 it('keeps trait use and closure captures in the token stream', function (): void {
     $root = makeDuplicateCheckerFixture();
-    $file = $root.DIRECTORY_SEPARATOR.'Uses.php';
+    $file = $root . DIRECTORY_SEPARATOR . 'Uses.php';
     file_put_contents($file, <<<'PHP'
 <?php
 
@@ -391,7 +435,7 @@ final class Subject
 PHP);
 
     try {
-        $index = (new DuplicateCodeIndex)->build(
+        $index = (new DuplicateCodeIndex())->build(
             [$file],
             ['normalize' => false, 'fuzzy' => false],
             false,
@@ -408,7 +452,7 @@ PHP);
 
 it('still detects duplicated code following ignored imports', function (): void {
     $root = makeDuplicateCheckerFixture();
-    $src = $root.DIRECTORY_SEPARATOR.'src';
+    $src = $root . DIRECTORY_SEPARATOR . 'src';
 
     mkdir($src, 0755, true);
     $template = <<<'PHP'
@@ -434,8 +478,8 @@ final class %s
     }
 }
 PHP;
-    file_put_contents($src.DIRECTORY_SEPARATOR.'One.php', sprintf($template, 'One', 'One'));
-    file_put_contents($src.DIRECTORY_SEPARATOR.'Two.php', sprintf($template, 'Two', 'Two'));
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'One.php', sprintf($template, 'One', 'One'));
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'Two.php', sprintf($template, 'Two', 'Two'));
 
     try {
         $run = runDuplicateCheckerCommand($root, ['--json', '--fuzzy', '--min-lines=5', '--min-tokens=20', 'src']);
@@ -451,11 +495,11 @@ PHP;
 
 it('supports fail-on=error threshold for duplicate percentage', function (): void {
     $root = makeDuplicateCheckerFixture();
-    $src = $root.DIRECTORY_SEPARATOR.'src';
+    $src = $root . DIRECTORY_SEPARATOR . 'src';
 
     mkdir($src, 0755, true);
-    file_put_contents($src.DIRECTORY_SEPARATOR.'Alpha.php', duplicateBaselineFixture('Alpha'));
-    file_put_contents($src.DIRECTORY_SEPARATOR.'Beta.php', duplicateBaselineFixture('Beta'));
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'Alpha.php', duplicateBaselineFixture('Alpha'));
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'Beta.php', duplicateBaselineFixture('Beta'));
 
     try {
         $run = runDuplicateCheckerCommand($root, [
@@ -479,11 +523,11 @@ it('supports fail-on=error threshold for duplicate percentage', function (): voi
 
 it('renders compact clone summary wording in text output', function (): void {
     $root = makeDuplicateCheckerFixture();
-    $src = $root.DIRECTORY_SEPARATOR.'src';
+    $src = $root . DIRECTORY_SEPARATOR . 'src';
 
     mkdir($src, 0755, true);
-    file_put_contents($src.DIRECTORY_SEPARATOR.'Alpha.php', duplicateBaselineFixture('Alpha'));
-    file_put_contents($src.DIRECTORY_SEPARATOR.'Beta.php', duplicateBaselineFixture('Beta'));
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'Alpha.php', duplicateBaselineFixture('Alpha'));
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'Beta.php', duplicateBaselineFixture('Beta'));
 
     try {
         $run = runDuplicateCheckerCommand($root, ['--fuzzy', '--min-lines=5', '--min-tokens=20', 'src']);
@@ -492,18 +536,18 @@ it('renders compact clone summary wording in text output', function (): void {
     }
 
     expect($run['exitCode'])->toBe(1)
-        ->and($run['stderr'])->toContain('Lines:')
-        ->and($run['stderr'])->toContain('Similarity:')
-        ->and($run['stderr'])->toContain('Engine: Token')
-        ->and($run['stderr'])->toContain('Score:');
+        ->and($run['stderr'])->toContain('| Group | Files | Clone groups | Occurrences |')
+        ->and($run['stderr'])->toContain('| Clone | Group | File')
+        ->and($run['stderr'])->toContain('| Engine | Score |')
+        ->and($run['stderr'])->toContain('Token');
 });
 
 it('supports classic duplicate output style from config overrides', function (): void {
     $root = makeDuplicateCheckerFixture();
-    $src = $root.DIRECTORY_SEPARATOR.'src';
+    $src = $root . DIRECTORY_SEPARATOR . 'src';
 
     mkdir($src, 0755, true);
-    file_put_contents($root.DIRECTORY_SEPARATOR.'phpprobe.json', json_encode([
+    file_put_contents($root . DIRECTORY_SEPARATOR . 'phpprobe.json', json_encode([
         'duplicates' => [
             'paths' => ['src'],
             'fuzzy' => true,
@@ -514,8 +558,8 @@ it('supports classic duplicate output style from config overrides', function ():
             ],
         ],
     ], JSON_PRETTY_PRINT));
-    file_put_contents($src.DIRECTORY_SEPARATOR.'Alpha.php', duplicateBaselineFixture('Alpha'));
-    file_put_contents($src.DIRECTORY_SEPARATOR.'Beta.php', duplicateBaselineFixture('Beta'));
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'Alpha.php', duplicateBaselineFixture('Alpha'));
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'Beta.php', duplicateBaselineFixture('Beta'));
 
     try {
         $run = runDuplicateCheckerCommand($root, []);
@@ -524,17 +568,18 @@ it('supports classic duplicate output style from config overrides', function ():
     }
 
     expect($run['exitCode'])->toBe(1)
-        ->and($run['stderr'])->toContain('lines,')
-        ->and($run['stderr'])->toContain('similar')
-        ->and($run['stderr'])->not()->toContain('Engine:');
+        ->and($run['stderr'])->toContain('| Clone | Group')
+        ->and($run['stderr'])->toContain('| Source | Score')
+        ->and($run['stderr'])->toContain('tokens')
+        ->and($run['stderr'])->not()->toContain('| Engine |');
 });
 
 it('detects near-miss block clones in audit mode', function (): void {
     $root = makeDuplicateCheckerFixture();
-    $src = $root.DIRECTORY_SEPARATOR.'src';
+    $src = $root . DIRECTORY_SEPARATOR . 'src';
 
     mkdir($src, 0755, true);
-    file_put_contents($src.DIRECTORY_SEPARATOR.'NearMiss.php', <<<'PHP'
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'NearMiss.php', <<<'PHP'
 <?php
 
 function first(array $items): array
@@ -576,16 +621,16 @@ PHP);
 
 it('can write and use a duplicate baseline', function (): void {
     $root = makeDuplicateCheckerFixture();
-    $src = $root.DIRECTORY_SEPARATOR.'src';
-    $baseline = $root.DIRECTORY_SEPARATOR.'duplicates-baseline.json';
+    $src = $root . DIRECTORY_SEPARATOR . 'src';
+    $baseline = $root . DIRECTORY_SEPARATOR . 'duplicates-baseline.json';
 
     mkdir($src, 0755, true);
-    file_put_contents($src.DIRECTORY_SEPARATOR.'One.php', duplicateBaselineFixture('One'));
-    file_put_contents($src.DIRECTORY_SEPARATOR.'Two.php', duplicateBaselineFixture('Two'));
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'One.php', duplicateBaselineFixture('One'));
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'Two.php', duplicateBaselineFixture('Two'));
 
     try {
-        $write = runDuplicateCheckerCommand($root, ['--json', '--fuzzy', '--min-lines=5', '--min-tokens=20', '--write-baseline='.$baseline, 'src']);
-        $check = runDuplicateCheckerCommand($root, ['--json', '--fuzzy', '--min-lines=5', '--min-tokens=20', '--baseline='.$baseline, 'src']);
+        $write = runDuplicateCheckerCommand($root, ['--json', '--fuzzy', '--min-lines=5', '--min-tokens=20', '--write-baseline=' . $baseline, 'src']);
+        $check = runDuplicateCheckerCommand($root, ['--json', '--fuzzy', '--min-lines=5', '--min-tokens=20', '--baseline=' . $baseline, 'src']);
     } finally {
         removeDuplicateCheckerFixture($root);
     }
@@ -601,20 +646,20 @@ it('can write and use a duplicate baseline', function (): void {
 
 it('keeps baseline fingerprints stable when duplicate code moves by line', function (): void {
     $root = makeDuplicateCheckerFixture();
-    $src = $root.DIRECTORY_SEPARATOR.'src';
-    $baseline = $root.DIRECTORY_SEPARATOR.'duplicates-baseline.json';
+    $src = $root . DIRECTORY_SEPARATOR . 'src';
+    $baseline = $root . DIRECTORY_SEPARATOR . 'duplicates-baseline.json';
 
     mkdir($src, 0755, true);
-    $one = $src.DIRECTORY_SEPARATOR.'One.php';
-    $two = $src.DIRECTORY_SEPARATOR.'Two.php';
+    $one = $src . DIRECTORY_SEPARATOR . 'One.php';
+    $two = $src . DIRECTORY_SEPARATOR . 'Two.php';
     file_put_contents($one, duplicateBaselineFixture('One'));
     file_put_contents($two, duplicateBaselineFixture('Two'));
 
     try {
-        $write = runDuplicateCheckerCommand($root, ['--json', '--fuzzy', '--min-lines=5', '--min-tokens=20', '--write-baseline='.$baseline, 'src']);
+        $write = runDuplicateCheckerCommand($root, ['--json', '--fuzzy', '--min-lines=5', '--min-tokens=20', '--write-baseline=' . $baseline, 'src']);
         file_put_contents($one, str_replace("<?php\n", "<?php\n\n\n", duplicateBaselineFixture('One')));
         file_put_contents($two, str_replace("<?php\n", "<?php\n\n\n", duplicateBaselineFixture('Two')));
-        $check = runDuplicateCheckerCommand($root, ['--json', '--fuzzy', '--min-lines=5', '--min-tokens=20', '--baseline='.$baseline, 'src']);
+        $check = runDuplicateCheckerCommand($root, ['--json', '--fuzzy', '--min-lines=5', '--min-tokens=20', '--baseline=' . $baseline, 'src']);
     } finally {
         removeDuplicateCheckerFixture($root);
     }
@@ -628,18 +673,18 @@ it('keeps baseline fingerprints stable when duplicate code moves by line', funct
 
 it('invalidates duplicate cache by content even when size and mtime are unchanged', function (): void {
     $root = makeDuplicateCheckerFixture();
-    $src = $root.DIRECTORY_SEPARATOR.'src';
-    $cache = $root.DIRECTORY_SEPARATOR.'duplicates-cache.json';
+    $src = $root . DIRECTORY_SEPARATOR . 'src';
+    $cache = $root . DIRECTORY_SEPARATOR . 'duplicates-cache.json';
 
     mkdir($src, 0755, true);
-    $one = $src.DIRECTORY_SEPARATOR.'One.php';
-    $two = $src.DIRECTORY_SEPARATOR.'Two.php';
+    $one = $src . DIRECTORY_SEPARATOR . 'One.php';
+    $two = $src . DIRECTORY_SEPARATOR . 'Two.php';
     file_put_contents($one, duplicateBaselineFixture('One'));
     file_put_contents($two, duplicateBaselineFixture('Two'));
     $mtime = filemtime($two);
 
     try {
-        $first = runDuplicateCheckerCommand($root, ['--json', '--no-fuzzy', '--min-lines=5', '--min-tokens=30', '--cache-file='.$cache, 'src']);
+        $first = runDuplicateCheckerCommand($root, ['--json', '--no-fuzzy', '--min-lines=5', '--min-tokens=30', '--cache-file=' . $cache, 'src']);
         $changed = str_replace('strtoupper', 'strtolower', duplicateBaselineFixture('Two'));
         file_put_contents($two, $changed);
 
@@ -647,7 +692,7 @@ it('invalidates duplicate cache by content even when size and mtime are unchange
             touch($two, $mtime);
         }
 
-        $second = runDuplicateCheckerCommand($root, ['--json', '--no-fuzzy', '--min-lines=5', '--min-tokens=30', '--cache-file='.$cache, 'src']);
+        $second = runDuplicateCheckerCommand($root, ['--json', '--no-fuzzy', '--min-lines=5', '--min-tokens=30', '--cache-file=' . $cache, 'src']);
     } finally {
         removeDuplicateCheckerFixture($root);
     }
@@ -663,10 +708,10 @@ it('invalidates duplicate cache by content even when size and mtime are unchange
 
 it('bounds near-miss structural comparisons', function (): void {
     $root = makeDuplicateCheckerFixture();
-    $src = $root.DIRECTORY_SEPARATOR.'src';
+    $src = $root . DIRECTORY_SEPARATOR . 'src';
 
     mkdir($src, 0755, true);
-    file_put_contents($src.DIRECTORY_SEPARATOR.'Many.php', <<<'PHP'
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'Many.php', <<<'PHP'
 <?php
 
 function one(array $values): array { sort($values); return $values; }
@@ -695,18 +740,18 @@ PHP);
 
 it('supports ignoring duplicate fingerprints from config', function (): void {
     $root = makeDuplicateCheckerFixture();
-    $src = $root.DIRECTORY_SEPARATOR.'src';
+    $src = $root . DIRECTORY_SEPARATOR . 'src';
     $fingerprint = '';
 
     mkdir($src, 0755, true);
-    file_put_contents($src.DIRECTORY_SEPARATOR.'One.php', duplicateBaselineFixture('One'));
-    file_put_contents($src.DIRECTORY_SEPARATOR.'Two.php', duplicateBaselineFixture('Two'));
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'One.php', duplicateBaselineFixture('One'));
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'Two.php', duplicateBaselineFixture('Two'));
 
     try {
         $first = runDuplicateCheckerCommand($root, ['--json', '--fuzzy', '--min-lines=5', '--min-tokens=20', 'src']);
         $initial = json_decode($first['stdout'], true);
         $fingerprint = $initial['clones'][0]['fingerprint'] ?? '';
-        file_put_contents($root.DIRECTORY_SEPARATOR.'phpprobe.json', json_encode([
+        file_put_contents($root . DIRECTORY_SEPARATOR . 'phpprobe.json', json_encode([
             'duplicates' => [
                 'paths' => ['src'],
                 'fuzzy' => true,
@@ -730,10 +775,10 @@ it('supports ignoring duplicate fingerprints from config', function (): void {
 
 it('loads duplicate options and paths from phpprobe config', function (): void {
     $root = makeDuplicateCheckerFixture();
-    $configured = $root.DIRECTORY_SEPARATOR.'configured';
+    $configured = $root . DIRECTORY_SEPARATOR . 'configured';
 
     mkdir($configured, 0755, true);
-    file_put_contents($root.DIRECTORY_SEPARATOR.'phpprobe.json', json_encode([
+    file_put_contents($root . DIRECTORY_SEPARATOR . 'phpprobe.json', json_encode([
         'duplicates' => [
             'paths' => ['configured'],
             'fuzzy' => true,
@@ -741,8 +786,8 @@ it('loads duplicate options and paths from phpprobe config', function (): void {
             'min_tokens' => 20,
         ],
     ], JSON_PRETTY_PRINT));
-    file_put_contents($configured.DIRECTORY_SEPARATOR.'One.php', duplicateBaselineFixture('One'));
-    file_put_contents($configured.DIRECTORY_SEPARATOR.'Two.php', duplicateBaselineFixture('Two'));
+    file_put_contents($configured . DIRECTORY_SEPARATOR . 'One.php', duplicateBaselineFixture('One'));
+    file_put_contents($configured . DIRECTORY_SEPARATOR . 'Two.php', duplicateBaselineFixture('Two'));
 
     try {
         $run = runDuplicateCheckerCommand($root, ['--json']);
@@ -758,12 +803,12 @@ it('loads duplicate options and paths from phpprobe config', function (): void {
 
 it('supports excluding duplicate paths from phpprobe config', function (): void {
     $root = makeDuplicateCheckerFixture();
-    $configured = $root.DIRECTORY_SEPARATOR.'configured';
-    $excluded = $configured.DIRECTORY_SEPARATOR.'excluded';
+    $configured = $root . DIRECTORY_SEPARATOR . 'configured';
+    $excluded = $configured . DIRECTORY_SEPARATOR . 'excluded';
 
     mkdir($configured, 0755, true);
     mkdir($excluded, 0755, true);
-    file_put_contents($root.DIRECTORY_SEPARATOR.'phpprobe.json', json_encode([
+    file_put_contents($root . DIRECTORY_SEPARATOR . 'phpprobe.json', json_encode([
         'duplicates' => [
             'paths' => ['configured'],
             'exclude' => ['configured/excluded'],
@@ -772,7 +817,7 @@ it('supports excluding duplicate paths from phpprobe config', function (): void 
             'min_tokens' => 20,
         ],
     ], JSON_PRETTY_PRINT));
-    file_put_contents($configured.DIRECTORY_SEPARATOR.'Solo.php', <<<'PHP'
+    file_put_contents($configured . DIRECTORY_SEPARATOR . 'Solo.php', <<<'PHP'
 <?php
 
 final class Solo
@@ -783,8 +828,8 @@ final class Solo
     }
 }
 PHP);
-    file_put_contents($excluded.DIRECTORY_SEPARATOR.'One.php', duplicateBaselineFixture('One'));
-    file_put_contents($excluded.DIRECTORY_SEPARATOR.'Two.php', duplicateBaselineFixture('Two'));
+    file_put_contents($excluded . DIRECTORY_SEPARATOR . 'One.php', duplicateBaselineFixture('One'));
+    file_put_contents($excluded . DIRECTORY_SEPARATOR . 'Two.php', duplicateBaselineFixture('Two'));
 
     try {
         $run = runDuplicateCheckerCommand($root, ['--json']);
@@ -800,12 +845,12 @@ PHP);
 
 it('supports excluding duplicate paths from CLI arguments', function (): void {
     $root = makeDuplicateCheckerFixture();
-    $configured = $root.DIRECTORY_SEPARATOR.'configured';
-    $excluded = $configured.DIRECTORY_SEPARATOR.'excluded';
+    $configured = $root . DIRECTORY_SEPARATOR . 'configured';
+    $excluded = $configured . DIRECTORY_SEPARATOR . 'excluded';
 
     mkdir($configured, 0755, true);
     mkdir($excluded, 0755, true);
-    file_put_contents($configured.DIRECTORY_SEPARATOR.'Solo.php', <<<'PHP'
+    file_put_contents($configured . DIRECTORY_SEPARATOR . 'Solo.php', <<<'PHP'
 <?php
 
 final class Solo
@@ -816,8 +861,8 @@ final class Solo
     }
 }
 PHP);
-    file_put_contents($excluded.DIRECTORY_SEPARATOR.'One.php', duplicateBaselineFixture('One'));
-    file_put_contents($excluded.DIRECTORY_SEPARATOR.'Two.php', duplicateBaselineFixture('Two'));
+    file_put_contents($excluded . DIRECTORY_SEPARATOR . 'One.php', duplicateBaselineFixture('One'));
+    file_put_contents($excluded . DIRECTORY_SEPARATOR . 'Two.php', duplicateBaselineFixture('Two'));
 
     try {
         $run = runDuplicateCheckerCommand($root, ['--json', '--fuzzy', '--min-lines=5', '--min-tokens=20', 'configured', '--exclude=configured/excluded']);
@@ -833,12 +878,12 @@ PHP);
 
 it('lets duplicate command paths override phpprobe config paths', function (): void {
     $root = makeDuplicateCheckerFixture();
-    $configured = $root.DIRECTORY_SEPARATOR.'configured';
-    $explicit = $root.DIRECTORY_SEPARATOR.'explicit';
+    $configured = $root . DIRECTORY_SEPARATOR . 'configured';
+    $explicit = $root . DIRECTORY_SEPARATOR . 'explicit';
 
     mkdir($configured, 0755, true);
     mkdir($explicit, 0755, true);
-    file_put_contents($root.DIRECTORY_SEPARATOR.'phpprobe.json', json_encode([
+    file_put_contents($root . DIRECTORY_SEPARATOR . 'phpprobe.json', json_encode([
         'duplicates' => [
             'paths' => ['configured'],
             'fuzzy' => true,
@@ -846,9 +891,9 @@ it('lets duplicate command paths override phpprobe config paths', function (): v
             'min_tokens' => 20,
         ],
     ], JSON_PRETTY_PRINT));
-    file_put_contents($configured.DIRECTORY_SEPARATOR.'One.php', duplicateBaselineFixture('One'));
-    file_put_contents($configured.DIRECTORY_SEPARATOR.'Two.php', duplicateBaselineFixture('Two'));
-    file_put_contents($explicit.DIRECTORY_SEPARATOR.'Solo.php', <<<'PHP'
+    file_put_contents($configured . DIRECTORY_SEPARATOR . 'One.php', duplicateBaselineFixture('One'));
+    file_put_contents($configured . DIRECTORY_SEPARATOR . 'Two.php', duplicateBaselineFixture('Two'));
+    file_put_contents($explicit . DIRECTORY_SEPARATOR . 'Solo.php', <<<'PHP'
 <?php
 
 final class Solo
@@ -874,10 +919,10 @@ PHP);
 
 it('uses duplicate presets from config and CLI overrides', function (): void {
     $root = makeDuplicateCheckerFixture();
-    $src = $root.DIRECTORY_SEPARATOR.'src';
+    $src = $root . DIRECTORY_SEPARATOR . 'src';
 
     mkdir($src, 0755, true);
-    file_put_contents($root.DIRECTORY_SEPARATOR.'phpprobe.json', json_encode([
+    file_put_contents($root . DIRECTORY_SEPARATOR . 'phpprobe.json', json_encode([
         'preset' => 'ci',
         'duplicates' => [
             'paths' => ['src'],
@@ -887,7 +932,7 @@ it('uses duplicate presets from config and CLI overrides', function (): void {
             'min_similarity' => 0.60,
         ],
     ], JSON_PRETTY_PRINT));
-    file_put_contents($src.DIRECTORY_SEPARATOR.'NearMiss.php', nearMissFixture());
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'NearMiss.php', nearMissFixture());
 
     try {
         $ci = runDuplicateCheckerCommand($root, ['--json']);
@@ -943,15 +988,15 @@ it('rejects unknown duplicate command options', function (): void {
 
 it('fails when duplicate baseline file is missing', function (): void {
     $root = makeDuplicateCheckerFixture();
-    $src = $root.DIRECTORY_SEPARATOR.'src';
-    $missingBaseline = $root.DIRECTORY_SEPARATOR.'missing-baseline.json';
+    $src = $root . DIRECTORY_SEPARATOR . 'src';
+    $missingBaseline = $root . DIRECTORY_SEPARATOR . 'missing-baseline.json';
 
     mkdir($src, 0755, true);
-    file_put_contents($src.DIRECTORY_SEPARATOR.'One.php', duplicateBaselineFixture('One'));
-    file_put_contents($src.DIRECTORY_SEPARATOR.'Two.php', duplicateBaselineFixture('Two'));
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'One.php', duplicateBaselineFixture('One'));
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'Two.php', duplicateBaselineFixture('Two'));
 
     try {
-        $run = runDuplicateCheckerCommand($root, ['--json', '--fuzzy', '--min-lines=5', '--min-tokens=20', '--baseline='.$missingBaseline, 'src']);
+        $run = runDuplicateCheckerCommand($root, ['--json', '--fuzzy', '--min-lines=5', '--min-tokens=20', '--baseline=' . $missingBaseline, 'src']);
     } finally {
         removeDuplicateCheckerFixture($root);
     }
@@ -962,16 +1007,16 @@ it('fails when duplicate baseline file is missing', function (): void {
 
 it('fails when duplicate baseline JSON is invalid', function (): void {
     $root = makeDuplicateCheckerFixture();
-    $src = $root.DIRECTORY_SEPARATOR.'src';
-    $baseline = $root.DIRECTORY_SEPARATOR.'duplicates-baseline.json';
+    $src = $root . DIRECTORY_SEPARATOR . 'src';
+    $baseline = $root . DIRECTORY_SEPARATOR . 'duplicates-baseline.json';
 
     mkdir($src, 0755, true);
-    file_put_contents($src.DIRECTORY_SEPARATOR.'One.php', duplicateBaselineFixture('One'));
-    file_put_contents($src.DIRECTORY_SEPARATOR.'Two.php', duplicateBaselineFixture('Two'));
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'One.php', duplicateBaselineFixture('One'));
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'Two.php', duplicateBaselineFixture('Two'));
     file_put_contents($baseline, '{invalid');
 
     try {
-        $run = runDuplicateCheckerCommand($root, ['--json', '--fuzzy', '--min-lines=5', '--min-tokens=20', '--baseline='.$baseline, 'src']);
+        $run = runDuplicateCheckerCommand($root, ['--json', '--fuzzy', '--min-lines=5', '--min-tokens=20', '--baseline=' . $baseline, 'src']);
     } finally {
         removeDuplicateCheckerFixture($root);
     }
@@ -1041,18 +1086,18 @@ function removeDuplicateCheckerFixture(string $root): void
 }
 
 /**
- * @param  list<string>  $args
+ * @param list<string> $args
  * @return array{exitCode:int,stdout:string,stderr:string}
  */
 function runDuplicateCheckerCommand(string $cwd, array $args): array
 {
-    $binary = dirname(__DIR__, 2).DIRECTORY_SEPARATOR.'bin'.DIRECTORY_SEPARATOR.'phpprobe';
+    $binary = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'bin' . DIRECTORY_SEPARATOR . 'phpprobe';
     $process = proc_open([PHP_BINARY, $binary, 'duplicates', ...$args], [
         1 => ['pipe', 'w'],
         2 => ['pipe', 'w'],
     ], $pipes, $cwd);
 
-    if (! is_resource($process)) {
+    if (!is_resource($process)) {
         throw new RuntimeException('Could not start duplicate checker.');
     }
 

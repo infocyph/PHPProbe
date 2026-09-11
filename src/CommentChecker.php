@@ -10,18 +10,24 @@ use Infocyph\PHPProbe\Config\CliOptions;
 use Infocyph\PHPProbe\Config\Paths;
 use Infocyph\PHPProbe\Config\PhpProbeConfig;
 use Infocyph\PHPProbe\Console\Ansi;
+use Infocyph\PHPProbe\Console\CliTable;
 use Infocyph\PHPProbe\Util\BaselineJson;
 use Infocyph\PHPProbe\Util\CheckerRuntime;
 use Infocyph\PHPProbe\Util\GithubAnnotation;
+use Infocyph\PHPProbe\Util\InputFileGroups;
+use Infocyph\PHPProbe\Util\ProjectPath;
 use Infocyph\PHPProbe\Util\Sarif;
 use Infocyph\PHPProbe\Util\ScopedTempFile;
 use Infocyph\PHPProbe\Util\SummaryJson;
 
 /**
  * @phpstan-type CustomRule array{id:string,pattern:string,severity:string,message:string,enabled:bool,scope:string}
+ * @phpstan-type CommentGroup array{name:string,files:int,findings:int,paths:list<string>}
+ * @phpstan-type CommentScanResult array{files:int,findings:list<CommentFinding>,suppressed_count:int}
+ * @phpstan-type CommentResult array{files:int,findings:list<CommentFinding>,suppressed_count:int,groups:list<CommentGroup>}
  * @phpstan-type CommentOptions array{
  *     help:bool, format:string, color:string, strict:bool,
- *     failOn:string, failConfidence:string, emitMinSeverity:string, summaryJson:string,
+ *     failOn:string, failConfidence:string, summaryJson:string,
  *     changedOnly:bool, changedBase:string,
  *     textColorSuccess:string, textColorError:string, textColorInfo:string, textColorFile:string,
  *     severityColors:array<string,string>, config:string, paths:list<string>, excludes:list<string>,
@@ -114,6 +120,47 @@ final readonly class CommentChecker
         return is_bool($value) ? $value : $default;
     }
 
+    /**
+     * @param list<CommentGroup> $groups
+     * @return array<string, list<string>>
+     */
+    private function commentGroupPaths(array $groups): array
+    {
+        $paths = [];
+
+        foreach ($groups as $group) {
+            $paths[$group['name']] = $group['paths'];
+        }
+
+        return $paths;
+    }
+
+    /**
+     * @param array<string, list<string>> $groups
+     * @param list<CommentFinding> $findings
+     * @return list<CommentGroup>
+     */
+    private function commentGroupSummaries(array $groups, array $findings): array
+    {
+        $summaries = [];
+
+        foreach ($groups as $name => $files) {
+            $relativeFiles = array_map(ProjectPath::relative(...), $files);
+            $lookup = array_fill_keys($relativeFiles, true);
+            $summaries[] = [
+                'name' => $name,
+                'files' => count($files),
+                'findings' => count(array_filter(
+                    $findings,
+                    static fn(CommentFinding $finding): bool => isset($lookup[$finding->file]),
+                )),
+                'paths' => $relativeFiles,
+            ];
+        }
+
+        return $summaries;
+    }
+
     private function confidenceRank(string $confidence): int
     {
         return match (strtolower($confidence)) {
@@ -189,7 +236,6 @@ final readonly class CommentChecker
             'strict' => false,
             'failOn' => 'error',
             'failConfidence' => 'low',
-            'emitMinSeverity' => 'info',
             'summaryJson' => '',
             'changedOnly' => false,
             'changedBase' => '',
@@ -330,14 +376,14 @@ final readonly class CommentChecker
     }
 
     /**
-     * @param array{files:int,findings:list<CommentFinding>,suppressed_count:int} $result
+     * @param CommentResult $result
      * @param CommentOptions $options
      */
     private function finishRun(array $result, array $options): int
     {
         $failed = $this->shouldFail($result['findings'], $options['failOn'], $options['failConfidence']);
         $exitCode = $options['writeBaseline'] === '' && $failed ? 1 : 0;
-        $this->writeRunOutputs($result, $options, $failed, $exitCode);
+        $this->writeRunOutputs($this->resultForOutput($result, $options), $options, $failed, $exitCode);
 
         return $exitCode;
     }
@@ -351,7 +397,7 @@ final readonly class CommentChecker
             '  --config=FILE                    read PHPProbe checker settings',
             '  --preset=NAME                    apply preset: default, standard, ci, or strict',
             '  --exclude=PATH                   skip a path (repeatable)',
-            '  --format=text|json|markdown|sarif|github output format (default: text)',
+            '  --format=text|json|phpstan-json|markdown|sarif|github output format (default: text)',
             '  --color=auto|always|never       ANSI color mode (default: auto)',
             '  --json                           alias for --format=json',
             '  --summary-json=FILE              write machine-readable run summary',
@@ -360,7 +406,7 @@ final readonly class CommentChecker
             '  --doc-mode=heuristic|parser|hybrid doc-comment analysis mode (default: hybrid)',
             '  --baseline=FILE                  suppress findings already present in a baseline',
             '  --write-baseline[=FILE]          write current findings to a baseline and exit 0',
-            '  --fail-on=error|warning|info     minimum severity level to fail',
+            '  --fail-on=error|warning|info     minimum severity level to emit and fail',
             '  --fail-confidence=low|medium|high minimum confidence level to fail',
             '  --ci                             emit only error-level findings (fail-on=error)',
             '  --explain                        include finding explanations and suggestions',
@@ -421,7 +467,6 @@ final readonly class CommentChecker
             'strict' => $this->boolOption($options, 'strict', $defaults['strict']),
             'failOn' => $this->stringOption($options, 'failOn', $defaults['failOn']),
             'failConfidence' => $failConfidence,
-            'emitMinSeverity' => $this->stringOption($options, 'emitMinSeverity', $defaults['emitMinSeverity']),
             'summaryJson' => $this->stringOption($options, 'summaryJson', $defaults['summaryJson']),
             'changedOnly' => $this->boolOption($options, 'changedOnly', $defaults['changedOnly']),
             'changedBase' => $this->stringOption($options, 'changedBase', $defaults['changedBase']),
@@ -542,7 +587,6 @@ final readonly class CommentChecker
 
         if ($arg === '--ci') {
             $options['failOn'] = 'error';
-            $options['emitMinSeverity'] = 'error';
 
             return true;
         }
@@ -571,19 +615,13 @@ final readonly class CommentChecker
     }
 
     /**
-     * @param array{files:int,findings:list<CommentFinding>,suppressed_count:int} $result
+     * @param CommentResult $result
      * @param CommentOptions $options
-     * @return array{files:int,findings:list<CommentFinding>,suppressed_count:int}
+     * @return CommentResult
      */
     private function resultForOutput(array $result, array $options): array
     {
-        $emitMinSeverity = strtolower(trim($options['emitMinSeverity']));
-
-        $threshold = match ($emitMinSeverity) {
-            'error' => 6,
-            'warning' => 4,
-            default => 1,
-        };
+        $threshold = $this->severityThreshold($options['failOn']);
 
         if ($threshold <= 1) {
             return $result;
@@ -597,6 +635,10 @@ final readonly class CommentChecker
         return [
             ...$result,
             'findings' => $filtered,
+            'groups' => $this->commentGroupSummaries(
+                $this->commentGroupPaths($result['groups']),
+                $filtered,
+            ),
         ];
     }
 
@@ -607,10 +649,11 @@ final readonly class CommentChecker
     {
         CheckerRuntime::applyColorMode($options);
 
-        ['result' => $result, 'raw_findings' => $rawFindings] = $this->scanFindings($options);
+        ['result' => $result, 'raw_findings' => $rawFindings, 'groups' => $groups] = $this->scanFindings($options);
         $effectiveResult = $options['baseline'] !== ''
             ? $this->withoutBaselineFindings($result, $options['baseline'])
             : $result;
+        $effectiveResult['groups'] = $this->commentGroupSummaries($groups, $effectiveResult['findings']);
         $this->writeBaselineIfRequested($options, $rawFindings);
 
         return $this->finishRun($effectiveResult, $options);
@@ -635,13 +678,15 @@ final readonly class CommentChecker
 
     /**
      * @param CommentOptions $options
-     * @return array{result:array{files:int,findings:list<CommentFinding>,suppressed_count:int},raw_findings:list<CommentFinding>}
+     * @return array{result:CommentScanResult,raw_findings:list<CommentFinding>,groups:array<string,list<string>>}
      */
     private function scanFindings(array $options): array
     {
-        $result = new CommentScanner()->scan(CheckerRuntime::phpFiles($options), $options);
+        $files = CheckerRuntime::phpFiles($options);
+        $groups = InputFileGroups::group($files, $options['paths']);
+        $result = new CommentScanner()->scan(InputFileGroups::roundRobin($groups), $options);
 
-        return ['result' => $result, 'raw_findings' => $result['findings']];
+        return ['result' => $result, 'raw_findings' => $result['findings'], 'groups' => $groups];
     }
 
     private function severityRank(string $severity): int
@@ -657,16 +702,21 @@ final readonly class CommentChecker
         };
     }
 
+    private function severityThreshold(string $failOn): int
+    {
+        return match ($failOn) {
+            'error' => 6,
+            'warning' => 4,
+            default => 1,
+        };
+    }
+
     /**
      * @param list<CommentFinding> $findings
      */
     private function shouldFail(array $findings, string $failOn, string $failConfidence): bool
     {
-        $severityThreshold = match ($failOn) {
-            'info' => 1,
-            'warning' => 4,
-            default => 6,
-        };
+        $severityThreshold = $this->severityThreshold($failOn);
         $confidenceThreshold = $this->confidenceRank($failConfidence);
 
         return array_any($findings, fn($finding) => $this->severityRank($finding->severity) >= $severityThreshold
@@ -708,7 +758,7 @@ final readonly class CommentChecker
     }
 
     /**
-     * @param array{files:int,findings:list<CommentFinding>,suppressed_count:int} $result
+     * @param CommentResult $result
      * @param CommentOptions $options
      * @return array<string, mixed>
      */
@@ -720,6 +770,7 @@ final readonly class CommentChecker
             'wrote_baseline' => $options['writeBaseline'] !== '',
             'files' => $result['files'],
             'findings' => count($result['findings']),
+            'groups' => count($result['groups']),
             'format' => $options['format'],
             'suppressed_count' => $result['suppressed_count'],
             'doc_mode' => $options['docMode'],
@@ -728,15 +779,16 @@ final readonly class CommentChecker
     }
 
     /**
-     * @param array{files:int,findings:list<CommentFinding>,suppressed_count:int} $result
+     * @param CommentResult $result
      * @param CommentOptions $options
      */
     private function summaryFooter(array $result, array $options, bool $failed): string
     {
         return sprintf(
-            'Summary: files=%d findings=%d suppressed=%d fail-on=%s fail-confidence=%s doc-mode=%s baseline=%s status=%s',
+            'Summary: files=%d findings=%d groups=%d suppressed=%d fail-on=%s fail-confidence=%s doc-mode=%s baseline=%s status=%s',
             $result['files'],
             count($result['findings']),
+            count($result['groups']),
             $result['suppressed_count'],
             $options['failOn'],
             $options['failConfidence'],
@@ -771,8 +823,8 @@ final readonly class CommentChecker
     }
 
     /**
-     * @param array{files:int,findings:list<CommentFinding>,suppressed_count:int} $result
-     * @return array{files:int,findings:list<CommentFinding>,suppressed_count:int}
+     * @param CommentScanResult $result
+     * @return CommentScanResult
      */
     private function withoutBaselineFindings(array $result, string $baselinePath): array
     {
@@ -832,7 +884,7 @@ final readonly class CommentChecker
     }
 
     /**
-     * @param array{files:int,findings:list<CommentFinding>,suppressed_count:int} $result
+     * @param CommentResult $result
      */
     private function writeGithub(array $result): void
     {
@@ -858,13 +910,18 @@ final readonly class CommentChecker
     }
 
     /**
-     * @param array{files:int,findings:list<CommentFinding>,suppressed_count:int} $result
+     * @param CommentResult $result
      */
     private function writeJson(array $result): void
     {
         fwrite(STDOUT, json_encode([
             'files' => $result['files'],
             'suppressed_count' => $result['suppressed_count'],
+            'groups' => array_map(static fn(array $group): array => [
+                'name' => $group['name'],
+                'files' => $group['files'],
+                'findings' => $group['findings'],
+            ], $result['groups']),
             'findings' => array_map(
                 static function (CommentFinding $finding): array {
                     $payload = $finding->toArray();
@@ -885,7 +942,7 @@ final readonly class CommentChecker
     }
 
     /**
-     * @param array{files:int,findings:list<CommentFinding>,suppressed_count:int} $result
+     * @param CommentResult $result
      * @param CommentOptions $options
      */
     private function writeMarkdown(array $result, array $options, bool $failed): void
@@ -895,6 +952,7 @@ final readonly class CommentChecker
             '',
             sprintf('- Files scanned: `%d`', $result['files']),
             sprintf('- Findings: `%d`', count($result['findings'])),
+            sprintf('- Input groups: `%d`', count($result['groups'])),
             sprintf('- Suppressed: `%d`', $result['suppressed_count']),
             sprintf('- Fail-on: `%s`', $options['failOn']),
             sprintf('- Fail-confidence: `%s`', $options['failConfidence']),
@@ -936,15 +994,46 @@ final readonly class CommentChecker
     }
 
     /**
-     * @param array{files:int,findings:list<CommentFinding>,suppressed_count:int} $result
+     * @param CommentResult $result
+     */
+    private function writePhpStanJson(array $result): void
+    {
+        /** @var array<string, array{errors:int,messages:list<array<string,bool|int|string>>}> $files */
+        $files = [];
+
+        foreach ($result['findings'] as $finding) {
+            $files[$finding->file] ??= ['errors' => 0, 'messages' => []];
+            $files[$finding->file]['errors']++;
+            $message = [
+                'message' => $finding->message,
+                'line' => $finding->line,
+                'ignorable' => true,
+                'identifier' => $finding->type,
+            ];
+
+            if ($finding->suggestion !== null && trim($finding->suggestion) !== '') {
+                $message['tip'] = $finding->suggestion;
+            }
+
+            $files[$finding->file]['messages'][] = $message;
+        }
+
+        fwrite(STDOUT, json_encode([
+            'totals' => ['errors' => 0, 'file_errors' => count($result['findings'])],
+            'files' => (object) $files,
+            'errors' => [],
+        ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL);
+    }
+
+    /**
+     * @param CommentResult $result
      * @param CommentOptions $options
      */
     private function writeResult(array $result, array $options, bool $failed): void
     {
-        $result = $this->resultForOutput($result, $options);
-
         match ($options['format']) {
             'json' => $this->writeJson($result),
+            'phpstan-json' => $this->writePhpStanJson($result),
             'markdown' => $this->writeMarkdown($result, $options, $failed),
             'sarif' => $this->writeSarif($result),
             'github' => $this->writeGithub($result),
@@ -953,7 +1042,7 @@ final readonly class CommentChecker
     }
 
     /**
-     * @param array{files:int,findings:list<CommentFinding>,suppressed_count:int} $result
+     * @param CommentResult $result
      * @param CommentOptions $options
      */
     private function writeRunOutputs(array $result, array $options, bool $failed, int $exitCode): void
@@ -963,7 +1052,7 @@ final readonly class CommentChecker
     }
 
     /**
-     * @param array{files:int,findings:list<CommentFinding>,suppressed_count:int} $result
+     * @param CommentResult $result
      */
     private function writeSarif(array $result): void
     {
@@ -1013,7 +1102,7 @@ final readonly class CommentChecker
     }
 
     /**
-     * @param array{files:int,findings:list<CommentFinding>,suppressed_count:int} $result
+     * @param CommentResult $result
      * @param CommentOptions $options
      */
     private function writeSummaryJson(array $result, array $options, int $exitCode): void
@@ -1028,7 +1117,7 @@ final readonly class CommentChecker
     }
 
     /**
-     * @param array{files:int,findings:list<CommentFinding>,suppressed_count:int} $result
+     * @param CommentResult $result
      * @param CommentOptions $options
      */
     private function writeText(array $result, array $options, bool $failed): void
@@ -1036,6 +1125,15 @@ final readonly class CommentChecker
         if ($options['writeBaseline'] !== '') {
             fwrite(STDOUT, Ansi::color(sprintf('Comment baseline written: %s', $options['writeBaseline']), (string) $options['textColorInfo'], STDOUT) . PHP_EOL);
         }
+
+        $stream = $result['findings'] === [] ? STDOUT : STDERR;
+        $groupRows = array_map(static fn(array $group): array => [
+            $group['name'],
+            $group['files'],
+            $group['findings'],
+        ], $result['groups']);
+        fwrite($stream, 'Input groups:' . PHP_EOL);
+        fwrite($stream, CliTable::render(['Group', 'Files', 'Findings'], $groupRows, [0 => 48]) . PHP_EOL);
 
         if ($result['findings'] === []) {
             fwrite(STDOUT, Ansi::color(sprintf('No comment policy findings (%d PHP files scanned).', $result['files']), (string) $options['textColorSuccess'], STDOUT) . PHP_EOL);
@@ -1049,6 +1147,8 @@ final readonly class CommentChecker
         foreach ($result['findings'] as $finding) {
             $grouped[$finding->file][] = $finding;
         }
+
+        $groupPaths = $this->commentGroupPaths($result['groups']);
 
         fwrite(
             STDERR,
@@ -1064,33 +1164,44 @@ final readonly class CommentChecker
         );
 
         foreach ($grouped as $file => $findings) {
-            fwrite(STDERR, Ansi::color($file, (string) $options['textColorFile'], STDERR) . PHP_EOL);
+            $group = InputFileGroups::nameFor($file, $groupPaths);
+            fwrite(STDERR, Ansi::color(sprintf('%s [%s]', $file, $group), (string) $options['textColorFile'], STDERR) . PHP_EOL);
+            $rows = [];
 
             foreach ($findings as $finding) {
                 $lineLabel = $finding->line === $finding->endLine
                     ? (string) $finding->line
                     : sprintf('%d-%d', $finding->line, $finding->endLine);
-                $confidence = strtoupper($finding->confidence);
-                $subtype = $finding->subtype !== null ? sprintf(' [%s]', $finding->subtype) : '';
+                $rule = $this->findingTitle($finding->type);
 
-                fwrite(STDERR, sprintf(
-                    '  %s  L%s  %s (%s)%s',
-                    Ansi::severity($finding->severity, STDERR, $options['severityColors']),
-                    $lineLabel,
-                    $this->findingTitle($finding->type),
-                    $confidence,
-                    $subtype,
-                ) . PHP_EOL);
-                fwrite(STDERR, '      ' . $finding->message . PHP_EOL);
+                if ($finding->subtype !== null) {
+                    $rule .= sprintf(' [%s]', $finding->subtype);
+                }
+
+                $message = $finding->message;
 
                 if ($options['explain'] && $finding->explanation !== null && trim($finding->explanation) !== '') {
-                    fwrite(STDERR, '      Why: ' . $finding->explanation . PHP_EOL);
+                    $message .= ' Why: ' . $finding->explanation;
                 }
 
                 if ($options['explain'] && $finding->suggestion !== null && trim($finding->suggestion) !== '') {
-                    fwrite(STDERR, '      Suggestion: ' . $finding->suggestion . PHP_EOL);
+                    $message .= ' Suggestion: ' . $finding->suggestion;
                 }
+
+                $rows[] = [
+                    $lineLabel,
+                    Ansi::severity($finding->severity, STDERR, $options['severityColors']),
+                    strtoupper($finding->confidence),
+                    $rule,
+                    $message,
+                ];
             }
+
+            fwrite(STDERR, CliTable::render(
+                ['Line', 'Severity', 'Confidence', 'Rule', 'Message'],
+                $rows,
+                [0 => 10, 1 => 10, 2 => 10, 3 => 36, 4 => 72],
+            ) . PHP_EOL);
         }
 
         fwrite(STDERR, $this->summaryFooter($result, $options, $failed) . PHP_EOL);

@@ -6,10 +6,10 @@ require_once __DIR__ . DIRECTORY_SEPARATOR . 'FixtureSupport.php';
 
 it('detects comment markers in JSON output', function (): void {
     $root = makeCommentCheckerFixture();
-    $src = $root.DIRECTORY_SEPARATOR.'src';
+    $src = $root . DIRECTORY_SEPARATOR . 'src';
 
     mkdir($src, 0755, true);
-    file_put_contents($src.DIRECTORY_SEPARATOR.'Marker.php', <<<'PHP'
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'Marker.php', <<<'PHP'
 <?php
 
 // SECURITY(auth): inspect token logging before release
@@ -28,16 +28,105 @@ PHP);
 
     expect($run['exitCode'])->toBe(1)
         ->and($result['findings'])->not()->toBeEmpty()
+        ->and($result['groups'])->toBe([[
+            'name' => 'src',
+            'files' => 1,
+            'findings' => count($result['findings']),
+        ]])
         ->and($result['findings'][0]['type'])->toBe('comment_marker')
         ->and($result['findings'][0]['tag'])->toBe('SECURITY');
 });
 
-it('reports commented-out code without reason', function (): void {
+it('groups comment reports and supports PHPStan compatible JSON', function (): void {
     $root = makeCommentCheckerFixture();
-    $src = $root.DIRECTORY_SEPARATOR.'src';
+    $src = $root . DIRECTORY_SEPARATOR . 'src';
+    $tests = $root . DIRECTORY_SEPARATOR . 'tests';
 
     mkdir($src, 0755, true);
-    file_put_contents($src.DIRECTORY_SEPARATOR.'NoReason.php', <<<'PHP'
+    mkdir($tests, 0755, true);
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'Marker.php', <<<'PHP'
+<?php
+
+// SECURITY(auth): inspect token logging before release
+final class Marker
+{
+}
+PHP);
+    file_put_contents($tests . DIRECTORY_SEPARATOR . 'MarkerTest.php', <<<'PHP'
+<?php
+
+// SECURITY(auth): verify the temporary fixture before migration
+final class MarkerTest
+{
+}
+PHP);
+
+    try {
+        $text = runCommentCheckerCommand($root, ['--preset=default', '--color=never', '--fail-on=info', 'src', 'tests']);
+        $json = runCommentCheckerCommand($root, ['--preset=default', '--format=phpstan-json', '--fail-on=info', 'src', 'tests']);
+    } finally {
+        removeCommentCheckerFixture($root);
+    }
+
+    $payload = json_decode($json['stdout'], true);
+
+    expect($text['exitCode'])->toBe(1)
+        ->and($text['stderr'])->toContain('| Group | Files | Findings |')
+        ->and($text['stderr'])->toContain('| src')
+        ->and($text['stderr'])->toContain('| tests')
+        ->and($text['stderr'])->toContain('| Line | Severity | Confidence | Rule')
+        ->and($json['exitCode'])->toBe(1)
+        ->and($payload['totals']['file_errors'])->toBe(2)
+        ->and(array_keys($payload['files']))->toBe(['src/Marker.php', 'tests/MarkerTest.php'])
+        ->and($payload['files']['src/Marker.php']['messages'][0]['identifier'])->toBe('comment_marker');
+});
+
+it('emits only findings at or above the fail-on severity', function (): void {
+    $root = makeCommentCheckerFixture();
+    $src = $root . DIRECTORY_SEPARATOR . 'src';
+    $summaryPath = $root . DIRECTORY_SEPARATOR . 'summary.json';
+
+    mkdir($src, 0755, true);
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'Severities.php', <<<'PHP'
+<?php
+
+// SECURITY(auth): critical finding
+// BUG(auth): high finding
+// HACK(auth): medium finding
+// TODO(auth): low finding
+// NOTE(auth): informational finding
+final class Severities
+{
+}
+PHP);
+
+    try {
+        $json = runCommentCheckerCommand($root, ['--json', '--fail-on=error', '--summary-json=' . $summaryPath, 'src']);
+        $text = runCommentCheckerCommand($root, ['--color=never', '--fail-on=error', 'src']);
+        $payload = json_decode($json['stdout'], true);
+        $summary = json_decode((string) file_get_contents($summaryPath), true);
+    } finally {
+        removeCommentCheckerFixture($root);
+    }
+
+    expect($json['exitCode'])->toBe(1)
+        ->and($payload['findings'])->toHaveCount(1)
+        ->and($payload['findings'][0]['severity'])->toBe('critical')
+        ->and($payload['groups'][0]['findings'])->toBe(1)
+        ->and($summary['findings'])->toBe(1)
+        ->and($text['stderr'])->toContain('Detected SECURITY marker.')
+        ->and($text['stderr'])->not()->toContain('Detected BUG marker.')
+        ->and($text['stderr'])->not()->toContain('Detected HACK marker.')
+        ->and($text['stderr'])->not()->toContain('Detected TODO marker.')
+        ->and($text['stderr'])->not()->toContain('Detected NOTE marker.');
+});
+
+it('reports commented-out code without reason', function (): void {
+    $root = makeCommentCheckerFixture();
+    $src = $root . DIRECTORY_SEPARATOR . 'src';
+
+    mkdir($src, 0755, true);
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'NoReason.php', <<<'PHP'
 <?php
 
 // $user = User::find($id);
@@ -60,10 +149,10 @@ PHP);
 
 it('accepts commented-out code with a valid tagged reason', function (): void {
     $root = makeCommentCheckerFixture();
-    $src = $root.DIRECTORY_SEPARATOR.'src';
+    $src = $root . DIRECTORY_SEPARATOR . 'src';
 
     mkdir($src, 0755, true);
-    file_put_contents($src.DIRECTORY_SEPARATOR.'ValidReason.php', <<<'PHP'
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'ValidReason.php', <<<'PHP'
 <?php
 
 // TODO(#123): restore after auth migration is complete
@@ -83,16 +172,16 @@ PHP);
     $types = array_column($result['findings'], 'type');
 
     expect($run['exitCode'])->toBe(0)
-        ->and($types)->toContain('commented_out_code_with_valid_reason');
+        ->and($types)->not()->toContain('commented_out_code_with_valid_reason');
 });
 
 it('reports oversized commented-out blocks', function (): void {
     $root = makeCommentCheckerFixture();
-    $src = $root.DIRECTORY_SEPARATOR.'src';
+    $src = $root . DIRECTORY_SEPARATOR . 'src';
 
     mkdir($src, 0755, true);
-    $lines = implode(PHP_EOL, array_map(static fn(int $line): string => '// $value'.$line.' = '.$line.';', range(1, 11)));
-    file_put_contents($src.DIRECTORY_SEPARATOR.'TooLarge.php', <<<PHP
+    $lines = implode(PHP_EOL, array_map(static fn(int $line): string => '// $value' . $line . ' = ' . $line . ';', range(1, 11)));
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'TooLarge.php', <<<PHP
 <?php
 
 // TODO(#77): restore after migration validation
@@ -116,10 +205,10 @@ PHP);
 
 it('reports weak tagged reasons', function (): void {
     $root = makeCommentCheckerFixture();
-    $src = $root.DIRECTORY_SEPARATOR.'src';
+    $src = $root . DIRECTORY_SEPARATOR . 'src';
 
     mkdir($src, 0755, true);
-    file_put_contents($src.DIRECTORY_SEPARATOR.'WeakReason.php', <<<'PHP'
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'WeakReason.php', <<<'PHP'
 <?php
 
 // TODO: later
@@ -143,10 +232,10 @@ PHP);
 
 it('requires an issue reference for long commented-out blocks', function (): void {
     $root = makeCommentCheckerFixture();
-    $src = $root.DIRECTORY_SEPARATOR.'src';
+    $src = $root . DIRECTORY_SEPARATOR . 'src';
 
     mkdir($src, 0755, true);
-    file_put_contents($src.DIRECTORY_SEPARATOR.'IssueRequired.php', <<<'PHP'
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'IssueRequired.php', <<<'PHP'
 <?php
 
 // TODO(auth): restore after auth migration is complete
@@ -176,10 +265,10 @@ PHP);
 
 it('allows five commented-out lines without an issue reference in the standard policy', function (): void {
     $root = makeCommentCheckerFixture();
-    $src = $root.DIRECTORY_SEPARATOR.'src';
+    $src = $root . DIRECTORY_SEPARATOR . 'src';
 
     mkdir($src, 0755, true);
-    file_put_contents($src.DIRECTORY_SEPARATOR.'IssueBoundary.php', <<<'PHP'
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'IssueBoundary.php', <<<'PHP'
 <?php
 
 // TODO(auth): restore after auth migration is complete
@@ -208,10 +297,10 @@ PHP);
 
 it('accepts alphanumeric project issue references for long blocks', function (): void {
     $root = makeCommentCheckerFixture();
-    $src = $root.DIRECTORY_SEPARATOR.'src';
+    $src = $root . DIRECTORY_SEPARATOR . 'src';
 
     mkdir($src, 0755, true);
-    file_put_contents($src.DIRECTORY_SEPARATOR.'AlphanumericIssue.php', <<<'PHP'
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'AlphanumericIssue.php', <<<'PHP'
 <?php
 
 // TODO(PHP8-123): restore after auth migration is complete
@@ -242,10 +331,10 @@ PHP);
 
 it('exempts PHPDoc snippets from numeric commented-out-code limits by default', function (): void {
     $root = makeCommentCheckerFixture();
-    $src = $root.DIRECTORY_SEPARATOR.'src';
+    $src = $root . DIRECTORY_SEPARATOR . 'src';
 
     mkdir($src, 0755, true);
-    file_put_contents($src.DIRECTORY_SEPARATOR.'PhpDocLimits.php', <<<'PHP'
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'PhpDocLimits.php', <<<'PHP'
 <?php
 
 /**
@@ -284,10 +373,10 @@ PHP);
 
 it('ignores PHPDoc usage examples with an example label', function (): void {
     $root = makeCommentCheckerFixture();
-    $src = $root.DIRECTORY_SEPARATOR.'src';
+    $src = $root . DIRECTORY_SEPARATOR . 'src';
 
     mkdir($src, 0755, true);
-    file_put_contents($src.DIRECTORY_SEPARATOR.'DocExample.php', <<<'PHP'
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'DocExample.php', <<<'PHP'
 <?php
 
 /**
@@ -316,10 +405,10 @@ PHP);
 
 it('does not treat descriptive phpdoc as commented-out code', function (): void {
     $root = makeCommentCheckerFixture();
-    $src = $root.DIRECTORY_SEPARATOR.'src';
+    $src = $root . DIRECTORY_SEPARATOR . 'src';
 
     mkdir($src, 0755, true);
-    file_put_contents($src.DIRECTORY_SEPARATOR.'Factory.php', <<<'PHP'
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'Factory.php', <<<'PHP'
 <?php
 
 final class Factory
@@ -361,10 +450,10 @@ PHP);
 
 it('supports disabling comment rules from config', function (): void {
     $root = makeCommentCheckerFixture();
-    $src = $root.DIRECTORY_SEPARATOR.'src';
+    $src = $root . DIRECTORY_SEPARATOR . 'src';
 
     mkdir($src, 0755, true);
-    file_put_contents($root.DIRECTORY_SEPARATOR.'phpprobe.json', json_encode([
+    file_put_contents($root . DIRECTORY_SEPARATOR . 'phpprobe.json', json_encode([
         'comments' => [
             'paths' => ['src'],
             'rules' => [
@@ -374,7 +463,7 @@ it('supports disabling comment rules from config', function (): void {
             ],
         ],
     ], JSON_PRETTY_PRINT));
-    file_put_contents($src.DIRECTORY_SEPARATOR.'Marker.php', <<<'PHP'
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'Marker.php', <<<'PHP'
 <?php
 
 // SECURITY(auth): inspect token logging before release
@@ -397,10 +486,10 @@ PHP);
 
 it('supports overriding comment rule severity from config', function (): void {
     $root = makeCommentCheckerFixture();
-    $src = $root.DIRECTORY_SEPARATOR.'src';
+    $src = $root . DIRECTORY_SEPARATOR . 'src';
 
     mkdir($src, 0755, true);
-    file_put_contents($root.DIRECTORY_SEPARATOR.'phpprobe.json', json_encode([
+    file_put_contents($root . DIRECTORY_SEPARATOR . 'phpprobe.json', json_encode([
         'comments' => [
             'paths' => ['src'],
             'rules' => [
@@ -410,7 +499,7 @@ it('supports overriding comment rule severity from config', function (): void {
             ],
         ],
     ], JSON_PRETTY_PRINT));
-    file_put_contents($src.DIRECTORY_SEPARATOR.'WeakReason.php', <<<'PHP'
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'WeakReason.php', <<<'PHP'
 <?php
 
 // TODO: later
@@ -421,7 +510,7 @@ final class WeakReason
 PHP);
 
     try {
-        $run = runCommentCheckerCommand($root, ['--json', '--fail-on=warning']);
+        $run = runCommentCheckerCommand($root, ['--json', '--fail-on=info']);
     } finally {
         removeCommentCheckerFixture($root);
     }
@@ -432,7 +521,7 @@ PHP);
         static fn(array $finding): bool => $finding['type'] === 'commented_out_code_with_weak_reason',
     ));
 
-    expect($run['exitCode'])->toBe(0)
+    expect($run['exitCode'])->toBe(1)
         ->and($weak)->toHaveCount(1)
         ->and($weak[0]['severity'])->toBe('info');
 });
@@ -452,10 +541,10 @@ it('rejects unknown comment checker options', function (): void {
 
 it('supports markdown output format', function (): void {
     $root = makeCommentCheckerFixture();
-    $src = $root.DIRECTORY_SEPARATOR.'src';
+    $src = $root . DIRECTORY_SEPARATOR . 'src';
 
     mkdir($src, 0755, true);
-    file_put_contents($src.DIRECTORY_SEPARATOR.'Marker.php', <<<'PHP'
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'Marker.php', <<<'PHP'
 <?php
 
 // SECURITY(auth): inspect token logging before release
@@ -477,10 +566,10 @@ PHP);
 
 it('supports parser doc mode to avoid phpdoc prose false positives', function (): void {
     $root = makeCommentCheckerFixture();
-    $src = $root.DIRECTORY_SEPARATOR.'src';
+    $src = $root . DIRECTORY_SEPARATOR . 'src';
 
     mkdir($src, 0755, true);
-    file_put_contents($src.DIRECTORY_SEPARATOR.'Factory.php', <<<'PHP'
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'Factory.php', <<<'PHP'
 <?php
 
 final class Factory
@@ -514,10 +603,10 @@ PHP);
 
 it('respects fail confidence threshold', function (): void {
     $root = makeCommentCheckerFixture();
-    $src = $root.DIRECTORY_SEPARATOR.'src';
+    $src = $root . DIRECTORY_SEPARATOR . 'src';
 
     mkdir($src, 0755, true);
-    file_put_contents($src.DIRECTORY_SEPARATOR.'DocSnippet.php', <<<'PHP'
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'DocSnippet.php', <<<'PHP'
 <?php
 
 final class DocSnippet
@@ -546,10 +635,10 @@ PHP);
 
 it('prints explanations when explain mode is enabled', function (): void {
     $root = makeCommentCheckerFixture();
-    $src = $root.DIRECTORY_SEPARATOR.'src';
+    $src = $root . DIRECTORY_SEPARATOR . 'src';
 
     mkdir($src, 0755, true);
-    file_put_contents($src.DIRECTORY_SEPARATOR.'NoReason.php', <<<'PHP'
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'NoReason.php', <<<'PHP'
 <?php
 
 // $user = User::find($id);
@@ -571,10 +660,10 @@ PHP);
 
 it('supports suppression expiry and reports expired suppressions', function (): void {
     $root = makeCommentCheckerFixture();
-    $src = $root.DIRECTORY_SEPARATOR.'src';
+    $src = $root . DIRECTORY_SEPARATOR . 'src';
 
     mkdir($src, 0755, true);
-    file_put_contents($src.DIRECTORY_SEPARATOR.'Suppressions.php', <<<'PHP'
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'Suppressions.php', <<<'PHP'
 <?php
 
 // @phpprobe-ignore commented_out_code_without_reason until=2099-01-01
@@ -619,17 +708,17 @@ it('rejects invalid fail confidence values', function (): void {
 
 it('reads doc mode and fail confidence from config', function (): void {
     $root = makeCommentCheckerFixture();
-    $src = $root.DIRECTORY_SEPARATOR.'src';
+    $src = $root . DIRECTORY_SEPARATOR . 'src';
 
     mkdir($src, 0755, true);
-    file_put_contents($root.DIRECTORY_SEPARATOR.'phpprobe.json', json_encode([
+    file_put_contents($root . DIRECTORY_SEPARATOR . 'phpprobe.json', json_encode([
         'comments' => [
             'paths' => ['src'],
             'doc_mode' => 'hybrid',
             'fail_confidence' => 'high',
         ],
     ], JSON_PRETTY_PRINT));
-    file_put_contents($src.DIRECTORY_SEPARATOR.'DocSnippet.php', <<<'PHP'
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'DocSnippet.php', <<<'PHP'
 <?php
 
 final class DocSnippet
@@ -654,10 +743,10 @@ PHP);
 
 it('does not flag phpdoc generics and array-shapes as commented out code', function (): void {
     $root = makeCommentCheckerFixture();
-    $src = $root.DIRECTORY_SEPARATOR.'src';
+    $src = $root . DIRECTORY_SEPARATOR . 'src';
 
     mkdir($src, 0755, true);
-    file_put_contents($src.DIRECTORY_SEPARATOR.'ShapeDoc.php', <<<'PHP'
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'ShapeDoc.php', <<<'PHP'
 <?php
 
 final class ShapeDoc
@@ -690,10 +779,10 @@ PHP);
 
 it('accepts PHPDoc refinements while retaining strict signature mismatch checks', function (): void {
     $root = makeCommentCheckerFixture();
-    $src = $root.DIRECTORY_SEPARATOR.'src';
+    $src = $root . DIRECTORY_SEPARATOR . 'src';
 
     mkdir($src, 0755, true);
-    file_put_contents($src.DIRECTORY_SEPARATOR.'RefinedDoc.php', <<<'PHP'
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'RefinedDoc.php', <<<'PHP'
 <?php
 
 final class RefinedDoc
@@ -734,10 +823,10 @@ PHP);
 
 it('resolves PHPDoc aliases templates closure signatures and conditional refinements', function (): void {
     $root = makeCommentCheckerFixture();
-    $src = $root.DIRECTORY_SEPARATOR.'src';
+    $src = $root . DIRECTORY_SEPARATOR . 'src';
 
     mkdir($src, 0755, true);
-    file_put_contents($src.DIRECTORY_SEPARATOR.'AdvancedRefinement.php', <<<'PHP'
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'AdvancedRefinement.php', <<<'PHP'
 <?php
 
 /**
@@ -796,10 +885,10 @@ PHP);
 
 it('treats fenced PHPDoc samples as examples and prose references as documentation', function (): void {
     $root = makeCommentCheckerFixture();
-    $src = $root.DIRECTORY_SEPARATOR.'src';
+    $src = $root . DIRECTORY_SEPARATOR . 'src';
 
     mkdir($src, 0755, true);
-    file_put_contents($src.DIRECTORY_SEPARATOR.'DocumentedExample.php', <<<'PHP'
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'DocumentedExample.php', <<<'PHP'
 <?php
 
 /**
@@ -831,10 +920,10 @@ PHP);
 
 it('does not flag multiline param descriptions in phpdoc', function (): void {
     $root = makeCommentCheckerFixture();
-    $src = $root.DIRECTORY_SEPARATOR.'src';
+    $src = $root . DIRECTORY_SEPARATOR . 'src';
 
     mkdir($src, 0755, true);
-    file_put_contents($src.DIRECTORY_SEPARATOR.'ParamDoc.php', <<<'PHP'
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'ParamDoc.php', <<<'PHP'
 <?php
 
 final class ParamDoc
@@ -865,10 +954,10 @@ PHP);
 
 it('keeps allowing phpdoc usage examples in hybrid mode', function (): void {
     $root = makeCommentCheckerFixture();
-    $src = $root.DIRECTORY_SEPARATOR.'src';
+    $src = $root . DIRECTORY_SEPARATOR . 'src';
 
     mkdir($src, 0755, true);
-    file_put_contents($src.DIRECTORY_SEPARATOR.'UsageDoc.php', <<<'PHP'
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'UsageDoc.php', <<<'PHP'
 <?php
 
 final class UsageDoc
@@ -895,11 +984,11 @@ PHP);
 
 it('supports comment baselines for existing findings', function (): void {
     $root = makeCommentCheckerFixture();
-    $src = $root.DIRECTORY_SEPARATOR.'src';
-    $baseline = $root.DIRECTORY_SEPARATOR.'.phpprobe-comments-baseline.json';
+    $src = $root . DIRECTORY_SEPARATOR . 'src';
+    $baseline = $root . DIRECTORY_SEPARATOR . '.phpprobe-comments-baseline.json';
 
     mkdir($src, 0755, true);
-    file_put_contents($src.DIRECTORY_SEPARATOR.'NoReason.php', <<<'PHP'
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'NoReason.php', <<<'PHP'
 <?php
 
 // $user = User::find($id);
@@ -926,10 +1015,10 @@ PHP);
 
 it('reports phpdoc signature inconsistencies and unknown params', function (): void {
     $root = makeCommentCheckerFixture();
-    $src = $root.DIRECTORY_SEPARATOR.'src';
+    $src = $root . DIRECTORY_SEPARATOR . 'src';
 
     mkdir($src, 0755, true);
-    file_put_contents($src.DIRECTORY_SEPARATOR.'SignatureDoc.php', <<<'PHP'
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'SignatureDoc.php', <<<'PHP'
 <?php
 
 final class SignatureDoc
@@ -962,10 +1051,10 @@ PHP);
 
 it('reports invalid phpdoc tag values', function (): void {
     $root = makeCommentCheckerFixture();
-    $src = $root.DIRECTORY_SEPARATOR.'src';
+    $src = $root . DIRECTORY_SEPARATOR . 'src';
 
     mkdir($src, 0755, true);
-    file_put_contents($src.DIRECTORY_SEPARATOR.'InvalidDoc.php', <<<'PHP'
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'InvalidDoc.php', <<<'PHP'
 <?php
 
 final class InvalidDoc
@@ -994,10 +1083,10 @@ PHP);
 
 it('supports symbol-scoped suppressions and detects dead suppressions', function (): void {
     $root = makeCommentCheckerFixture();
-    $src = $root.DIRECTORY_SEPARATOR.'src';
+    $src = $root . DIRECTORY_SEPARATOR . 'src';
 
     mkdir($src, 0755, true);
-    file_put_contents($src.DIRECTORY_SEPARATOR.'SymbolSuppress.php', <<<'PHP'
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'SymbolSuppress.php', <<<'PHP'
 <?php
 
 final class SymbolSuppress
@@ -1036,10 +1125,10 @@ PHP);
 
 it('supports namespaced symbol selectors for symbol-scoped suppressions', function (): void {
     $root = makeCommentCheckerFixture();
-    $src = $root.DIRECTORY_SEPARATOR.'src';
+    $src = $root . DIRECTORY_SEPARATOR . 'src';
 
     mkdir($src, 0755, true);
-    file_put_contents($src.DIRECTORY_SEPARATOR.'NamespacedSymbolSuppress.php', <<<'PHP'
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'NamespacedSymbolSuppress.php', <<<'PHP'
 <?php
 
 namespace App\Module;
@@ -1079,10 +1168,10 @@ PHP);
 
 it('scopes symbol suppressions to the selected class when method names overlap', function (): void {
     $root = makeCommentCheckerFixture();
-    $src = $root.DIRECTORY_SEPARATOR.'src';
+    $src = $root . DIRECTORY_SEPARATOR . 'src';
 
     mkdir($src, 0755, true);
-    file_put_contents($src.DIRECTORY_SEPARATOR.'OverlappingRunSymbols.php', <<<'PHP'
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'OverlappingRunSymbols.php', <<<'PHP'
 <?php
 
 final class Alpha
@@ -1123,10 +1212,10 @@ PHP);
 
 it('detects custom comment rules from config', function (): void {
     $root = makeCommentCheckerFixture();
-    $src = $root.DIRECTORY_SEPARATOR.'src';
+    $src = $root . DIRECTORY_SEPARATOR . 'src';
 
     mkdir($src, 0755, true);
-    file_put_contents($root.DIRECTORY_SEPARATOR.'phpprobe.json', json_encode([
+    file_put_contents($root . DIRECTORY_SEPARATOR . 'phpprobe.json', json_encode([
         'comments' => [
             'paths' => ['src'],
             'custom_rules' => [
@@ -1141,7 +1230,7 @@ it('detects custom comment rules from config', function (): void {
         ],
     ], JSON_PRETTY_PRINT));
 
-    file_put_contents($src.DIRECTORY_SEPARATOR.'CustomRule.php', <<<'PHP'
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'CustomRule.php', <<<'PHP'
 <?php
 
 // password = hardcoded
@@ -1165,10 +1254,10 @@ PHP);
 
 it('applies documented defaults to minimal custom comment rules', function (): void {
     $root = makeCommentCheckerFixture();
-    $src = $root.DIRECTORY_SEPARATOR.'src';
+    $src = $root . DIRECTORY_SEPARATOR . 'src';
 
     mkdir($src, 0755, true);
-    file_put_contents($root.DIRECTORY_SEPARATOR.'phpprobe.json', json_encode([
+    file_put_contents($root . DIRECTORY_SEPARATOR . 'phpprobe.json', json_encode([
         'comments' => [
             'paths' => ['src'],
             'custom_rules' => [[
@@ -1178,7 +1267,7 @@ it('applies documented defaults to minimal custom comment rules', function (): v
         ],
     ], JSON_PRETTY_PRINT));
 
-    file_put_contents($src.DIRECTORY_SEPARATOR.'CustomRuleDefaults.php', <<<'PHP'
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'CustomRuleDefaults.php', <<<'PHP'
 <?php
 
 // password = hardcoded
@@ -1207,10 +1296,10 @@ PHP);
 
 it('honors explicitly allowed optional reason tags in strict policy', function (): void {
     $root = makeCommentCheckerFixture();
-    $src = $root.DIRECTORY_SEPARATOR.'src';
+    $src = $root . DIRECTORY_SEPARATOR . 'src';
 
     mkdir($src, 0755, true);
-    file_put_contents($root.DIRECTORY_SEPARATOR.'phpprobe.json', json_encode([
+    file_put_contents($root . DIRECTORY_SEPARATOR . 'phpprobe.json', json_encode([
         'comments' => [
             'paths' => ['src'],
         ],
@@ -1220,7 +1309,7 @@ it('honors explicitly allowed optional reason tags in strict policy', function (
         ],
     ], JSON_PRETTY_PRINT));
 
-    file_put_contents($src.DIRECTORY_SEPARATOR.'StrictOptionalReason.php', <<<'PHP'
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'StrictOptionalReason.php', <<<'PHP'
 <?php
 
 // TEMP(PROJ-142): retain this implementation until migration is complete.
@@ -1231,7 +1320,7 @@ final class StrictOptionalReason
 PHP);
 
     try {
-        $run = runCommentCheckerCommand($root, ['--json', '--fail-on=warning']);
+        $run = runCommentCheckerCommand($root, ['--json', '--fail-on=info']);
     } finally {
         removeCommentCheckerFixture($root);
     }
@@ -1239,7 +1328,7 @@ PHP);
     $payload = json_decode($run['stdout'], true);
     $types = array_column($payload['findings'], 'type');
 
-    expect($run['exitCode'])->toBe(0)
+    expect($run['exitCode'])->toBe(1)
         ->and($types)->toContain('commented_out_code_with_valid_reason')
         ->and($types)->not()->toContain('commented_out_code_without_valid_tag');
 });
@@ -1255,18 +1344,18 @@ function removeCommentCheckerFixture(string $root): void
 }
 
 /**
- * @param  list<string>  $args
+ * @param list<string> $args
  * @return array{exitCode:int,stdout:string,stderr:string}
  */
 function runCommentCheckerCommand(string $cwd, array $args): array
 {
-    $binary = dirname(__DIR__, 2).DIRECTORY_SEPARATOR.'bin' . DIRECTORY_SEPARATOR . 'phpprobe';
+    $binary = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'bin' . DIRECTORY_SEPARATOR . 'phpprobe';
     $process = proc_open([PHP_BINARY, $binary, 'comments', ...$args], [
         1 => ['pipe', 'w'],
         2 => ['pipe', 'w'],
     ], $pipes, $cwd);
 
-    if (! is_resource($process)) {
+    if (!is_resource($process)) {
         throw new RuntimeException('Could not start comment checker.');
     }
 

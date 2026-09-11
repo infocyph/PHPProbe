@@ -134,11 +134,19 @@ Output contract
 ---------------
 
 JSON reports include file/line totals, unique duplicated lines and percentage,
-known/new clone counts, cache status, and clone groups. Every group exposes a
+known/new clone counts, cache status, input-group summaries, and clone groups.
+Each input group reports its file, clone-group, and occurrence counts. Every clone exposes a
 stable fingerprint, detector source, score, similarity, token/line/statement
 counts, block type, and sorted occurrences with file, range, and context.
 
-Text output offers compact/classic layouts and configurable score bands.
-Markdown, SARIF, GitHub annotation, and atomic summary JSON outputs represent
-the same scan. See :doc:`configuration` and :doc:`cli-reference` for every
-setting and option.
+Each supplied parent path becomes a reporting group. Detection is deliberately
+run over the combined file corpus, which preserves clones whose occurrences are
+in different groups. Text output uses terminal-safe input and occurrence tables;
+compact/classic layouts retain their engine/source distinction and configurable
+score bands.
+
+Use ``--format=phpstan-json`` for PHPStan's ``totals``, file-keyed ``messages``,
+and global ``errors`` structure. Each clone occurrence becomes one ignorable
+``duplicate_code_clone`` message. Markdown, SARIF, GitHub annotation, and atomic
+summary JSON outputs represent the same scan. See :doc:`configuration` and
+:doc:`cli-reference` for every setting and option.

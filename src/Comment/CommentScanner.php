@@ -364,7 +364,7 @@ final class CommentScanner
         }
 
         foreach ($entries as $entry) {
-            if ($entry['used'] === true) {
+            if ($entry['used']) {
                 continue;
             }
 
