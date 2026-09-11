@@ -561,9 +561,7 @@ final class DuplicateDetectionEngine
                         continue;
                     }
 
-                    if (!isset($duplicateWindows[$hash])) {
-                        $duplicateWindows[$hash] = [$firstOccurrences[$hash]];
-                    }
+                    $duplicateWindows[$hash] ??= [$firstOccurrences[$hash]];
 
                     $duplicateWindows[$hash][] = $occurrence;
                 }
@@ -718,9 +716,7 @@ final class DuplicateDetectionEngine
                     continue;
                 }
 
-                if (!isset($duplicateWindows[$key])) {
-                    $duplicateWindows[$key] = [$firstOccurrences[$key]];
-                }
+                $duplicateWindows[$key] ??= [$firstOccurrences[$key]];
 
                 $duplicateWindows[$key][] = $occurrence;
             }
