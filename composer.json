@@ -52,7 +52,7 @@
     },
     "scripts": {
         "benchmark": "@php benchmarks/run.php",
-        "test": "@php vendor/bin/pest --configuration=pest.xml --cache-directory=.phpunit.cache --do-not-cache-result",
+        "test": "@php vendor/bin/pest --configuration=pest.xml --cache-directory=.phpunit.cache --do-not-record-test-run-history",
         "test:types": "@php vendor/bin/phpstan analyse --configuration=phpstan.neon.dist --no-progress",
         "test:sniff": "@php vendor/bin/phpcs --standard=phpcs.xml.dist --report=full src tests",
         "test:pint": "@php vendor/bin/pint --test",
