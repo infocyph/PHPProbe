@@ -26,14 +26,14 @@
         "php": ">=8.4",
         "ext-tokenizer": "*",
         "nikic/php-parser": "^5.8.0",
-        "phpstan/phpdoc-parser": "^2.3.3"
+        "phpstan/phpdoc-parser": "^2.3.5"
     },
     "require-dev": {
-        "laravel/pint": "^1.30.3",
-        "pestphp/pest": "^5.0",
-        "phpstan/phpstan": "^2.2.7",
-        "rector/rector": "^2.5.9",
-        "squizlabs/php_codesniffer": "^4.0.1"
+        "laravel/pint": "^1.32.1",
+        "pestphp/pest": "^5.1.4",
+        "phpstan/phpstan": "^2.2.13",
+        "rector/rector": "^2.6.6",
+        "squizlabs/php_codesniffer": "^4.0.4"
     },
     "autoload": {
         "psr-4": {
@@ -58,7 +58,7 @@
         "test:pint": "@php vendor/bin/pint --test",
         "test:rector": "@php vendor/bin/rector process src --dry-run",
         "check": "@php bin/phpprobe check --config=tests/phpprobe.json src tests",
-        "lint": "@php bin/phpprobe syntax src tests",
+        "lint": "@php bin/phpprobe syntax --parallel=2 src tests",
         "duplicates": "@php bin/phpprobe duplicates --config=resources/phpprobe.json src tests",
         "comments": "@php bin/phpprobe comments --config=resources/phpprobe.json src tests",
         "doctor": "@php bin/phpprobe doctor --config=resources/phpprobe.json",

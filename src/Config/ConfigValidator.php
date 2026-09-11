@@ -10,7 +10,7 @@ final class ConfigValidator
     private const array COLORS = ['red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'gray', 'bold'];
 
     /** @var list<string> */
-    private const array FORMATS = ['text', 'json', 'markdown', 'sarif', 'github'];
+    private const array FORMATS = ['text', 'json', 'phpstan-json', 'markdown', 'sarif', 'github'];
 
     private const int MAX_CONFIG_BYTES = 1_048_576;
 

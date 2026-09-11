@@ -24,3 +24,4 @@ d2utmp*
 .phpprobe-comments-baseline.json
 .phpprobe-comments-doc-cache.json
 build/reports/
+/graphify-out

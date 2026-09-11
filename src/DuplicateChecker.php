@@ -8,12 +8,15 @@ use Infocyph\PHPProbe\Config\CliOptions;
 use Infocyph\PHPProbe\Config\OptionValues;
 use Infocyph\PHPProbe\Config\Paths;
 use Infocyph\PHPProbe\Console\Ansi;
+use Infocyph\PHPProbe\Console\CliTable;
 use Infocyph\PHPProbe\Detection\DuplicateCloneReducer;
 use Infocyph\PHPProbe\Detection\DuplicateDetectionEngine;
 use Infocyph\PHPProbe\Util\AtomicFileWriter;
 use Infocyph\PHPProbe\Util\BaselineJson;
 use Infocyph\PHPProbe\Util\CheckerRuntime;
 use Infocyph\PHPProbe\Util\GithubAnnotation;
+use Infocyph\PHPProbe\Util\InputFileGroups;
+use Infocyph\PHPProbe\Util\ProjectPath;
 use Infocyph\PHPProbe\Util\Sarif;
 use Infocyph\PHPProbe\Util\ScopedTempFile;
 use Infocyph\PHPProbe\Util\SummaryJson;
@@ -21,7 +24,8 @@ use Infocyph\PHPProbe\Util\SummaryJson;
 /**
  * @phpstan-type CloneOccurrence array{file:string,start_line:int,end_line:int,lines:int,context:string}
  * @phpstan-type CloneGroup array{fingerprint:string,source:string,score:float,similarity:float,tokens:int,lines:int,statements:int,block_type:string,occurrences:list<CloneOccurrence>}
- * @phpstan-type DuplicateResult array{files:int,total_lines:int,duplicated_lines:int,duplicate_percentage:float,known_clones:int,new_clones:int,cache_hit:bool,clones:list<CloneGroup>}
+ * @phpstan-type DuplicateGroup array{name:string,files:int,clone_groups:int,occurrences:int,paths:list<string>}
+ * @phpstan-type DuplicateResult array{files:int,total_lines:int,duplicated_lines:int,duplicate_percentage:float,known_clones:int,new_clones:int,cache_hit:bool,clones:list<CloneGroup>,groups?:list<DuplicateGroup>}
  * @phpstan-type DuplicateOptions array{help:bool,format:string,color:string,failOn:string,summaryJson:string,changedOnly:bool,changedBase:string,textColorSuccess:string,textColorError:string,textColorWarning:string,textColorInfo:string,textColorFile:string,cacheEnabled:bool,cacheFile:string,errorDuplicatePercentage:float,outputStyle:string,scoreColorHighMin:float,scoreColorMediumMin:float,scoreColorLowMin:float,scoreColorHigh:string,scoreColorMedium:string,scoreColorLow:string,scoreColorBase:string,config:string,mode:string,normalize:bool,fuzzy:bool,nearMiss:bool,minLines:int,minTokens:int,minStatements:int,minSimilarity:float,maxNearMissComparisons:int,baseline:string,writeBaseline:string,ignoreFingerprints:list<string>,paths:list<string>,excludes:list<string>}
  */
 final class DuplicateChecker
@@ -101,7 +105,9 @@ final class DuplicateChecker
      */
     private function buildResult(array $options): array
     {
-        $result = $this->analyzeWithCache(CheckerRuntime::phpFiles($options), $options);
+        $files = CheckerRuntime::phpFiles($options);
+        $groups = InputFileGroups::group($files, $options['paths']);
+        $result = $this->analyzeWithCache($files, $options);
 
         if ($options['baseline'] !== '') {
             $result = $this->withoutBaselineClones($result, $options['baseline']);
@@ -114,6 +120,8 @@ final class DuplicateChecker
         if ($options['writeBaseline'] !== '') {
             $this->writeBaseline($result, $options['writeBaseline']);
         }
+
+        $result['groups'] = $this->duplicateGroupSummaries($groups, $result['clones']);
 
         return $result;
     }
@@ -320,6 +328,57 @@ final class DuplicateChecker
         ];
     }
 
+    /**
+     * @param list<DuplicateGroup> $groups
+     * @return array<string, list<string>>
+     */
+    private function duplicateGroupPaths(array $groups): array
+    {
+        $paths = [];
+
+        foreach ($groups as $group) {
+            $paths[$group['name']] = $group['paths'];
+        }
+
+        return $paths;
+    }
+
+    /**
+     * @param array<string, list<string>> $groups
+     * @param list<CloneGroup> $clones
+     * @return list<DuplicateGroup>
+     */
+    private function duplicateGroupSummaries(array $groups, array $clones): array
+    {
+        $summaries = [];
+
+        foreach ($groups as $name => $files) {
+            $relativeFiles = array_map(ProjectPath::relative(...), $files);
+            $lookup = array_fill_keys($relativeFiles, true);
+            $cloneGroups = 0;
+            $occurrences = 0;
+
+            foreach ($clones as $clone) {
+                $groupOccurrences = count(array_filter(
+                    $clone['occurrences'],
+                    static fn(array $occurrence): bool => isset($lookup[$occurrence['file']]),
+                ));
+                $occurrences += $groupOccurrences;
+                $cloneGroups += $groupOccurrences > 0 ? 1 : 0;
+            }
+
+            $summaries[] = [
+                'name' => $name,
+                'files' => count($files),
+                'clone_groups' => $cloneGroups,
+                'occurrences' => $occurrences,
+                'paths' => $relativeFiles,
+            ];
+        }
+
+        return $summaries;
+    }
+
     private function engineLabel(string $source): string
     {
         return match ($source) {
@@ -364,7 +423,7 @@ final class DuplicateChecker
             '  --fuzzy                          also normalize identifiers/calls',
             '  --baseline=FILE                  suppress clone groups already in a baseline',
             '  --write-baseline[=FILE]          write current clone groups to a baseline and exit 0',
-            '  --format=text|json|markdown|sarif|github output format (default: text)',
+            '  --format=text|json|phpstan-json|markdown|sarif|github output format (default: text)',
             '  --color=auto|always|never       ANSI color mode (default: auto)',
             '  --json                           alias for --format=json',
             '  --fail-on=error|warning|info     failure threshold (default: warning)',
@@ -658,14 +717,15 @@ final class DuplicateChecker
     }
 
     /**
-     * @param array{files:int,total_lines:int,duplicated_lines:int,duplicate_percentage:float,known_clones:int,new_clones:int,cache_hit:bool,clones:list<array{fingerprint:string,source:string,score:float,similarity:float,tokens:int,lines:int,statements:int,block_type:string,occurrences:list<array{file:string,start_line:int,end_line:int,lines:int,context:string}>}>} $result
+     * @param DuplicateResult $result
      * @param DuplicateOptions $options
      */
     private function summaryFooter(array $result, array $options, bool $failed): string
     {
         return sprintf(
-            'Summary: files=%d clone-groups=%d duplicated-lines=%d duplicate%%=%.2f fail-on=%s cache=%s status=%s',
+            'Summary: files=%d groups=%d clone-groups=%d duplicated-lines=%d duplicate%%=%.2f fail-on=%s cache=%s status=%s',
             $result['files'],
+            count($result['groups'] ?? []),
             count($result['clones']),
             $result['duplicated_lines'],
             $result['duplicate_percentage'],
@@ -813,15 +873,22 @@ final class DuplicateChecker
     }
 
     /**
-     * @param array{files:int,total_lines:int,duplicated_lines:int,duplicate_percentage:float,known_clones:int,new_clones:int,cache_hit:bool,clones:list<array{fingerprint:string,source:string,score:float,similarity:float,tokens:int,lines:int,statements:int,block_type:string,occurrences:list<array{file:string,start_line:int,end_line:int,lines:int,context:string}>}>} $result
+     * @param DuplicateResult $result
      */
     private function writeJson(array $result): void
     {
+        $result['groups'] = array_map(static fn(array $group): array => [
+            'name' => $group['name'],
+            'files' => $group['files'],
+            'clone_groups' => $group['clone_groups'],
+            'occurrences' => $group['occurrences'],
+        ], $result['groups'] ?? []);
+
         fwrite(STDOUT, json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL);
     }
 
     /**
-     * @param array{files:int,total_lines:int,duplicated_lines:int,duplicate_percentage:float,known_clones:int,new_clones:int,cache_hit:bool,clones:list<array{fingerprint:string,source:string,score:float,similarity:float,tokens:int,lines:int,statements:int,block_type:string,occurrences:list<array{file:string,start_line:int,end_line:int,lines:int,context:string}>}>} $result
+     * @param DuplicateResult $result
      * @param DuplicateOptions $options
      */
     private function writeMarkdown(array $result, array $options, bool $failed): void
@@ -833,6 +900,7 @@ final class DuplicateChecker
             sprintf('- Total lines: `%d`', $result['total_lines']),
             sprintf('- Duplicate lines: `%d`', $result['duplicated_lines']),
             sprintf('- Duplicate percentage: `%.2f%%`', $result['duplicate_percentage']),
+            sprintf('- Input groups: `%d`', count($result['groups'] ?? [])),
             sprintf('- Clone groups: `%d`', count($result['clones'])),
             sprintf('- Cache hit: `%s`', $result['cache_hit'] ? 'yes' : 'no'),
             sprintf('- Fail-on: `%s`', $options['failOn']),
@@ -864,14 +932,54 @@ final class DuplicateChecker
         fwrite(STDOUT, implode(PHP_EOL, $lines) . PHP_EOL);
     }
 
+    /** @param DuplicateResult $result */
+    private function writePhpStanJson(array $result): void
+    {
+        /** @var array<string, array{errors:int,messages:list<array{message:string,line:int,ignorable:bool,identifier:string}>}> $files */
+        $files = [];
+        $fileErrors = 0;
+
+        foreach ($result['clones'] as $index => $clone) {
+            foreach ($clone['occurrences'] as $occurrence) {
+                $files[$occurrence['file']] ??= ['errors' => 0, 'messages' => []];
+                $files[$occurrence['file']]['errors']++;
+                $files[$occurrence['file']]['messages'][] = [
+                    'message' => sprintf(
+                        'Duplicate clone group %d (%s, %.0f%% similar; %d lines).',
+                        $index + 1,
+                        $this->engineLabel($clone['source']),
+                        $clone['similarity'] * 100,
+                        $clone['lines'],
+                    ),
+                    'line' => $occurrence['start_line'],
+                    'ignorable' => true,
+                    'identifier' => 'duplicate_code_clone',
+                ];
+                $fileErrors++;
+            }
+        }
+
+        fwrite(STDOUT, json_encode([
+            'totals' => ['errors' => 0, 'file_errors' => $fileErrors],
+            'files' => (object) $files,
+            'errors' => [],
+        ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL);
+    }
+
     /**
-     * @param array{files:int,total_lines:int,duplicated_lines:int,duplicate_percentage:float,known_clones:int,new_clones:int,cache_hit:bool,clones:list<array{fingerprint:string,source:string,score:float,similarity:float,tokens:int,lines:int,statements:int,block_type:string,occurrences:list<array{file:string,start_line:int,end_line:int,lines:int,context:string}>}>} $result
+     * @param DuplicateResult $result
      * @param DuplicateOptions $options
      */
     private function writeResult(array $result, array $options, bool $failed): void
     {
         if ($options['format'] === 'json') {
             $this->writeJson($result);
+
+            return;
+        }
+
+        if ($options['format'] === 'phpstan-json') {
+            $this->writePhpStanJson($result);
 
             return;
         }
@@ -924,7 +1032,7 @@ final class DuplicateChecker
     }
 
     /**
-     * @param array{files:int,total_lines:int,duplicated_lines:int,duplicate_percentage:float,known_clones:int,new_clones:int,cache_hit:bool,clones:list<array{fingerprint:string,source:string,score:float,similarity:float,tokens:int,lines:int,statements:int,block_type:string,occurrences:list<array{file:string,start_line:int,end_line:int,lines:int,context:string}>}>} $result
+     * @param DuplicateResult $result
      * @param DuplicateOptions $options
      */
     private function writeSummaryJson(array $result, array $options, int $exitCode): void
@@ -944,6 +1052,7 @@ final class DuplicateChecker
                 'total_lines' => $result['total_lines'],
                 'duplicated_lines' => $result['duplicated_lines'],
                 'duplicate_percentage' => $result['duplicate_percentage'],
+                'groups' => count($result['groups'] ?? []),
                 'clone_groups' => $cloneCount,
                 'duplicate_line_ratio' => $lineRatio,
                 'cache_hit' => $result['cache_hit'],
@@ -952,7 +1061,7 @@ final class DuplicateChecker
     }
 
     /**
-     * @param array{files:int,total_lines:int,duplicated_lines:int,duplicate_percentage:float,known_clones:int,new_clones:int,cache_hit:bool,clones:list<array{fingerprint:string,source:string,score:float,similarity:float,tokens:int,lines:int,statements:int,block_type:string,occurrences:list<array{file:string,start_line:int,end_line:int,lines:int,context:string}>}>} $result
+     * @param DuplicateResult $result
      * @param DuplicateOptions $options
      */
     private function writeText(array $result, array $options, bool $failed): void
@@ -960,6 +1069,21 @@ final class DuplicateChecker
         if ($options['writeBaseline'] !== '') {
             fwrite(STDOUT, Ansi::color(sprintf('Duplicate baseline written: %s', $options['writeBaseline']), $options['textColorInfo'], STDOUT) . PHP_EOL);
         }
+
+        $groups = $result['groups'] ?? [];
+        $stream = $result['clones'] === [] ? STDOUT : STDERR;
+        $groupRows = array_map(static fn(array $group): array => [
+            $group['name'],
+            $group['files'],
+            $group['clone_groups'],
+            $group['occurrences'],
+        ], $groups);
+        fwrite($stream, 'Input groups:' . PHP_EOL);
+        fwrite($stream, CliTable::render(
+            ['Group', 'Files', 'Clone groups', 'Occurrences'],
+            $groupRows,
+            [0 => 48],
+        ) . PHP_EOL);
 
         if ($result['clones'] === []) {
             fwrite(STDOUT, Ansi::color(
@@ -979,48 +1103,51 @@ final class DuplicateChecker
             $result['files'],
         ), $options['textColorError'], STDERR) . PHP_EOL);
 
+        $groupPaths = $this->duplicateGroupPaths($groups);
+        $rows = [];
+
         foreach ($result['clones'] as $index => $clone) {
-            $first = $clone['occurrences'][0];
             $score = Ansi::color(sprintf('%.1f', $clone['score']), $this->scoreColor((float) $clone['score'], $options), STDERR);
 
-            if ($options['outputStyle'] === 'classic') {
-                fwrite(STDERR, sprintf(
-                    '  %d) %d lines, %.0f%% similar, %s, score %s',
-                    $index + 1,
-                    $clone['lines'],
-                    $clone['similarity'] * 100,
-                    $clone['source'],
-                    $score,
-                ) . PHP_EOL);
-            } else {
-                fwrite(STDERR, sprintf(
-                    '  %d) Lines: %d, Similarity: %.0f%%, Engine: %s, Score: %s',
-                    $index + 1,
-                    $clone['lines'],
-                    $clone['similarity'] * 100,
-                    $this->engineLabel($clone['source']),
-                    $score,
-                ) . PHP_EOL);
-            }
-            fwrite(
-                STDERR,
-                '     ' . Ansi::color(
-                    sprintf('%s:%d-%d', $first['file'], $first['start_line'], $first['end_line']),
-                    $options['textColorFile'],
-                    STDERR,
-                ) . PHP_EOL,
-            );
+            foreach ($clone['occurrences'] as $occurrence) {
+                $location = sprintf('%s:%d-%d', $occurrence['file'], $occurrence['start_line'], $occurrence['end_line']);
+                $group = InputFileGroups::nameFor($occurrence['file'], $groupPaths);
 
-            foreach (array_slice($clone['occurrences'], 1) as $occurrence) {
-                fwrite(
-                    STDERR,
-                    '     ' . Ansi::color(
-                        sprintf('%s:%d-%d', $occurrence['file'], $occurrence['start_line'], $occurrence['end_line']),
-                        $options['textColorFile'],
-                        STDERR,
-                    ) . PHP_EOL,
-                );
+                $rows[] = $options['outputStyle'] === 'classic'
+                    ? [
+                        $index + 1,
+                        $group,
+                        $clone['lines'],
+                        sprintf('%.0f%%', $clone['similarity'] * 100),
+                        $clone['source'],
+                        $score,
+                        $location,
+                    ]
+                    : [
+                        $index + 1,
+                        $group,
+                        $occurrence['file'],
+                        sprintf('%d-%d', $occurrence['start_line'], $occurrence['end_line']),
+                        $clone['lines'],
+                        sprintf('%.0f%%', $clone['similarity'] * 100),
+                        $this->engineLabel($clone['source']),
+                        $score,
+                    ];
             }
+        }
+
+        if ($options['outputStyle'] === 'classic') {
+            fwrite(STDERR, CliTable::render(
+                ['Clone', 'Group', 'Lines', 'Similarity', 'Source', 'Score', 'Location'],
+                $rows,
+                [1 => 32, 6 => 72],
+            ) . PHP_EOL);
+        } else {
+            fwrite(STDERR, CliTable::render(
+                ['Clone', 'Group', 'File', 'Range', 'Lines', 'Similarity', 'Engine', 'Score'],
+                $rows,
+                [1 => 32, 2 => 64],
+            ) . PHP_EOL);
         }
 
         fwrite(STDERR, Ansi::color(sprintf('%.2f%% duplicated lines.', $result['duplicate_percentage']), $options['textColorWarning'], STDERR) . PHP_EOL);

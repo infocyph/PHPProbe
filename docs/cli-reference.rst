@@ -27,8 +27,11 @@ The three checkers share these options:
    ``--exclude PATH`` are accepted.
 
 ``--format=FORMAT`` / ``--json``
-   Select ``text``, ``json``, ``markdown``, ``sarif``, or ``github``.
+   Select ``text``, ``json``, ``phpstan-json``, ``markdown``, ``sarif``, or ``github``.
    ``--json`` is an alias for ``--format=json``.
+
+   ``phpstan-json`` emits the PHPStan JSON error-formatter structure without
+   changing PHPProbe's native ``json`` contracts.
 
 ``--color=MODE``
    ``auto``, ``always``, or ``never``. This controls ANSI text output only.
@@ -53,7 +56,8 @@ The three checkers share these options:
 Additional options:
 
 ``--parallel=N``
-   Bounded lint worker count, 1–64. Default: 1.
+   Bounded global lint worker count, 1–64. Supplied input paths are scheduled
+   round-robin within that limit. Default: 1.
 
 ``--timeout=SECONDS``
    Per-file process timeout, 0.1–600. Default: 30.
@@ -66,6 +70,9 @@ Additional options:
    phpprobe duplicates [options] [paths...]
 
 Additional options:
+
+Supplied parent paths are displayed as report groups. Detection still analyzes
+one unified corpus, so clones spanning two parent paths are retained.
 
 ``--mode=gate|audit``
    Select fast token gate or complete AST-backed audit.
@@ -111,6 +118,9 @@ Additional options:
 
 Additional options:
 
+Supplied parent paths are scanned in round-robin order and displayed as report
+groups. The selected policy and failure threshold remain global to the run.
+
 ``--policy=relaxed|standard|strict``
    Select threshold and strictness profile.
 
@@ -125,7 +135,8 @@ Additional options:
    ``.phpprobe-comments-baseline.json``.
 
 ``--fail-on=error|warning|info``
-   Minimum severity group that fails. Default: ``error``.
+   Minimum severity group emitted in reports and allowed to fail the command.
+   Default: ``error``.
 
 ``--fail-confidence=low|medium|high``
    Minimum confidence that can fail. Default: ``low``.

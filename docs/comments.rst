@@ -14,16 +14,17 @@ Run the checker
    php vendor/bin/phpprobe comments --policy=strict --explain src
    php vendor/bin/phpprobe comments --format=sarif src > build/comments.sarif
 
-``--fail-on`` selects the lowest severity group that fails the command:
+``--fail-on`` selects the lowest severity group that is emitted and can fail the
+command:
 
 * ``error`` fails on ``error`` and ``critical``;
 * ``warning`` also fails on ``high`` and ``warning``;
 * ``info`` fails on every severity, including ``medium``, ``low``, and ``info``.
 
 ``--fail-confidence=low|medium|high`` independently selects the minimum
-confidence that can fail the command. Findings below either threshold remain in
-normal output. ``--ci`` sets the failure and emitted-output threshold to
-``error``; it does not change the configured policy.
+confidence that can fail the command. Lower-confidence findings at an emitted
+severity remain visible but do not fail the run. ``--ci`` is equivalent to the
+``error`` emission/failure threshold; it does not change the configured policy.
 
 Marker comments
 ---------------
@@ -310,3 +311,17 @@ checker in an existing codebase:
 Writing a baseline exits successfully after recording the current findings.
 ``--changed-only --changed-base=origin/main`` limits discovery to changed PHP
 files. Periodic full scans remain necessary for repository-wide coverage.
+
+Output contract
+---------------
+
+Each supplied parent path becomes an input group. Files from those groups are
+fed to the scanner round-robin, while policy evaluation and failure thresholds
+remain global. Terminal output starts with a group summary and renders findings
+in per-file tables with line, severity, confidence, rule, and message columns.
+
+Native JSON includes group file/finding counts alongside complete emitted
+finding objects. Use ``--format=phpstan-json`` for PHPStan's ``totals``, file-keyed
+``messages``, and global ``errors`` structure. Each finding retains its rule ID,
+line, message, and an optional suggestion as the PHPStan ``tip``. Markdown,
+SARIF, GitHub annotation, and atomic summary JSON formats remain available.

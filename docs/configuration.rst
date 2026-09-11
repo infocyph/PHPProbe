@@ -67,8 +67,8 @@ Every ``syntax``, ``duplicates``, and ``comments`` object supports:
    project preset is applied.
 
 ``format``
-   ``text``, ``json``, ``markdown``, ``sarif``, or ``github``. Default:
-   ``text``.
+   ``text``, ``json``, ``phpstan-json``, ``markdown``, ``sarif``, or ``github``.
+   Default: ``text``.
 
 ``summary_json``
    File path for an atomically written machine-readable summary. Empty disables

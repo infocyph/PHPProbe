@@ -72,7 +72,7 @@ final readonly class CliOptions
     /**
      * @param list<string> $allowed
      */
-    public function isAllowedFormat(string $format, array $allowed = ['text', 'json', 'markdown', 'sarif', 'github']): bool
+    public function isAllowedFormat(string $format, array $allowed = ['text', 'json', 'phpstan-json', 'markdown', 'sarif', 'github']): bool
     {
         return in_array(strtolower(trim($format)), $allowed, true);
     }
@@ -92,7 +92,7 @@ final readonly class CliOptions
     /**
      * @param list<string> $allowed
      */
-    public function normalizeFormat(string $format, array $allowed = ['text', 'json', 'markdown', 'sarif', 'github']): string
+    public function normalizeFormat(string $format, array $allowed = ['text', 'json', 'phpstan-json', 'markdown', 'sarif', 'github']): string
     {
         $normalized = strtolower(trim($format));
 
@@ -144,6 +144,7 @@ final readonly class CliOptions
     /**
      * @param list<string> $args
      * @param array<string, mixed> $options
+     * @param list<string> $allowedFormats
      */
     public function parseCommonCheckerOptions(
         array $args,
@@ -151,6 +152,7 @@ final readonly class CliOptions
         array &$options,
         string $arg,
         bool $includeFailOn,
+        array $allowedFormats = ['text', 'json', 'phpstan-json', 'markdown', 'sarif', 'github'],
     ): bool {
         if ($this->parseExclude($args, $index, $options, $arg)) {
             return true;
@@ -162,7 +164,7 @@ final readonly class CliOptions
             return true;
         }
 
-        if ($this->parseOutputFormat($options, $arg)) {
+        if ($this->parseOutputFormat($options, $arg, $allowedFormats)) {
             return true;
         }
 
@@ -253,7 +255,7 @@ final readonly class CliOptions
      * @param array<string, mixed> $options
      * @param list<string> $allowed
      */
-    public function parseOutputFormat(array &$options, string $arg, array $allowed = ['text', 'json', 'markdown', 'sarif', 'github']): bool
+    public function parseOutputFormat(array &$options, string $arg, array $allowed = ['text', 'json', 'phpstan-json', 'markdown', 'sarif', 'github']): bool
     {
         if ($arg === '--json') {
             $options['format'] = 'json';
