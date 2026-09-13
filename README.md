@@ -48,7 +48,8 @@ php vendor/bin/phpprobe check src tests
 ## Reference integrity
 
 The reference checker indexes project declarations, Composer classmaps and PSR-4
-mappings, installed dependencies, and native PHP class-like symbols. Confirmed
+mappings, registered runtime autoloaders, installed dependencies, and native PHP
+class-like symbols. Confirmed
 broken references fail with exit code `1` and include ranked replacement
 suggestions. When no credible replacement exists, the finding is marked as a
 possible dead reference.
