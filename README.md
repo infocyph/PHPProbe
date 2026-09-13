@@ -5,7 +5,7 @@
 [![CI](https://github.com/infocyph/PHPProbe/actions/workflows/ci.yml/badge.svg)](https://github.com/infocyph/PHPProbe/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-PHPProbe is a focused, standalone quality gate for PHP syntax, duplicated code, and comment policy. It works in any Composer project and does not require a framework or PHPForge.
+PHPProbe is a focused, standalone quality gate for PHP syntax, reference integrity, duplicated code, and comment policy. It works in any Composer project and does not require a framework or PHPForge.
 
 ## Requirements
 
@@ -27,23 +27,46 @@ The initializer creates `phpprobe.json` and, when requested, a GitHub Actions wo
 
 ```bash
 php vendor/bin/phpprobe syntax src tests
+php vendor/bin/phpprobe reference src tests
 php vendor/bin/phpprobe duplicates src
 php vendor/bin/phpprobe comments src tests
 php vendor/bin/phpprobe check src tests
 ```
 
-`check` runs syntax first. Duplicate and comment analysis only run when syntax succeeds, preventing parser noise and wasted work on invalid source.
+`check` runs syntax first. Reference, duplicate, and comment analysis only run when syntax succeeds, preventing parser noise and wasted work on invalid source.
 
 | Command                         | Purpose                                                                                           |
 | ------------------------------- | ------------------------------------------------------------------------------------------------- |
 | `syntax`                      | Lint PHP files, sequentially or with bounded parallel workers.                                    |
+| `reference`                   | Detect broken class-like references and Composer PSR-4 declaration/path mismatches.               |
 | `duplicates`                  | Detect exact, normalized, fuzzy, structural, and near-miss clones.                                |
 | `comments`                    | Enforce marker, commented-out-code, PHPDoc, custom-rule, and suppression policies.                |
-| `check`                       | Run syntax and the configured duplicate/comment profiles, then optionally write report artifacts. |
+| `check`                       | Run syntax and the configured reference/duplicate/comment profiles, then write optional artifacts. |
 | `config validate`             | Validate a configuration file without running a scan.                                             |
 | `init`                        | Create a minimal configuration and optional CI workflow.                                          |
 | `doctor`                      | Check the runtime, required extension, process support, and config.                               |
 | `presets` / `preset <name>` | List or inspect bundled presets.                                                                  |
+
+## Reference integrity
+
+The reference checker indexes project declarations, Composer classmaps and PSR-4
+mappings, installed dependencies, and native PHP class-like symbols. Confirmed
+broken references fail with exit code `1` and include ranked replacement
+suggestions. When no credible replacement exists, the finding is marked as a
+possible dead reference.
+
+```bash
+php vendor/bin/phpprobe reference src tests
+php vendor/bin/phpprobe reference --format=phpstan-json src
+```
+
+It checks class inheritance and implementation, traits, attributes, native
+types, object construction, `instanceof`, catches, and static references. It
+also compares declarations with the FQCN implied by the project's Composer
+PSR-4 mapping, which catches files moved without updating their namespace.
+Composer `ext-*` entries in both `require` and `require-dev` are also checked
+against the active PHP runtime. Missing requirements such as `ext-swoole` fail
+with a certain error and an install-or-enable suggestion.
 
 ## Duplicate detection
 
@@ -147,6 +170,15 @@ All supported settings can be overridden explicitly:
     "summary_json": "",
     "changed_only": false,
     "changed_base": ""
+  },
+  "reference": {
+    "paths": ["src", "tests"],
+    "exclude": ["vendor", "build"],
+    "format": "text",
+    "summary_json": "",
+    "changed_only": false,
+    "changed_base": "",
+    "composer": "composer.json"
   },
   "duplicates": {
     "paths": ["src"],
@@ -316,9 +348,11 @@ The checker gateway classes accept the same argument list as the CLI:
 ```php
 use Infocyph\PHPProbe\CommentChecker;
 use Infocyph\PHPProbe\DuplicateChecker;
+use Infocyph\PHPProbe\ReferenceChecker;
 use Infocyph\PHPProbe\SyntaxChecker;
 
 $syntaxExit = (new SyntaxChecker())->run(['--format=json', 'src']);
+$referenceExit = (new ReferenceChecker())->run(['--format=json', 'src']);
 $duplicateExit = (new DuplicateChecker())->run(['--mode=gate', 'src']);
 $commentExit = (new CommentChecker())->run(['--fail-on=warning', 'src']);
 ```

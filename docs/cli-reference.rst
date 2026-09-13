@@ -8,11 +8,11 @@ configuration, environment, process, or I/O errors.
 Checker common behavior
 -----------------------
 
-``syntax``, ``duplicates``, and ``comments`` accept positional file/directory
+``syntax``, ``reference``, ``duplicates``, and ``comments`` accept positional file/directory
 paths. CLI paths replace configured paths. Use ``--`` to treat every remaining
 argument as a path, including names beginning with ``-``.
 
-The three checkers share these options:
+The four checkers share these options:
 
 ``--config=FILE``
    Read settings from FILE. Without the option, PHPProbe uses
@@ -61,6 +61,31 @@ Additional options:
 
 ``--timeout=SECONDS``
    Per-file process timeout, 0.1–600. Default: 30.
+
+``reference``
+-------------
+
+.. code-block:: text
+
+   phpprobe reference [options] [paths...]
+
+The checker reports unresolved class-like references and declarations whose
+FQCN does not match the path implied by Composer's PSR-4 configuration. Every
+finding is error-level and makes the command return ``1``. Findings include
+ranked replacement candidates; no credible candidate is reported as a possible
+dead reference.
+
+Composer ``ext-*`` packages in ``require`` and ``require-dev`` are checked
+against the PHP runtime executing PHPProbe. Missing required extensions are
+certain errors and include an install-or-enable suggestion. Composer
+``config.platform`` simulation does not override the active-runtime check.
+
+``--composer=FILE``
+   Composer metadata used for project PSR-4 mappings and installed autoload
+   metadata. Default: ``composer.json``.
+
+With ``--changed-only``, PHPProbe reports references in changed files while
+still indexing the complete set of files from the configured scan paths.
 
 ``duplicates``
 --------------
@@ -158,7 +183,7 @@ groups. The selected policy and failure threshold remain global to the run.
    phpprobe check [options] [paths...]
 
 ``check`` starts each checker in an isolated subprocess. Syntax runs first;
-duplicates and comments run only after syntax succeeds. It accepts:
+reference, duplicates, and comments run only after syntax succeeds. It accepts:
 
 * ``--config``, ``--preset``, ``--format``, ``--summary-json``,
   ``--changed-only``, ``--changed-base``, and repeatable ``--exclude``;

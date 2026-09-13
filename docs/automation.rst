@@ -12,7 +12,7 @@ Combined reports
      --report-dir=build/phpprobe \
      src tests
 
-The report directory contains syntax, duplicate, and comment checker JSON,
+The report directory contains syntax, reference, duplicate, and comment checker JSON,
 a Markdown summary, SARIF, and a combined JSON summary. Report files are
 written atomically.
 

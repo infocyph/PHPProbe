@@ -18,6 +18,15 @@
     "parallel": 1,
     "timeout": 30
   },
+  "reference": {
+    "paths": [],
+    "exclude": [],
+    "format": "text",
+    "summary_json": "",
+    "changed_only": false,
+    "changed_base": "",
+    "composer": "composer.json"
+  },
   "duplicates": {
     "paths": [],
     "exclude": [],

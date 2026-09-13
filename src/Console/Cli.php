@@ -7,6 +7,7 @@ namespace Infocyph\PHPProbe\Console;
 use Infocyph\PHPProbe\CommentChecker;
 use Infocyph\PHPProbe\Config\PresetRepository;
 use Infocyph\PHPProbe\DuplicateChecker;
+use Infocyph\PHPProbe\ReferenceChecker;
 use Infocyph\PHPProbe\SyntaxChecker;
 
 final class Cli
@@ -20,6 +21,7 @@ final class Cli
 
         return match ($command) {
             'syntax' => new SyntaxChecker()->run(array_slice($argv, 2)),
+            'reference' => new ReferenceChecker()->run(array_slice($argv, 2)),
             'duplicates' => new DuplicateChecker()->run(array_slice($argv, 2)),
             'comments' => new CommentChecker()->run(array_slice($argv, 2)),
             'check' => new CheckCommand()->run(array_slice($argv, 2)),
@@ -35,7 +37,7 @@ final class Cli
 
     private function help(): int
     {
-        fwrite(STDOUT, 'Usage: phpprobe syntax|duplicates|comments|check [options] [paths...] | config validate | init [options] | doctor [options] | presets | preset <name>' . PHP_EOL);
+        fwrite(STDOUT, 'Usage: phpprobe syntax|reference|duplicates|comments|check [options] [paths...] | config validate | init [options] | doctor [options] | presets | preset <name>' . PHP_EOL);
 
         return 0;
     }

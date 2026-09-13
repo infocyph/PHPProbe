@@ -30,6 +30,7 @@ final class CheckCommand
             $results = ['syntax' => $this->runChecker('syntax', $options)];
 
             if ($results['syntax']['exit_code'] === 0) {
+                $results['reference'] = $this->runChecker('reference', $options);
                 $results['duplicates'] = $this->runChecker('duplicates', $options);
                 $results['comments'] = $this->runChecker('comments', $options);
             }
@@ -92,7 +93,7 @@ final class CheckCommand
             }
 
             $args = [...$args, ...$options['duplicateArgs']];
-        } elseif ($options['failOn'] !== '') {
+        } elseif ($checker === 'comments' && $options['failOn'] !== '') {
             $args[] = '--fail-on=' . $options['failOn'];
         }
 
@@ -124,7 +125,7 @@ final class CheckCommand
         fwrite(STDOUT, implode(PHP_EOL, [
             'Usage: phpprobe check [options] [paths...]',
             '',
-            'Runs syntax first, then duplicate and comment analysis only when syntax passes.',
+            'Runs syntax first, then reference, duplicate, and comment analysis when syntax passes.',
             '',
             'Options:',
             '  --config=FILE                    read PHPProbe checker settings',
@@ -384,21 +385,29 @@ final class CheckCommand
             }
         }
 
-        $comments = $results['comments']['payload']['findings'] ?? [];
+        foreach (['reference', 'comments'] as $checker) {
+            $items = $results[$checker]['payload']['findings'] ?? [];
 
-        if (is_array($comments)) {
-            foreach ($comments as $finding) {
+            if (!is_array($items)) {
+                continue;
+            }
+
+            foreach ($items as $finding) {
                 if (!is_array($finding)) {
                     continue;
                 }
 
                 $severity = is_string($finding['severity'] ?? null) ? strtolower($finding['severity']) : 'warning';
-                $level = in_array($severity, ['error', 'critical', 'high'], true) ? 'error' : ($severity === 'info' || $severity === 'low' ? 'note' : 'warning');
-                $rule = is_string($finding['type'] ?? null) ? $finding['type'] : 'comment_policy';
-                $message = is_string($finding['message'] ?? null) ? $finding['message'] : 'Comment policy finding.';
+                $level = $checker === 'reference' || in_array($severity, ['error', 'critical', 'high'], true)
+                    ? 'error'
+                    : ($severity === 'info' || $severity === 'low' ? 'note' : 'warning');
+                $type = is_string($finding['type'] ?? null) ? $finding['type'] : ($checker === 'reference' ? 'unknown_fqcn' : 'comment_policy');
+                $rule = $checker === 'reference' ? 'reference_' . $type : $type;
+                $message = is_string($finding['message'] ?? null) ? $finding['message'] : ucfirst($checker) . ' finding.';
+                $suggestion = $checker === 'reference' && is_string($finding['suggestion'] ?? null) ? $finding['suggestion'] : '';
                 $file = is_string($finding['file'] ?? null) ? $finding['file'] : '';
                 $line = is_int($finding['line'] ?? null) ? $finding['line'] : 1;
-                $findings[] = $this->sarifFinding($rule, $level, $message, $file, $line);
+                $findings[] = $this->sarifFinding($rule, $level, trim($message . ' ' . $suggestion), $file, $line);
             }
         }
 
@@ -437,7 +446,7 @@ final class CheckCommand
             'checker' => 'check',
             'exit_code' => $exitCode,
             'checks' => $checks,
-            'skipped' => isset($results['duplicates']) ? [] : ['duplicates', 'comments'],
+            'skipped' => isset($results['reference']) ? [] : ['reference', 'duplicates', 'comments'],
         ];
     }
 

@@ -63,7 +63,7 @@ final class ConfigValidator
     public function validate(array $config): array
     {
         $errors = [];
-        $this->unknownKeys('root', $config, ['preset', 'output', 'syntax', 'duplicates', 'comments', 'commented_out_code'], $errors);
+        $this->unknownKeys('root', $config, ['preset', 'output', 'syntax', 'reference', 'duplicates', 'comments', 'commented_out_code'], $errors);
 
         if (array_key_exists('preset', $config)) {
             $this->enum('root.preset', $config['preset'], PresetRepository::NAMES, $errors);
@@ -71,6 +71,7 @@ final class ConfigValidator
 
         $this->output($config['output'] ?? null, $errors);
         $this->checker('syntax', $config['syntax'] ?? null, ['parallel', 'timeout'], $errors);
+        $this->checker('reference', $config['reference'] ?? null, ['composer'], $errors);
         $this->checker('duplicates', $config['duplicates'] ?? null, [
             'mode',
             'normalize',
@@ -107,6 +108,7 @@ final class ConfigValidator
         ], $errors);
 
         $this->syntaxValues($config['syntax'] ?? null, $errors);
+        $this->referenceValues($config['reference'] ?? null, $errors);
         $this->duplicateValues($config['duplicates'] ?? null, $errors);
         $this->commentValues($config['comments'] ?? null, $errors);
         $this->commentedOutValues($config['commented_out_code'] ?? null, $errors);
@@ -607,6 +609,18 @@ final class ConfigValidator
         foreach ($colors as $name => $color) {
             $this->enum('output.colors.' . $name, $color, self::COLORS, $errors);
         }
+    }
+
+    /**
+     * @param list<string> $errors
+     */
+    private function referenceValues(mixed $value, array &$errors): void
+    {
+        if (!is_array($value) || array_is_list($value)) {
+            return;
+        }
+
+        $this->optionalString('reference.composer', $value['composer'] ?? null, $errors);
     }
 
     /**
