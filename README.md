@@ -1,5 +1,3 @@
- i
-
 # PHPProbe
 
 [![CI](https://github.com/infocyph/PHPProbe/actions/workflows/ci.yml/badge.svg)](https://github.com/infocyph/PHPProbe/actions/workflows/ci.yml)
@@ -35,17 +33,17 @@ php vendor/bin/phpprobe check src tests
 
 `check` runs syntax first. Reference, duplicate, and comment analysis only run when syntax succeeds, preventing parser noise and wasted work on invalid source.
 
-| Command                         | Purpose                                                                                           |
-| ------------------------------- | ------------------------------------------------------------------------------------------------- |
-| `syntax`                      | Lint PHP files, sequentially or with bounded parallel workers.                                    |
-| `reference`                   | Detect broken class-like references and Composer PSR-4 declaration/path mismatches.               |
-| `duplicates`                  | Detect exact, normalized, fuzzy, structural, and near-miss clones.                                |
-| `comments`                    | Enforce marker, commented-out-code, PHPDoc, custom-rule, and suppression policies.                |
+| Command                         | Purpose                                                                                            |
+| ------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `syntax`                      | Lint PHP files, sequentially or with bounded parallel workers.                                     |
+| `reference`                   | Detect broken class-like references and Composer PSR-4 declaration/path mismatches.                |
+| `duplicates`                  | Detect exact, normalized, fuzzy, structural, and near-miss clones.                                 |
+| `comments`                    | Enforce marker, commented-out-code, PHPDoc, custom-rule, and suppression policies.                 |
 | `check`                       | Run syntax and the configured reference/duplicate/comment profiles, then write optional artifacts. |
-| `config validate`             | Validate a configuration file without running a scan.                                             |
-| `init`                        | Create a minimal configuration and optional CI workflow.                                          |
-| `doctor`                      | Check the runtime, required extension, process support, and config.                               |
-| `presets` / `preset <name>` | List or inspect bundled presets.                                                                  |
+| `config validate`             | Validate a configuration file without running a scan.                                              |
+| `init`                        | Create a minimal configuration and optional CI workflow.                                           |
+| `doctor`                      | Check the runtime, required extension, process support, and config.                                |
+| `presets` / `preset <name>` | List or inspect bundled presets.                                                                   |
 
 ## Reference integrity
 
