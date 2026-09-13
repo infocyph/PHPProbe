@@ -1,12 +1,14 @@
 {
     "name": "infocyph/phpprobe",
-    "description": "Standalone PHP syntax, duplicate-code, and comment-policy checker.",
+    "description": "Standalone PHP syntax, reference-integrity, duplicate-code, and comment-policy checker.",
     "license": "MIT",
     "type": "library",
     "keywords": [
         "infocyph",
         "php",
         "syntax",
+        "references",
+        "fqcn",
         "duplicate-code",
         "copy-paste-detection",
         "comment-policy",
@@ -59,6 +61,7 @@
         "test:rector": "@php vendor/bin/rector process src --dry-run",
         "check": "@php bin/phpprobe check --config=tests/phpprobe.json src tests",
         "lint": "@php bin/phpprobe syntax --parallel=2 src tests",
+        "reference": "@php bin/phpprobe reference --config=resources/phpprobe.json src tests",
         "duplicates": "@php bin/phpprobe duplicates --config=resources/phpprobe.json src tests",
         "comments": "@php bin/phpprobe comments --config=resources/phpprobe.json src tests",
         "doctor": "@php bin/phpprobe doctor --config=resources/phpprobe.json",

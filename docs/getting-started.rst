@@ -24,12 +24,13 @@ First run
 .. code-block:: bash
 
    php vendor/bin/phpprobe syntax src tests
+   php vendor/bin/phpprobe reference src tests
    php vendor/bin/phpprobe duplicates src
    php vendor/bin/phpprobe comments src tests
    php vendor/bin/phpprobe check src tests
 
-The combined command runs syntax first and skips duplicate and comment analysis
-when any file is invalid.
+The combined command runs syntax first and skips reference, duplicate, and comment
+analysis when any file is invalid.
 
 Operational checks
 ------------------

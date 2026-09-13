@@ -130,6 +130,22 @@ final readonly class PhpProbeConfig
      * @param array<string, mixed> $options
      * @return array<string, mixed>
      */
+    public function applyReferenceOptions(array $options): array
+    {
+        $section = $this->section('reference');
+        $options = $this->applyCommon($options, $section);
+
+        if (is_string($section['composer'] ?? null) && $section['composer'] !== '') {
+            $options['composer'] = $section['composer'];
+        }
+
+        return $this->applyColors($options);
+    }
+
+    /**
+     * @param array<string, mixed> $options
+     * @return array<string, mixed>
+     */
     public function applySyntaxOptions(array $options): array
     {
         $section = $this->section('syntax');

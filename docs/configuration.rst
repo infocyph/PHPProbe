@@ -39,7 +39,7 @@ Root keys
 ``output``
    Global text colors shared by the checkers.
 
-``syntax``, ``duplicates``, ``comments``
+``syntax``, ``reference``, ``duplicates``, ``comments``
    Per-checker configuration objects.
 
 ``commented_out_code``
@@ -56,7 +56,7 @@ cyan, and cyan respectively.
 Common checker keys
 -------------------
 
-Every ``syntax``, ``duplicates``, and ``comments`` object supports:
+Every ``syntax``, ``reference``, ``duplicates``, and ``comments`` object supports:
 
 ``paths``
    List of files/directories to scan. Default: empty; supply paths in config or
@@ -89,6 +89,13 @@ Syntax keys
 
 ``timeout``
    Number from 0.1 through 600 seconds per PHP lint process. Default: 30.
+
+Reference keys
+--------------
+
+``composer``
+   Composer metadata file used to resolve the project's PSR-4 mappings and the
+   installed dependency autoloader. Default: ``composer.json``.
 
 Duplicate keys
 --------------

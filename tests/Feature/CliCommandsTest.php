@@ -2,14 +2,15 @@
 
 declare(strict_types=1);
 
-require_once __DIR__.DIRECTORY_SEPARATOR.'FixtureSupport.php';
+require_once __DIR__ . DIRECTORY_SEPARATOR . 'FixtureSupport.php';
 
 it('runs check command and writes report artifacts', function (): void {
     $root = makeCliFixture();
-    $src = $root.DIRECTORY_SEPARATOR.'src';
-    $reportDir = $root.DIRECTORY_SEPARATOR.'build'.DIRECTORY_SEPARATOR.'reports';
-    $summaryJson = $root.DIRECTORY_SEPARATOR.'build'.DIRECTORY_SEPARATOR.'check-summary.json';
+    $src = $root . DIRECTORY_SEPARATOR . 'src';
+    $reportDir = $root . DIRECTORY_SEPARATOR . 'build' . DIRECTORY_SEPARATOR . 'reports';
+    $summaryJson = $root . DIRECTORY_SEPARATOR . 'build' . DIRECTORY_SEPARATOR . 'check-summary.json';
     $syntaxJsonExists = false;
+    $referenceJsonExists = false;
     $duplicatesJsonExists = false;
     $commentsJsonExists = false;
     $sarifExists = false;
@@ -17,7 +18,7 @@ it('runs check command and writes report artifacts', function (): void {
     $summary = [];
 
     mkdir($src, 0755, true);
-    file_put_contents($src.DIRECTORY_SEPARATOR.'Example.php', <<<'PHP'
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'Example.php', <<<'PHP'
 <?php
 
 final class Example
@@ -28,17 +29,19 @@ PHP);
     try {
         $run = runCliCommand($root, ['check', '--report-dir=build/reports', '--summary-json=build/check-summary.json', 'src']);
         $summary = json_decode(file_get_contents($summaryJson) ?: 'null', true);
-        $syntaxJsonExists = is_file($reportDir.DIRECTORY_SEPARATOR.'syntax.json');
-        $duplicatesJsonExists = is_file($reportDir.DIRECTORY_SEPARATOR.'duplicates.json');
-        $commentsJsonExists = is_file($reportDir.DIRECTORY_SEPARATOR.'comments.json');
-        $sarifExists = is_file($reportDir.DIRECTORY_SEPARATOR.'report.sarif');
-        $markdownExists = is_file($reportDir.DIRECTORY_SEPARATOR.'summary.md');
+        $syntaxJsonExists = is_file($reportDir . DIRECTORY_SEPARATOR . 'syntax.json');
+        $referenceJsonExists = is_file($reportDir . DIRECTORY_SEPARATOR . 'reference.json');
+        $duplicatesJsonExists = is_file($reportDir . DIRECTORY_SEPARATOR . 'duplicates.json');
+        $commentsJsonExists = is_file($reportDir . DIRECTORY_SEPARATOR . 'comments.json');
+        $sarifExists = is_file($reportDir . DIRECTORY_SEPARATOR . 'report.sarif');
+        $markdownExists = is_file($reportDir . DIRECTORY_SEPARATOR . 'summary.md');
     } finally {
         removeCliFixture($root);
     }
 
     expect($run['exitCode'])->toBe(0)
         ->and($syntaxJsonExists)->toBeTrue()
+        ->and($referenceJsonExists)->toBeTrue()
         ->and($duplicatesJsonExists)->toBeTrue()
         ->and($commentsJsonExists)->toBeTrue()
         ->and($sarifExists)->toBeTrue()
@@ -49,10 +52,10 @@ PHP);
 
 it('includes comment findings in aggregate check results', function (): void {
     $root = makeCliFixture();
-    $src = $root.DIRECTORY_SEPARATOR.'src';
+    $src = $root . DIRECTORY_SEPARATOR . 'src';
 
     mkdir($src, 0755, true);
-    file_put_contents($src.DIRECTORY_SEPARATOR.'Commented.php', <<<'PHP'
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'Commented.php', <<<'PHP'
 <?php
 
 // SECURITY(auth): rotate the legacy key before deployment.
@@ -75,13 +78,40 @@ PHP);
         ->and(array_column($findings, 'type'))->toContain('comment_marker');
 });
 
-it('preserves the complete standard duplicate profile through check', function (): void {
+it('includes broken fqcn findings in aggregate check results', function (): void {
     $root = makeCliFixture();
-    $src = $root.DIRECTORY_SEPARATOR.'src';
+    $src = $root . DIRECTORY_SEPARATOR . 'src';
 
     mkdir($src, 0755, true);
-    file_put_contents($src.DIRECTORY_SEPARATOR.'NearMiss.php', cliNearMissFixture());
-    file_put_contents($root.DIRECTORY_SEPARATOR.'phpprobe.json', json_encode([
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'BrokenReference.php', <<<'PHP'
+<?php
+
+final class BrokenReference extends MissingBaseClass
+{
+}
+PHP);
+
+    try {
+        $run = runCliCommand($root, ['check', '--format=json', 'src']);
+    } finally {
+        removeCliFixture($root);
+    }
+
+    $payload = json_decode($run['stdout'], true);
+    $findings = $payload['results']['reference']['payload']['findings'] ?? [];
+
+    expect($run['exitCode'])->toBe(1)
+        ->and($payload['summary']['checks']['reference'])->toBe(1)
+        ->and(array_column($findings, 'type'))->toContain('unknown_fqcn');
+});
+
+it('preserves the complete standard duplicate profile through check', function (): void {
+    $root = makeCliFixture();
+    $src = $root . DIRECTORY_SEPARATOR . 'src';
+
+    mkdir($src, 0755, true);
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'NearMiss.php', cliNearMissFixture());
+    file_put_contents($root . DIRECTORY_SEPARATOR . 'phpprobe.json', json_encode([
         'preset' => 'standard',
         'duplicates' => [
             'min_tokens' => 999,
@@ -105,10 +135,10 @@ it('preserves the complete standard duplicate profile through check', function (
 
 it('aggregates failures in check command output', function (): void {
     $root = makeCliFixture();
-    $src = $root.DIRECTORY_SEPARATOR.'src';
+    $src = $root . DIRECTORY_SEPARATOR . 'src';
 
     mkdir($src, 0755, true);
-    file_put_contents($src.DIRECTORY_SEPARATOR.'Broken.php', <<<'PHP'
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'Broken.php', <<<'PHP'
 <?php
 
 final class Broken
@@ -130,10 +160,10 @@ PHP);
 
 it('supports github annotations in check command output', function (): void {
     $root = makeCliFixture();
-    $src = $root.DIRECTORY_SEPARATOR.'src';
+    $src = $root . DIRECTORY_SEPARATOR . 'src';
 
     mkdir($src, 0755, true);
-    file_put_contents($src.DIRECTORY_SEPARATOR.'Broken.php', <<<'PHP'
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'Broken.php', <<<'PHP'
 <?php
 
 final class Broken
@@ -152,7 +182,7 @@ PHP);
 
 it('validates config files through config validate command', function (): void {
     $root = makeCliFixture();
-    $bad = $root.DIRECTORY_SEPARATOR.'bad-phpprobe.json';
+    $bad = $root . DIRECTORY_SEPARATOR . 'bad-phpprobe.json';
     file_put_contents($bad, json_encode(['unknown' => true], JSON_PRETTY_PRINT));
 
     try {
@@ -170,7 +200,7 @@ it('validates config files through config validate command', function (): void {
 
 it('validates bounded syntax values in config validate command', function (): void {
     $root = makeCliFixture();
-    $bad = $root.DIRECTORY_SEPARATOR.'bad-enum-phpprobe.json';
+    $bad = $root . DIRECTORY_SEPARATOR . 'bad-enum-phpprobe.json';
     file_put_contents($bad, json_encode([
         'syntax' => [
             'format' => 'xml',
@@ -196,7 +226,7 @@ it('validates bounded syntax values in config validate command', function (): vo
 
 it('validates duplicate output style and score color values in config validate command', function (): void {
     $root = makeCliFixture();
-    $bad = $root.DIRECTORY_SEPARATOR.'bad-duplicate-output-phpprobe.json';
+    $bad = $root . DIRECTORY_SEPARATOR . 'bad-duplicate-output-phpprobe.json';
     file_put_contents($bad, json_encode([
         'duplicates' => [
             'output' => [
@@ -224,7 +254,7 @@ it('validates duplicate output style and score color values in config validate c
 
 it('validates global output colors in config validate command', function (): void {
     $root = makeCliFixture();
-    $bad = $root.DIRECTORY_SEPARATOR.'bad-output-colors-phpprobe.json';
+    $bad = $root . DIRECTORY_SEPARATOR . 'bad-output-colors-phpprobe.json';
     file_put_contents($bad, json_encode([
         'output' => [
             'colors' => [
@@ -250,8 +280,8 @@ it('validates global output colors in config validate command', function (): voi
 
 it('initializes phpprobe config and ci workflow', function (): void {
     $root = makeCliFixture();
-    $config = $root.DIRECTORY_SEPARATOR.'phpprobe.json';
-    $workflow = $root.DIRECTORY_SEPARATOR.'.github'.DIRECTORY_SEPARATOR.'workflows'.DIRECTORY_SEPARATOR.'phpprobe.yml';
+    $config = $root . DIRECTORY_SEPARATOR . 'phpprobe.json';
+    $workflow = $root . DIRECTORY_SEPARATOR . '.github' . DIRECTORY_SEPARATOR . 'workflows' . DIRECTORY_SEPARATOR . 'phpprobe.yml';
 
     try {
         $run = runCliCommand($root, ['init', '--preset=ci', '--path=phpprobe.json', '--with-ci']);
@@ -267,12 +297,12 @@ it('initializes phpprobe config and ci workflow', function (): void {
         ->and($workflowContent)->toContain('php vendor/bin/phpprobe check --preset=ci');
 });
 
-it('skips duplicate analysis when syntax fails', function (): void {
+it('skips parser-based analysis when syntax fails', function (): void {
     $root = makeCliFixture();
-    $src = $root.DIRECTORY_SEPARATOR.'src';
+    $src = $root . DIRECTORY_SEPARATOR . 'src';
 
     mkdir($src, 0755, true);
-    file_put_contents($src.DIRECTORY_SEPARATOR.'Broken.php', <<<'PHP'
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'Broken.php', <<<'PHP'
 <?php
 
 final class Broken
@@ -288,7 +318,8 @@ PHP);
     $payload = json_decode($run['stdout'], true);
 
     expect($run['exitCode'])->toBe(1)
-        ->and($payload['summary']['skipped'])->toBe(['duplicates', 'comments'])
+        ->and($payload['summary']['skipped'])->toBe(['reference', 'duplicates', 'comments'])
+        ->and($payload['results'])->not()->toHaveKey('reference')
         ->and($payload['results'])->not()->toHaveKey('duplicates')
         ->and($payload['results'])->not()->toHaveKey('comments');
 });
@@ -318,7 +349,7 @@ it('runs doctor command in json mode', function (): void {
     $payload = json_decode($run['stdout'], true);
     $phpCheck = array_values(array_filter(
         $payload['checks'] ?? [],
-        static fn (mixed $check): bool => is_array($check) && ($check['name'] ?? null) === 'php_version',
+        static fn(mixed $check): bool => is_array($check) && ($check['name'] ?? null) === 'php_version',
     ))[0] ?? null;
 
     expect($run['exitCode'])->toBeIn([0, 1])
@@ -368,18 +399,18 @@ PHP;
 }
 
 /**
- * @param  list<string>  $args
+ * @param list<string> $args
  * @return array{exitCode:int,stdout:string,stderr:string}
  */
 function runCliCommand(string $cwd, array $args): array
 {
-    $binary = dirname(__DIR__, 2).DIRECTORY_SEPARATOR.'bin'.DIRECTORY_SEPARATOR.'phpprobe';
+    $binary = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'bin' . DIRECTORY_SEPARATOR . 'phpprobe';
     $process = proc_open([PHP_BINARY, $binary, ...$args], [
         1 => ['pipe', 'w'],
         2 => ['pipe', 'w'],
     ], $pipes, $cwd);
 
-    if (! is_resource($process)) {
+    if (!is_resource($process)) {
         throw new RuntimeException('Could not start CLI command.');
     }
 

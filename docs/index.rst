@@ -1,7 +1,7 @@
 PHPProbe
 ========
 
-PHPProbe is a framework-independent PHP syntax, duplicate-code, and comment-policy
+PHPProbe is a framework-independent PHP syntax, reference-integrity, duplicate-code, and comment-policy
 quality gate. It is designed for local development, continuous integration, and
 direct use by other Composer packages.
 
@@ -11,6 +11,7 @@ direct use by other Composer packages.
 
    getting-started
    syntax
+   reference
    duplicates
    comments
    configuration
@@ -20,7 +21,8 @@ direct use by other Composer packages.
 Design guarantees
 -----------------
 
-* Invalid source is rejected before duplicate and comment analysis begins.
+* Invalid source is rejected before reference, duplicate, and comment analysis begins.
+* Confirmed unresolved class-like references and PSR-4 mismatches fail closed.
 * Invalid configuration, missing paths, and unsafe limits fail closed.
 * Gate-mode duplicate analysis avoids constructing an AST.
 * Structural comparisons have an explicit upper bound.
