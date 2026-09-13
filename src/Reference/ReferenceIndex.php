@@ -147,12 +147,7 @@ final class ReferenceIndex
             return true;
         }
 
-        if (
-            class_exists($fqcn, false)
-            || interface_exists($fqcn, false)
-            || trait_exists($fqcn, false)
-            || (function_exists('enum_exists') && enum_exists($fqcn, false))
-        ) {
+        if ($this->runtimeKnows($fqcn)) {
             return true;
         }
 
@@ -376,6 +371,18 @@ final class ReferenceIndex
         }
 
         return 1;
+    }
+
+    private function runtimeKnows(string $fqcn): bool
+    {
+        try {
+            return class_exists($fqcn)
+                || interface_exists($fqcn)
+                || trait_exists($fqcn)
+                || (function_exists('enum_exists') && enum_exists($fqcn));
+        } catch (\Throwable) {
+            return false;
+        }
     }
 
     private function shortName(string $fqcn): string

@@ -142,6 +142,58 @@ PHP);
         ->and($payload['references_checked'])->toBe(3);
 });
 
+it('resolves symbols through registered runtime autoloaders', function (): void {
+    $root = makeReferenceCheckerFixture();
+    $composer = $root . DIRECTORY_SEPARATOR . 'composer.json';
+    $symbolFile = $root . DIRECTORY_SEPARATOR . 'LazyDependencySymbol.php';
+    file_put_contents($composer, '{}');
+    file_put_contents($symbolFile, <<<'PHP'
+<?php
+
+namespace PHPProbeFixture;
+
+final class LazyDependencySymbol {}
+PHP);
+    $loader = static function (string $class) use ($symbolFile): void {
+        if ($class === 'PHPProbeFixture\\LazyDependencySymbol') {
+            require $symbolFile;
+        }
+    };
+    spl_autoload_register($loader);
+
+    try {
+        $index = new Infocyph\PHPProbe\Reference\ReferenceIndex($composer);
+
+        expect(class_exists('PHPProbeFixture\\LazyDependencySymbol', false))->toBeFalse()
+            ->and($index->isKnown('PHPProbeFixture\\LazyDependencySymbol'))->toBeTrue()
+            ->and(class_exists('PHPProbeFixture\\LazyDependencySymbol', false))->toBeTrue();
+    } finally {
+        spl_autoload_unregister($loader);
+        removeProbeFixture($root);
+    }
+});
+
+it('treats an autoloader failure as an unresolved symbol', function (): void {
+    $root = makeReferenceCheckerFixture();
+    $composer = $root . DIRECTORY_SEPARATOR . 'composer.json';
+    file_put_contents($composer, '{}');
+    $loader = static function (string $class): void {
+        if ($class === 'PHPProbeFixture\\BrokenAutoloaderSymbol') {
+            throw new RuntimeException('Autoloader failed.');
+        }
+    };
+    spl_autoload_register($loader, true, true);
+
+    try {
+        $index = new Infocyph\PHPProbe\Reference\ReferenceIndex($composer);
+
+        expect($index->isKnown('PHPProbeFixture\\BrokenAutoloaderSymbol'))->toBeFalse();
+    } finally {
+        spl_autoload_unregister($loader);
+        removeProbeFixture($root);
+    }
+});
+
 it('reports composer extensions missing from the active php runtime', function (): void {
     $root = makeReferenceCheckerFixture();
     mkdir($root . DIRECTORY_SEPARATOR . 'src', 0755, true);

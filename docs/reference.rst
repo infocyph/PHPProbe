@@ -10,7 +10,9 @@ class-like PHP names:
 
 It indexes named classes, interfaces, traits, and enums in the scan paths. It
 also reads the project's Composer PSR-4 mappings, Composer's installed
-classmap/PSR-4 metadata, and PHP's native class-like symbols.
+classmap/PSR-4 metadata, registered runtime autoloaders, and PHP's native
+class-like symbols. This includes lazy symbols exposed by Composer
+``autoload.files`` bootstraps.
 
 Required PHP extensions
 -----------------------
