@@ -1,9 +1,10 @@
 PHPProbe
 ========
 
-PHPProbe is a framework-independent PHP syntax, reference-integrity, duplicate-code, and comment-policy
-quality gate. It is designed for local development, continuous integration, and
-direct use by other Composer packages.
+PHPProbe is a framework-independent PHP syntax, reference-integrity,
+duplicate-code, comment-policy, and deterministic source-graph tool. It is
+designed for local development, continuous integration, and direct use by
+other Composer packages.
 
 .. toctree::
    :maxdepth: 2
@@ -12,6 +13,7 @@ direct use by other Composer packages.
    getting-started
    syntax
    reference
+   graph
    duplicates
    comments
    configuration

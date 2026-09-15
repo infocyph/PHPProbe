@@ -130,6 +130,22 @@ final readonly class PhpProbeConfig
      * @param array<string, mixed> $options
      * @return array<string, mixed>
      */
+    public function applyGraphOptions(array $options): array
+    {
+        $section = $this->section('graph');
+        $options = $this->applyCommon($options, $section);
+
+        return $this->applyMappedOptions($options, $section, [
+            'output' => 'output',
+            'pretty' => 'pretty',
+            'root' => 'root',
+        ]);
+    }
+
+    /**
+     * @param array<string, mixed> $options
+     * @return array<string, mixed>
+     */
     public function applyReferenceOptions(array $options): array
     {
         $section = $this->section('reference');

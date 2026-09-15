@@ -87,6 +87,36 @@ certain errors and include an install-or-enable suggestion. Composer
 With ``--changed-only``, PHPProbe reports references in changed files while
 still indexing the complete set of files from the configured scan paths.
 
+``graph``
+---------
+
+.. code-block:: text
+
+   phpprobe graph [options] [paths...]
+
+Extract a deterministic PHP source graph as JSON. The command accepts
+``--config``, ``--preset``, repeatable ``--exclude``, ``--changed-only``, and
+``--changed-base`` together with:
+
+``--root=DIR``
+   Root used to make every source path portable. Inputs outside this directory
+   are rejected. Default: the working directory.
+
+``--output=FILE``
+   Atomically write JSON to FILE instead of standard output.
+
+``--pretty``
+   Pretty-print the JSON document.
+
+``--json``
+   Accepted as an explicit no-op because JSON is the command's only output
+   contract.
+
+The schema is named ``phpprobe.code-graph`` and versioned independently from
+the package. Nodes distinguish declarations from external targets with the
+``defined`` field. Every edge is marked ``certainty=extracted`` and carries a
+source file, line, relation, and resolution.
+
 ``duplicates``
 --------------
 

@@ -63,7 +63,7 @@ final class ConfigValidator
     public function validate(array $config): array
     {
         $errors = [];
-        $this->unknownKeys('root', $config, ['preset', 'output', 'syntax', 'reference', 'duplicates', 'comments', 'commented_out_code'], $errors);
+        $this->unknownKeys('root', $config, ['preset', 'output', 'syntax', 'reference', 'graph', 'duplicates', 'comments', 'commented_out_code'], $errors);
 
         if (array_key_exists('preset', $config)) {
             $this->enum('root.preset', $config['preset'], PresetRepository::NAMES, $errors);
@@ -72,6 +72,7 @@ final class ConfigValidator
         $this->output($config['output'] ?? null, $errors);
         $this->checker('syntax', $config['syntax'] ?? null, ['parallel', 'timeout'], $errors);
         $this->checker('reference', $config['reference'] ?? null, ['composer'], $errors);
+        $this->graph($config['graph'] ?? null, $errors);
         $this->checker('duplicates', $config['duplicates'] ?? null, [
             'mode',
             'normalize',
@@ -109,6 +110,7 @@ final class ConfigValidator
 
         $this->syntaxValues($config['syntax'] ?? null, $errors);
         $this->referenceValues($config['reference'] ?? null, $errors);
+        $this->graphValues($config['graph'] ?? null, $errors);
         $this->duplicateValues($config['duplicates'] ?? null, $errors);
         $this->commentValues($config['comments'] ?? null, $errors);
         $this->commentedOutValues($config['commented_out_code'] ?? null, $errors);
@@ -496,6 +498,42 @@ final class ConfigValidator
         if (!is_string($value) || !in_array(strtolower(trim($value)), $allowed, true)) {
             $errors[] = sprintf('%s must be one of: %s.', $path, implode(', ', $allowed));
         }
+    }
+
+    /**
+     * @param list<string> $errors
+     */
+    private function graph(mixed $value, array &$errors): void
+    {
+        if ($value === null) {
+            return;
+        }
+
+        if (!is_array($value) || array_is_list($value)) {
+            $errors[] = 'graph must be a JSON object.';
+
+            return;
+        }
+
+        $this->unknownKeys('graph', $value, ['paths', 'exclude', 'changed_only', 'changed_base', 'output', 'pretty', 'root'], $errors);
+        $this->stringList('graph.paths', $value['paths'] ?? null, $errors);
+        $this->stringList('graph.exclude', $value['exclude'] ?? null, $errors);
+        $this->optionalString('graph.changed_base', $value['changed_base'] ?? null, $errors);
+        $this->optionalBool('graph.changed_only', $value['changed_only'] ?? null, $errors);
+    }
+
+    /**
+     * @param list<string> $errors
+     */
+    private function graphValues(mixed $value, array &$errors): void
+    {
+        if (!is_array($value) || array_is_list($value)) {
+            return;
+        }
+
+        $this->optionalString('graph.output', $value['output'] ?? null, $errors);
+        $this->optionalString('graph.root', $value['root'] ?? null, $errors);
+        $this->optionalBool('graph.pretty', $value['pretty'] ?? null, $errors);
     }
 
     /**

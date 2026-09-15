@@ -27,6 +27,7 @@ First run
    php vendor/bin/phpprobe reference src tests
    php vendor/bin/phpprobe duplicates src
    php vendor/bin/phpprobe comments src tests
+   php vendor/bin/phpprobe graph --output=build/code-graph.json src tests
    php vendor/bin/phpprobe check src tests
 
 The combined command runs syntax first and skips reference, duplicate, and comment

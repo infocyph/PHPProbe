@@ -27,6 +27,15 @@
     "changed_base": "",
     "composer": "composer.json"
   },
+  "graph": {
+    "paths": [],
+    "exclude": [],
+    "changed_only": false,
+    "changed_base": "",
+    "output": "",
+    "pretty": false,
+    "root": ""
+  },
   "duplicates": {
     "paths": [],
     "exclude": [],

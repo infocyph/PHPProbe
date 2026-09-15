@@ -3,7 +3,7 @@
 [![CI](https://github.com/infocyph/PHPProbe/actions/workflows/ci.yml/badge.svg)](https://github.com/infocyph/PHPProbe/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-PHPProbe is a focused, standalone quality gate for PHP syntax, reference integrity, duplicated code, and comment policy. It works in any Composer project and does not require a framework or PHPForge.
+PHPProbe is a focused, standalone quality gate and deterministic code-intelligence library for PHP syntax, reference integrity, duplicated code, comment policy, and source graphs. It works in any Composer project and does not require a framework or PHPForge.
 
 ## Requirements
 
@@ -28,6 +28,7 @@ php vendor/bin/phpprobe syntax src tests
 php vendor/bin/phpprobe reference src tests
 php vendor/bin/phpprobe duplicates src
 php vendor/bin/phpprobe comments src tests
+php vendor/bin/phpprobe graph --pretty --output=build/code-graph.json src tests
 php vendor/bin/phpprobe check src tests
 ```
 
@@ -39,6 +40,7 @@ php vendor/bin/phpprobe check src tests
 | `reference`                   | Detect broken class-like references and Composer PSR-4 declaration/path mismatches.                |
 | `duplicates`                  | Detect exact, normalized, fuzzy, structural, and near-miss clones.                                 |
 | `comments`                    | Enforce marker, commented-out-code, PHPDoc, custom-rule, and suppression policies.                 |
+| `graph`                       | Extract a deterministic JSON graph of PHP declarations, calls, imports, and relationships.         |
 | `check`                       | Run syntax and the configured reference/duplicate/comment profiles, then write optional artifacts. |
 | `config validate`             | Validate a configuration file without running a scan.                                              |
 | `init`                        | Create a minimal configuration and optional CI workflow.                                           |
@@ -66,6 +68,26 @@ PSR-4 mapping, which catches files moved without updating their namespace.
 Composer `ext-*` entries in both `require` and `require-dev` are also checked
 against the active PHP runtime. Missing requirements such as `ext-swoole` fail
 with a certain error and an install-or-enable suggestion.
+
+## Code graph extraction
+
+The `graph` command emits the stable `phpprobe.code-graph` JSON contract. It
+contains file, namespace, class-like, method, function, property, constant,
+enum-case, closure, and arrow-function nodes. Extracted edges cover containment,
+imports, inheritance, interface implementation, trait use, type and attribute
+references, construction, and calls.
+
+```bash
+php vendor/bin/phpprobe graph --pretty --output=build/code-graph.json src tests
+```
+
+Every declaration and edge includes a repository-relative file and line.
+Referenced symbols outside the scanned source remain nodes with `defined=false`.
+Dynamic method calls are retained with `resolution=dynamic`; namespaced function
+fallbacks that cannot be proven are marked `resolution=namespace_fallback`.
+PHPProbe never uses an LLM for extraction, so graph identity and ordering remain
+reproducible. Consumers such as PHPForge may add summaries or inferred
+relationships separately without changing extracted facts.
 
 ## Duplicate detection
 
@@ -347,6 +369,7 @@ The checker gateway classes accept the same argument list as the CLI:
 ```php
 use Infocyph\PHPProbe\CommentChecker;
 use Infocyph\PHPProbe\DuplicateChecker;
+use Infocyph\PHPProbe\Graph\CodeGraphExtractor;
 use Infocyph\PHPProbe\ReferenceChecker;
 use Infocyph\PHPProbe\SyntaxChecker;
 
@@ -354,6 +377,7 @@ $syntaxExit = (new SyntaxChecker())->run(['--format=json', 'src']);
 $referenceExit = (new ReferenceChecker())->run(['--format=json', 'src']);
 $duplicateExit = (new DuplicateChecker())->run(['--mode=gate', 'src']);
 $commentExit = (new CommentChecker())->run(['--fail-on=warning', 'src']);
+$graph = (new CodeGraphExtractor())->extract(['/project/src/Service.php'], '/project');
 ```
 
 Output is written to standard output/error and the returned integer is the CLI-compatible exit code.

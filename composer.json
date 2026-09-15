@@ -1,6 +1,6 @@
 {
     "name": "infocyph/phpprobe",
-    "description": "Standalone PHP syntax, reference-integrity, duplicate-code, and comment-policy checker.",
+    "description": "Standalone PHP quality gates and deterministic source-graph extraction.",
     "license": "MIT",
     "type": "library",
     "keywords": [
@@ -12,7 +12,9 @@
         "duplicate-code",
         "copy-paste-detection",
         "comment-policy",
-        "commented-out-code"
+        "commented-out-code",
+        "code-graph",
+        "code-intelligence"
     ],
     "authors": [
         {
