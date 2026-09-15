@@ -39,7 +39,7 @@ Root keys
 ``output``
    Global text colors shared by the checkers.
 
-``syntax``, ``reference``, ``duplicates``, ``comments``
+``syntax``, ``reference``, ``graph``, ``duplicates``, ``comments``
    Per-checker configuration objects.
 
 ``commented_out_code``
@@ -96,6 +96,23 @@ Reference keys
 ``composer``
    Composer metadata file used to resolve the project's PSR-4 mappings and the
    installed dependency autoloader. Default: ``composer.json``.
+
+Graph keys
+----------
+
+``graph`` supports ``paths``, ``exclude``, ``changed_only``, and
+``changed_base`` with the same meanings as the checker keys. It additionally
+supports:
+
+``root``
+   Directory used to produce repository-relative paths. Empty uses the working
+   directory.
+
+``output``
+   JSON output path. Empty writes to standard output.
+
+``pretty``
+   Boolean JSON pretty-printing toggle. Default: false.
 
 Duplicate keys
 --------------
