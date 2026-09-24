@@ -82,7 +82,7 @@ final class ConfigValidator
             'min_tokens',
             'min_statements',
             'min_similarity',
-            'max_near_miss_comparisons',
+            'max_clone_groups',
             'baseline',
             'write_baseline',
             'ignore_fingerprints',
@@ -457,14 +457,14 @@ final class ConfigValidator
             $this->optionalBool('duplicates.' . $key, $value[$key] ?? null, $errors);
         }
 
-        foreach (['min_lines', 'min_tokens', 'min_statements', 'max_near_miss_comparisons'] as $key) {
+        foreach (['min_lines', 'min_tokens', 'min_statements', 'max_clone_groups'] as $key) {
             if (array_key_exists($key, $value)) {
                 $this->integer('duplicates.' . $key, $value[$key], 1, $errors);
             }
         }
 
-        if (is_int($value['max_near_miss_comparisons'] ?? null) && $value['max_near_miss_comparisons'] > 10_000_000) {
-            $errors[] = 'duplicates.max_near_miss_comparisons must not exceed 10000000.';
+        if (is_int($value['max_clone_groups'] ?? null) && $value['max_clone_groups'] > 100_000) {
+            $errors[] = 'duplicates.max_clone_groups must not exceed 100000.';
         }
 
         if (array_key_exists('min_similarity', $value)) {

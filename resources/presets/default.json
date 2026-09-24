@@ -51,7 +51,7 @@
     "min_tokens": 70,
     "min_statements": 4,
     "min_similarity": 0.85,
-    "max_near_miss_comparisons": 100000,
+    "max_clone_groups": 100000,
     "baseline": "",
     "write_baseline": "",
     "ignore_fingerprints": [],

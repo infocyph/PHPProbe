@@ -103,7 +103,7 @@ php vendor/bin/phpprobe duplicates \
   --near-miss \
   --min-statements=4 \
   --min-similarity=0.88 \
-  --max-near-miss-comparisons=100000 \
+  --max-clone-groups=100000 \
   src
 ```
 
@@ -114,7 +114,7 @@ Normalization levels:
 - default normalization replaces variables and literal values;
 - `--exact` compares the original token values;
 - `--fuzzy` additionally normalizes identifiers and calls;
-- `--near-miss` compares related statement and AST shapes within a hard comparison budget.
+- `--near-miss` compares related statement and AST shapes; duplicate output is capped independently by `--max-clone-groups`.
 
 Baselines suppress known clone groups while preserving stable fingerprints across line movement:
 
@@ -216,7 +216,7 @@ All supported settings can be overridden explicitly:
     "min_tokens": 90,
     "min_statements": 4,
     "min_similarity": 0.85,
-    "max_near_miss_comparisons": 100000,
+    "max_clone_groups": 100000,
     "baseline": "",
     "write_baseline": "",
     "ignore_fingerprints": [],

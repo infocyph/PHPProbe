@@ -49,7 +49,7 @@ detector matrix is active.
      --mode=audit \
      --min-statements=4 \
      --min-similarity=0.88 \
-     --max-near-miss-comparisons=100000 \
+     --max-clone-groups=100000 \
      src
 
 Normalization
@@ -92,9 +92,11 @@ near-miss candidates.
 
 Near-miss similarity combines statement-sequence similarity at 72% and AST
 shape similarity at 28%. ``min_similarity`` accepts 0–1, or 0–100 on the CLI.
-``max_near_miss_comparisons`` is a hard operational ceiling. Exceeding it is an
-error with guidance to narrow discovery, raise similarity, or explicitly raise
-the limit; the accepted maximum is 10,000,000.
+``max_clone_groups`` caps each run at the first matching clone groups discovered
+by the deterministic scan. The default and maximum are 100,000. After reported
+duplicates are fixed, the next run starts from the beginning and naturally fills
+the cap with later remaining groups. No continuation cursor or comparison budget
+is used.
 
 Failure policy
 --------------
@@ -134,7 +136,8 @@ Output contract
 ---------------
 
 JSON reports include file/line totals, unique duplicated lines and percentage,
-known/new clone counts, cache status, input-group summaries, and clone groups.
+known/new clone counts, cache status, input-group summaries, and up to the
+configured clone-group cap.
 Each input group reports its file, clone-group, and occurrence counts. Every clone exposes a
 stable fingerprint, detector source, score, similarity, token/line/statement
 counts, block type, and sorted occurrences with file, range, and context.

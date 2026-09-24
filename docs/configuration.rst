@@ -144,8 +144,10 @@ Duplicate keys
    Number from 0 through 1 in JSON. Default: 0.85. The equivalent CLI option
    additionally accepts percentages from 0 through 100.
 
-``max_near_miss_comparisons``
-   Integer from 1 through 10,000,000. Default: 100,000.
+``max_clone_groups``
+   Integer from 1 through 100,000. Default: 100,000. Limits the clone groups
+   returned by one run; reruns always start fresh and expose later remaining
+   groups as earlier duplicates are fixed.
 
 ``baseline`` / ``write_baseline``
    Input/output baseline file paths. Empty disables the operation.
