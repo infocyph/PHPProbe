@@ -719,6 +719,41 @@ final class DuplicateChecker
     }
 
     /**
+     * @param list<CloneGroup> $clones
+     * @return list<CloneGroup>
+     */
+    private function sortClonesForOutput(array $clones): array
+    {
+        usort($clones, static function (array $left, array $right): int {
+            $occurrences = count($right['occurrences']) <=> count($left['occurrences']);
+
+            if ($occurrences !== 0) {
+                return $occurrences;
+            }
+
+            $score = $right['score'] <=> $left['score'];
+
+            if ($score !== 0) {
+                return $score;
+            }
+
+            $lines = $right['lines'] <=> $left['lines'];
+
+            if ($lines !== 0) {
+                return $lines;
+            }
+
+            $similarity = $right['similarity'] <=> $left['similarity'];
+
+            return $similarity !== 0
+                ? $similarity
+                : strcmp($left['fingerprint'], $right['fingerprint']);
+        });
+
+        return $clones;
+    }
+
+    /**
      * @param DuplicateResult $result
      * @param DuplicateOptions $options
      */
@@ -804,41 +839,6 @@ final class DuplicateChecker
         $result['known_clones'] = count($known);
 
         return $result;
-    }
-
-    /**
-     * @param list<CloneGroup> $clones
-     * @return list<CloneGroup>
-     */
-    private function sortClonesForOutput(array $clones): array
-    {
-        usort($clones, static function (array $left, array $right): int {
-            $occurrences = count($right['occurrences']) <=> count($left['occurrences']);
-
-            if ($occurrences !== 0) {
-                return $occurrences;
-            }
-
-            $score = $right['score'] <=> $left['score'];
-
-            if ($score !== 0) {
-                return $score;
-            }
-
-            $lines = $right['lines'] <=> $left['lines'];
-
-            if ($lines !== 0) {
-                return $lines;
-            }
-
-            $similarity = $right['similarity'] <=> $left['similarity'];
-
-            return $similarity !== 0
-                ? $similarity
-                : strcmp($left['fingerprint'], $right['fingerprint']);
-        });
-
-        return $clones;
     }
 
     /**
