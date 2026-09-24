@@ -8,7 +8,7 @@ use Infocyph\PHPProbe\Util\ProjectPath;
 
 final class DuplicateDetectionEngine
 {
-    public const int CACHE_VERSION = 8;
+    public const int CACHE_VERSION = 9;
 
     private const int ROLLING_BASE = 257;
 
@@ -16,7 +16,7 @@ final class DuplicateDetectionEngine
 
     /**
      * @param list<string> $files
-     * @param array{mode:string,normalize:bool,fuzzy:bool,nearMiss:bool,minLines:int,minTokens:int,minStatements:int,minSimilarity:float,maxNearMissComparisons:int} $options
+     * @param array{mode:string,normalize:bool,fuzzy:bool,nearMiss:bool,minLines:int,minTokens:int,minStatements:int,minSimilarity:float,maxCloneGroups:int} $options
      * @return array{files:int,total_lines:int,duplicated_lines:int,duplicate_percentage:float,known_clones:int,new_clones:int,clones:list<array{fingerprint:string,source:string,score:float,similarity:float,tokens:int,lines:int,statements:int,block_type:string,occurrences:list<array{file:string,start_line:int,end_line:int,lines:int,context:string}>}>}
      */
     public function analyze(array $files, array $options): array
@@ -24,11 +24,19 @@ final class DuplicateDetectionEngine
         $includeAst = $options['mode'] === 'audit' || $options['nearMiss'];
         $index = new DuplicateCodeIndex()->build($files, $options, $includeAst);
         $reducer = new DuplicateCloneReducer();
-        $clones = [
-            ...$this->tokenClones($index['streams'], $index['blocks'], $options, $reducer),
-            ...$this->statementClones($index['blocks'], $options, $reducer),
-            ...$this->nearMissClones($index['blocks'], $options, $reducer),
-        ];
+        $remaining = $options['maxCloneGroups'];
+        $clones = $this->tokenClones($index['streams'], $index['blocks'], $options, $reducer, $remaining);
+        $remaining -= count($clones);
+
+        if ($remaining > 0) {
+            $statementClones = $this->statementClones($index['blocks'], $options, $reducer, $remaining);
+            $clones = [...$clones, ...$statementClones];
+            $remaining -= count($statementClones);
+        }
+
+        if ($remaining > 0) {
+            $clones = [...$clones, ...$this->nearMissClones($index['blocks'], $options, $reducer, $remaining)];
+        }
 
         $clones = $reducer->rank($reducer->pruneContained($reducer->group($clones)));
         $duplicatedLines = $reducer->uniqueDuplicatedLines($clones);
@@ -349,16 +357,16 @@ final class DuplicateDetectionEngine
 
     /**
      * @param array<string, list<array{id:string,type:string,file:string,start_line:int,end_line:int,token_start:int,token_end:int,statement_hashes:list<string>,shape:list<string>}>> $blocks
-     * @param array{nearMiss:bool,minLines:int,minStatements:int,minSimilarity:float,maxNearMissComparisons:int} $options
+     * @param array{nearMiss:bool,minLines:int,minStatements:int,minSimilarity:float,maxCloneGroups:int} $options
      * @return list<array{fingerprint:string,source:string,score:float,similarity:float,tokens:int,lines:int,statements:int,block_type:string,occurrences:list<array{file:string,start_line:int,end_line:int,lines:int,context:string}>}>
      */
-    private function nearMissClones(array $blocks, array $options, DuplicateCloneReducer $reducer): array
+    private function nearMissClones(array $blocks, array $options, DuplicateCloneReducer $reducer, int $limit): array
     {
-        if (!$options['nearMiss']) {
+        if (!$options['nearMiss'] || $limit < 1) {
             return [];
         }
 
-        return $this->nearMissPairs($this->flatBlocks($blocks, $options), $options, $reducer);
+        return $this->nearMissPairs($this->flatBlocks($blocks, $options), $options, $reducer, $limit);
     }
 
     /**
@@ -378,14 +386,13 @@ final class DuplicateDetectionEngine
 
     /**
      * @param list<array{id:string,type:string,file:string,start_line:int,end_line:int,token_start:int,token_end:int,statement_hashes:list<string>,shape:list<string>}> $blocks
-     * @param array{minSimilarity:float,maxNearMissComparisons:int} $options
+     * @param array{minSimilarity:float,maxCloneGroups:int} $options
      * @return list<array{fingerprint:string,source:string,score:float,similarity:float,tokens:int,lines:int,statements:int,block_type:string,occurrences:list<array{file:string,start_line:int,end_line:int,lines:int,context:string}>}>
      */
-    private function nearMissPairs(array $blocks, array $options, DuplicateCloneReducer $reducer): array
+    private function nearMissPairs(array $blocks, array $options, DuplicateCloneReducer $reducer, int $limit): array
     {
         $clones = [];
         $grouped = [];
-        $comparisons = 0;
 
         foreach ($blocks as $block) {
             $grouped[$block['type']][] = $block;
@@ -400,19 +407,14 @@ final class DuplicateDetectionEngine
                         continue;
                     }
 
-                    $comparisons++;
-
-                    if ($comparisons > $options['maxNearMissComparisons']) {
-                        throw new \RuntimeException(sprintf(
-                            'Near-miss comparison limit exceeded (%d). Narrow the scan, raise min_similarity, or increase max_near_miss_comparisons.',
-                            $options['maxNearMissComparisons'],
-                        ));
-                    }
-
                     $clone = $this->nearMissClone($typedBlocks[$left], $typedBlocks[$right], $options, $reducer);
 
                     if ($clone !== null) {
                         $clones[] = $clone;
+
+                        if (count($clones) >= $limit) {
+                            return $clones;
+                        }
                     }
                 }
             }
@@ -498,13 +500,17 @@ final class DuplicateDetectionEngine
      * @param array<string, array{statements:int,occurrences:array<string, array{file:string,start_line:int,end_line:int,lines:int,context:string}>}> $cloneMap
      * @return list<array{fingerprint:string,source:string,score:float,similarity:float,tokens:int,lines:int,statements:int,block_type:string,occurrences:list<array{file:string,start_line:int,end_line:int,lines:int,context:string}>}>
      */
-    private function statementCloneMapToClones(array $cloneMap, DuplicateCloneReducer $reducer): array
+    private function statementCloneMapToClones(array $cloneMap, DuplicateCloneReducer $reducer, int $limit): array
     {
         $clones = [];
 
         foreach ($cloneMap as $hash => $clone) {
             if (count($clone['occurrences']) >= 2) {
                 $clones[] = $reducer->makeClone('statements', array_values($clone['occurrences']), 0, $clone['statements'], 1.0, (string) $hash);
+
+                if (count($clones) >= $limit) {
+                    break;
+                }
             }
         }
 
@@ -516,9 +522,9 @@ final class DuplicateDetectionEngine
      * @param array{mode:string,minLines:int,minStatements:int} $options
      * @return list<array{fingerprint:string,source:string,score:float,similarity:float,tokens:int,lines:int,statements:int,block_type:string,occurrences:list<array{file:string,start_line:int,end_line:int,lines:int,context:string}>}>
      */
-    private function statementClones(array $blocks, array $options, DuplicateCloneReducer $reducer): array
+    private function statementClones(array $blocks, array $options, DuplicateCloneReducer $reducer, int $limit): array
     {
-        if ($options['mode'] !== 'audit') {
+        if ($options['mode'] !== 'audit' || $limit < 1) {
             return [];
         }
 
@@ -533,9 +539,13 @@ final class DuplicateDetectionEngine
                     $this->addStatementClone($cloneMap, $occurrence['hash'], $block, $options);
                 }
             }
+
+            if (count($cloneMap) >= $limit) {
+                break;
+            }
         }
 
-        return $this->statementCloneMapToClones($cloneMap, $reducer);
+        return $this->statementCloneMapToClones($cloneMap, $reducer, $limit);
     }
 
     /**
@@ -597,13 +607,17 @@ final class DuplicateDetectionEngine
      * @param array<string, array{tokens:int,occurrences:array<string, array{file:string,start_line:int,end_line:int,lines:int,context:string}>}> $cloneMap
      * @return list<array{fingerprint:string,source:string,score:float,similarity:float,tokens:int,lines:int,statements:int,block_type:string,occurrences:list<array{file:string,start_line:int,end_line:int,lines:int,context:string}>}>
      */
-    private function tokenCloneMapToClones(array $cloneMap, DuplicateCloneReducer $reducer): array
+    private function tokenCloneMapToClones(array $cloneMap, DuplicateCloneReducer $reducer, int $limit): array
     {
         $clones = [];
 
         foreach ($cloneMap as $signature => $clone) {
             if (count($clone['occurrences']) >= 2) {
                 $clones[] = $reducer->makeClone('tokens', array_values($clone['occurrences']), $clone['tokens'], 0, 1.0, (string) $signature);
+
+                if (count($clones) >= $limit) {
+                    break;
+                }
             }
         }
 
@@ -616,15 +630,23 @@ final class DuplicateDetectionEngine
      * @param array{minLines:int,minTokens:int} $options
      * @return list<array{fingerprint:string,source:string,score:float,similarity:float,tokens:int,lines:int,statements:int,block_type:string,occurrences:list<array{file:string,start_line:int,end_line:int,lines:int,context:string}>}>
      */
-    private function tokenClones(array $streams, array $blocks, array $options, DuplicateCloneReducer $reducer): array
+    private function tokenClones(array $streams, array $blocks, array $options, DuplicateCloneReducer $reducer, int $limit): array
     {
+        if ($limit < 1) {
+            return [];
+        }
+
         $cloneMap = [];
 
         foreach ($this->tokenWindows($streams, $options['minTokens']) as $occurrences) {
             $this->collectTokenWindowClones($cloneMap, $streams, $blocks, $occurrences, $options);
+
+            if (count($cloneMap) >= $limit) {
+                break;
+            }
         }
 
-        return $this->tokenCloneMapToClones($cloneMap, $reducer);
+        return $this->tokenCloneMapToClones($cloneMap, $reducer, $limit);
     }
 
     /**
