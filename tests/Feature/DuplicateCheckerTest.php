@@ -537,7 +537,7 @@ it('renders compact clone summary wording in text output', function (): void {
 
     expect($run['exitCode'])->toBe(1)
         ->and($run['stderr'])->toContain('| Group | Files | Clone groups | Occurrences |')
-        ->and($run['stderr'])->toContain('| Clone | Group | File')
+        ->and($run['stderr'])->toContain('| Group | Clone | Input | File')
         ->and($run['stderr'])->toContain('| Engine | Score |')
         ->and($run['stderr'])->toContain('Token');
 });
@@ -601,7 +601,10 @@ it('renders a horizontal separator between clone groups', function (): void {
 
     expect($run['exitCode'])->toBe(1)
         ->and(preg_match(
-            '/^\\|\\s+1\\s+\\|[^\\r\\n]*\\R\\+(?:-+\\+)+\\R\\|\\s+2\\s+\\|/m',
+            '/^\\|\\s+1\\s+\\|\\s+1\\s+\\|[^\\r\\n]*\\R'
+            . '\\|\\s+1\\s+\\|\\s+2\\s+\\|[^\\r\\n]*\\R'
+            . '\\+(?:-+\\+)+\\R'
+            . '\\|\\s+2\\s+\\|\\s+1\\s+\\|/m',
             $run['stderr'],
         ))->toBe(1);
 });
@@ -632,7 +635,7 @@ it('supports classic duplicate output style from config overrides', function ():
     }
 
     expect($run['exitCode'])->toBe(1)
-        ->and($run['stderr'])->toContain('| Clone | Group')
+        ->and($run['stderr'])->toContain('| Group | Clone | Input')
         ->and($run['stderr'])->toContain('| Source | Score')
         ->and($run['stderr'])->toContain('tokens')
         ->and($run['stderr'])->not()->toContain('| Engine |');
