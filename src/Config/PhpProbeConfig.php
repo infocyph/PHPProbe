@@ -97,7 +97,7 @@ final readonly class PhpProbeConfig
             'min_tokens' => 'minTokens',
             'min_statements' => 'minStatements',
             'min_similarity' => 'minSimilarity',
-            'max_near_miss_comparisons' => 'maxNearMissComparisons',
+            'max_clone_groups' => 'maxCloneGroups',
             'ignore_fingerprints' => 'ignoreFingerprints',
             'error_duplicate_percentage' => 'errorDuplicatePercentage',
         ]);
