@@ -542,6 +542,70 @@ it('renders compact clone summary wording in text output', function (): void {
         ->and($run['stderr'])->toContain('Token');
 });
 
+it('sorts reported clone groups by occurrence count before score', function (): void {
+    $root = makeDuplicateCheckerFixture();
+    $src = $root . DIRECTORY_SEPARATOR . 'src';
+
+    mkdir($src, 0755, true);
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'Alpha.php', duplicateBaselineFixture('Alpha'));
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'Beta.php', duplicateBaselineFixture('Beta'));
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'Epsilon.php', duplicateBaselineFixture('Epsilon'));
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'Gamma.php', duplicateSecondaryFixture('Gamma'));
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'Delta.php', duplicateSecondaryFixture('Delta'));
+
+    try {
+        $run = runDuplicateCheckerCommand($root, [
+            '--json',
+            '--no-fuzzy',
+            '--min-lines=5',
+            '--min-tokens=20',
+            'src',
+        ]);
+    } finally {
+        removeDuplicateCheckerFixture($root);
+    }
+
+    $result = json_decode($run['stdout'], true);
+    $counts = array_map(
+        static fn (array $clone): int => count($clone['occurrences']),
+        $result['clones'] ?? [],
+    );
+    $sorted = $counts;
+    rsort($sorted, SORT_NUMERIC);
+
+    expect($run['exitCode'])->toBe(1)
+        ->and(count($counts))->toBeGreaterThan(1)
+        ->and($counts)->toBe($sorted);
+});
+
+it('renders a horizontal separator between clone groups', function (): void {
+    $root = makeDuplicateCheckerFixture();
+    $src = $root . DIRECTORY_SEPARATOR . 'src';
+
+    mkdir($src, 0755, true);
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'Alpha.php', duplicateBaselineFixture('Alpha'));
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'Beta.php', duplicateBaselineFixture('Beta'));
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'Gamma.php', duplicateSecondaryFixture('Gamma'));
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'Delta.php', duplicateSecondaryFixture('Delta'));
+
+    try {
+        $run = runDuplicateCheckerCommand($root, [
+            '--no-fuzzy',
+            '--min-lines=5',
+            '--min-tokens=20',
+            'src',
+        ]);
+    } finally {
+        removeDuplicateCheckerFixture($root);
+    }
+
+    expect($run['exitCode'])->toBe(1)
+        ->and(preg_match(
+            '/^\\|\\s+1\\s+\\|[^\\r\\n]*\\R\\+(?:-+\\+)+\\R\\|\\s+2\\s+\\|/m',
+            $run['stderr'],
+        ))->toBe(1);
+});
+
 it('supports classic duplicate output style from config overrides', function (): void {
     $root = makeDuplicateCheckerFixture();
     $src = $root . DIRECTORY_SEPARATOR . 'src';
