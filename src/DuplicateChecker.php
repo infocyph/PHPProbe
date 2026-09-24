@@ -117,6 +117,8 @@ final class DuplicateChecker
             $result = $this->withoutIgnoredFingerprints($result, $options['ignoreFingerprints']);
         }
 
+        $result['clones'] = $this->sortClonesForOutput($result['clones']);
+
         if ($options['writeBaseline'] !== '') {
             $this->writeBaseline($result, $options['writeBaseline']);
         }
@@ -717,6 +719,41 @@ final class DuplicateChecker
     }
 
     /**
+     * @param list<CloneGroup> $clones
+     * @return list<CloneGroup>
+     */
+    private function sortClonesForOutput(array $clones): array
+    {
+        usort($clones, static function (array $left, array $right): int {
+            $occurrences = count($right['occurrences']) <=> count($left['occurrences']);
+
+            if ($occurrences !== 0) {
+                return $occurrences;
+            }
+
+            $score = $right['score'] <=> $left['score'];
+
+            if ($score !== 0) {
+                return $score;
+            }
+
+            $lines = $right['lines'] <=> $left['lines'];
+
+            if ($lines !== 0) {
+                return $lines;
+            }
+
+            $similarity = $right['similarity'] <=> $left['similarity'];
+
+            return $similarity !== 0
+                ? $similarity
+                : strcmp($left['fingerprint'], $right['fingerprint']);
+        });
+
+        return $clones;
+    }
+
+    /**
      * @param DuplicateResult $result
      * @param DuplicateOptions $options
      */
@@ -1105,18 +1142,21 @@ final class DuplicateChecker
 
         $groupPaths = $this->duplicateGroupPaths($groups);
         $rows = [];
+        $rowSeparators = [];
+        $cloneCount = count($result['clones']);
 
         foreach ($result['clones'] as $index => $clone) {
             $score = Ansi::color(sprintf('%.1f', $clone['score']), $this->scoreColor((float) $clone['score'], $options), STDERR);
 
-            foreach ($clone['occurrences'] as $occurrence) {
+            foreach ($clone['occurrences'] as $occurrenceIndex => $occurrence) {
                 $location = sprintf('%s:%d-%d', $occurrence['file'], $occurrence['start_line'], $occurrence['end_line']);
-                $group = InputFileGroups::nameFor($occurrence['file'], $groupPaths);
+                $inputGroup = InputFileGroups::nameFor($occurrence['file'], $groupPaths);
 
                 $rows[] = $options['outputStyle'] === 'classic'
                     ? [
                         $index + 1,
-                        $group,
+                        $occurrenceIndex + 1,
+                        $inputGroup,
                         $clone['lines'],
                         sprintf('%.0f%%', $clone['similarity'] * 100),
                         $clone['source'],
@@ -1125,7 +1165,8 @@ final class DuplicateChecker
                     ]
                     : [
                         $index + 1,
-                        $group,
+                        $occurrenceIndex + 1,
+                        $inputGroup,
                         $occurrence['file'],
                         sprintf('%d-%d', $occurrence['start_line'], $occurrence['end_line']),
                         $clone['lines'],
@@ -1134,19 +1175,25 @@ final class DuplicateChecker
                         $score,
                     ];
             }
+
+            if ($index < $cloneCount - 1 && $clone['occurrences'] !== []) {
+                $rowSeparators[] = count($rows) - 1;
+            }
         }
 
         if ($options['outputStyle'] === 'classic') {
             fwrite(STDERR, CliTable::render(
-                ['Clone', 'Group', 'Lines', 'Similarity', 'Source', 'Score', 'Location'],
+                ['Group', 'Clone', 'Input', 'Lines', 'Similarity', 'Source', 'Score', 'Location'],
                 $rows,
-                [1 => 32, 6 => 72],
+                [2 => 32, 7 => 72],
+                $rowSeparators,
             ) . PHP_EOL);
         } else {
             fwrite(STDERR, CliTable::render(
-                ['Clone', 'Group', 'File', 'Range', 'Lines', 'Similarity', 'Engine', 'Score'],
+                ['Group', 'Clone', 'Input', 'File', 'Range', 'Lines', 'Similarity', 'Engine', 'Score'],
                 $rows,
-                [1 => 32, 2 => 64],
+                [2 => 32, 3 => 64],
+                $rowSeparators,
             ) . PHP_EOL);
         }
 

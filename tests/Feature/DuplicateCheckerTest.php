@@ -537,9 +537,94 @@ it('renders compact clone summary wording in text output', function (): void {
 
     expect($run['exitCode'])->toBe(1)
         ->and($run['stderr'])->toContain('| Group | Files | Clone groups | Occurrences |')
-        ->and($run['stderr'])->toContain('| Clone | Group | File')
+        ->and($run['stderr'])->toContain('| Group | Clone | Input | File')
         ->and($run['stderr'])->toContain('| Engine | Score |')
         ->and($run['stderr'])->toContain('Token');
+});
+
+it('sorts reported clone groups by occurrence count before score', function (): void {
+    $root = makeDuplicateCheckerFixture();
+    $src = $root . DIRECTORY_SEPARATOR . 'src';
+
+    mkdir($src, 0755, true);
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'Alpha.php', duplicateBaselineFixture('Alpha'));
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'Beta.php', duplicateBaselineFixture('Beta'));
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'Epsilon.php', duplicateBaselineFixture('Epsilon'));
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'Gamma.php', duplicateSecondaryFixture('Gamma'));
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'Delta.php', duplicateSecondaryFixture('Delta'));
+
+    try {
+        $run = runDuplicateCheckerCommand($root, [
+            '--json',
+            '--no-fuzzy',
+            '--min-lines=5',
+            '--min-tokens=20',
+            'src',
+        ]);
+    } finally {
+        removeDuplicateCheckerFixture($root);
+    }
+
+    $result = json_decode($run['stdout'], true);
+    $counts = array_map(
+        static fn (array $clone): int => count($clone['occurrences']),
+        $result['clones'] ?? [],
+    );
+    $sorted = $counts;
+    rsort($sorted, SORT_NUMERIC);
+
+    expect($run['exitCode'])->toBe(1)
+        ->and(count($counts))->toBeGreaterThan(1)
+        ->and($counts)->toBe($sorted);
+});
+
+it('renders a horizontal separator between clone groups', function (): void {
+    $root = makeDuplicateCheckerFixture();
+    $src = $root . DIRECTORY_SEPARATOR . 'src';
+
+    mkdir($src, 0755, true);
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'Alpha.php', duplicateBaselineFixture('Alpha'));
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'Beta.php', duplicateBaselineFixture('Beta'));
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'Gamma.php', duplicateSecondaryFixture('Gamma'));
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'Delta.php', duplicateSecondaryFixture('Delta'));
+
+    try {
+        $run = runDuplicateCheckerCommand($root, [
+            '--no-fuzzy',
+            '--min-lines=5',
+            '--min-tokens=20',
+            'src',
+        ]);
+    } finally {
+        removeDuplicateCheckerFixture($root);
+    }
+
+    $lines = preg_split('/\\R/', trim($run['stderr'])) ?: [];
+    $groupOneCloneOne = null;
+    $groupOneCloneTwo = null;
+    $groupTwoCloneOne = null;
+
+    foreach ($lines as $lineNumber => $line) {
+        if ($groupOneCloneOne === null && preg_match('/^\\|\\s+1\\s+\\|\\s+1\\s+\\|/', $line) === 1) {
+            $groupOneCloneOne = $lineNumber;
+        }
+
+        if ($groupOneCloneTwo === null && preg_match('/^\\|\\s+1\\s+\\|\\s+2\\s+\\|/', $line) === 1) {
+            $groupOneCloneTwo = $lineNumber;
+        }
+
+        if ($groupTwoCloneOne === null && preg_match('/^\\|\\s+2\\s+\\|\\s+1\\s+\\|/', $line) === 1) {
+            $groupTwoCloneOne = $lineNumber;
+        }
+    }
+
+    expect($run['exitCode'])->toBe(1)
+        ->and($groupOneCloneOne)->not()->toBeNull()
+        ->and($groupOneCloneTwo)->not()->toBeNull()
+        ->and($groupTwoCloneOne)->not()->toBeNull()
+        ->and($groupOneCloneOne)->toBeLessThan($groupOneCloneTwo)
+        ->and($groupOneCloneTwo)->toBeLessThan($groupTwoCloneOne)
+        ->and($lines[$groupTwoCloneOne - 1] ?? '')->toMatch('/^\\+(?:-+\\+)+$/');
 });
 
 it('supports classic duplicate output style from config overrides', function (): void {
@@ -568,7 +653,7 @@ it('supports classic duplicate output style from config overrides', function ():
     }
 
     expect($run['exitCode'])->toBe(1)
-        ->and($run['stderr'])->toContain('| Clone | Group')
+        ->and($run['stderr'])->toContain('| Group | Clone | Input')
         ->and($run['stderr'])->toContain('| Source | Score')
         ->and($run['stderr'])->toContain('tokens')
         ->and($run['stderr'])->not()->toContain('| Engine |');
