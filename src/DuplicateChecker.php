@@ -1148,14 +1148,15 @@ final class DuplicateChecker
         foreach ($result['clones'] as $index => $clone) {
             $score = Ansi::color(sprintf('%.1f', $clone['score']), $this->scoreColor((float) $clone['score'], $options), STDERR);
 
-            foreach ($clone['occurrences'] as $occurrence) {
+            foreach ($clone['occurrences'] as $occurrenceIndex => $occurrence) {
                 $location = sprintf('%s:%d-%d', $occurrence['file'], $occurrence['start_line'], $occurrence['end_line']);
-                $group = InputFileGroups::nameFor($occurrence['file'], $groupPaths);
+                $inputGroup = InputFileGroups::nameFor($occurrence['file'], $groupPaths);
 
                 $rows[] = $options['outputStyle'] === 'classic'
                     ? [
                         $index + 1,
-                        $group,
+                        $occurrenceIndex + 1,
+                        $inputGroup,
                         $clone['lines'],
                         sprintf('%.0f%%', $clone['similarity'] * 100),
                         $clone['source'],
@@ -1164,7 +1165,8 @@ final class DuplicateChecker
                     ]
                     : [
                         $index + 1,
-                        $group,
+                        $occurrenceIndex + 1,
+                        $inputGroup,
                         $occurrence['file'],
                         sprintf('%d-%d', $occurrence['start_line'], $occurrence['end_line']),
                         $clone['lines'],
@@ -1181,16 +1183,16 @@ final class DuplicateChecker
 
         if ($options['outputStyle'] === 'classic') {
             fwrite(STDERR, CliTable::render(
-                ['Clone', 'Group', 'Lines', 'Similarity', 'Source', 'Score', 'Location'],
+                ['Group', 'Clone', 'Input', 'Lines', 'Similarity', 'Source', 'Score', 'Location'],
                 $rows,
-                [1 => 32, 6 => 72],
+                [2 => 32, 7 => 72],
                 $rowSeparators,
             ) . PHP_EOL);
         } else {
             fwrite(STDERR, CliTable::render(
-                ['Clone', 'Group', 'File', 'Range', 'Lines', 'Similarity', 'Engine', 'Score'],
+                ['Group', 'Clone', 'Input', 'File', 'Range', 'Lines', 'Similarity', 'Engine', 'Score'],
                 $rows,
-                [1 => 32, 2 => 64],
+                [2 => 32, 3 => 64],
                 $rowSeparators,
             ) . PHP_EOL);
         }
