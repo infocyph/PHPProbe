@@ -10,8 +10,9 @@ final class CliTable
      * @param non-empty-list<string> $headers
      * @param list<list<string|int|float>> $rows
      * @param array<int, int> $maximumWidths
+     * @param list<int> $separatorsAfter zero-based row indexes after which a horizontal separator is rendered
      */
-    public static function render(array $headers, array $rows, array $maximumWidths = []): string
+    public static function render(array $headers, array $rows, array $maximumWidths = [], array $separatorsAfter = []): string
     {
         $normalizedRows = array_map(
             static fn(array $row): array => array_map(static fn(string|int|float $cell): string => (string) $cell, $row),
@@ -39,7 +40,9 @@ final class CliTable
 
         $lines = [$separator, self::row($headers, $widths), $separator];
 
-        foreach ($normalizedRows as $row) {
+        $separatorLookup = array_fill_keys($separatorsAfter, true);
+
+        foreach ($normalizedRows as $rowIndex => $row) {
             $wrapped = [];
             $height = 1;
 
@@ -56,6 +59,10 @@ final class CliTable
                 }
 
                 $lines[] = self::row($cells, $widths);
+            }
+
+            if (isset($separatorLookup[$rowIndex]) && $rowIndex < count($normalizedRows) - 1) {
+                $lines[] = $separator;
             }
         }
 
