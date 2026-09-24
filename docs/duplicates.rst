@@ -49,7 +49,7 @@ detector matrix is active.
      --mode=audit \
      --min-statements=4 \
      --min-similarity=0.88 \
-     --max-near-miss-comparisons=100000 \
+     --max-clone-groups=100000 \
      src
 
 Normalization
