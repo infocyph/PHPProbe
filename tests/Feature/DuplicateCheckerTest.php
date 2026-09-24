@@ -706,36 +706,50 @@ it('invalidates duplicate cache by content even when size and mtime are unchange
         ->and($secondResult['clones'])->toBe([]);
 });
 
-it('bounds near-miss structural comparisons', function (): void {
+it('caps duplicate clone groups and reveals later groups after fixes', function (): void {
     $root = makeDuplicateCheckerFixture();
     $src = $root . DIRECTORY_SEPARATOR . 'src';
 
     mkdir($src, 0755, true);
-    file_put_contents($src . DIRECTORY_SEPARATOR . 'Many.php', <<<'PHP'
-<?php
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'Alpha.php', duplicateBaselineFixture('Alpha'));
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'Beta.php', duplicateBaselineFixture('Beta'));
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'Gamma.php', duplicateSecondaryFixture('Gamma'));
+    file_put_contents($src . DIRECTORY_SEPARATOR . 'Delta.php', duplicateSecondaryFixture('Delta'));
 
-function one(array $values): array { sort($values); return $values; }
-function two(array $values): array { rsort($values); return $values; }
-function three(array $values): array { shuffle($values); return $values; }
-function four(array $values): array { array_reverse($values); return $values; }
-PHP);
+    $args = [
+        '--json',
+        '--no-fuzzy',
+        '--min-lines=5',
+        '--min-tokens=20',
+        '--max-clone-groups=1',
+        'src',
+    ];
 
     try {
-        $run = runDuplicateCheckerCommand($root, [
-            '--near-miss',
-            '--min-lines=1',
-            '--min-tokens=999',
-            '--min-statements=1',
-            '--min-similarity=0.1',
-            '--max-near-miss-comparisons=1',
-            'src',
-        ]);
+        $first = runDuplicateCheckerCommand($root, $args);
+        $firstResult = json_decode($first['stdout'], true);
+        $firstFingerprint = $firstResult['clones'][0]['fingerprint'] ?? '';
+
+        foreach ($firstResult['clones'][0]['occurrences'] ?? [] as $occurrence) {
+            $path = $root . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $occurrence['file']);
+
+            if (is_file($path)) {
+                unlink($path);
+            }
+        }
+
+        $second = runDuplicateCheckerCommand($root, $args);
+        $secondResult = json_decode($second['stdout'], true);
     } finally {
         removeDuplicateCheckerFixture($root);
     }
 
-    expect($run['exitCode'])->toBe(2)
-        ->and($run['stderr'])->toContain('Near-miss comparison limit exceeded');
+    expect($first['exitCode'])->toBe(1)
+        ->and($firstResult['clones'])->toHaveCount(1)
+        ->and($firstFingerprint)->not()->toBe('')
+        ->and($second['exitCode'])->toBe(1)
+        ->and($secondResult['clones'])->toHaveCount(1)
+        ->and($secondResult['clones'][0]['fingerprint'])->not()->toBe($firstFingerprint);
 });
 
 it('supports ignoring duplicate fingerprints from config', function (): void {
@@ -1038,6 +1052,27 @@ final class {$class}
         foreach (\$items as \$item) {
             \$result[] = strtoupper((string) \$item);
         }
+
+        return \$result;
+    }
+}
+PHP;
+}
+
+function duplicateSecondaryFixture(string $class): string
+{
+    return <<<PHP
+<?php
+
+final class {$class}
+{
+    public function numbers(array \$items): array
+    {
+        \$result = [];
+        foreach (\$items as \$item) {
+            \$result[] = abs((int) \$item);
+        }
+        rsort(\$result);
 
         return \$result;
     }
