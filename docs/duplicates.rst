@@ -137,7 +137,10 @@ Output contract
 
 JSON reports include file/line totals, unique duplicated lines and percentage,
 known/new clone counts, cache status, input-group summaries, and up to the
-configured clone-group cap.
+configured clone-group cap. Reported clone groups are ordered by occurrence
+count descending, then score, line span, similarity, and fingerprint for
+deterministic ties. Text tables render a horizontal separator between clone
+groups so all occurrences sharing the same clone number are visually grouped.
 Each input group reports its file, clone-group, and occurrence counts. Every clone exposes a
 stable fingerprint, detector source, score, similarity, token/line/statement
 counts, block type, and sorted occurrences with file, range, and context.
