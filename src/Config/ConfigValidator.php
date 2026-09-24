@@ -463,8 +463,8 @@ final class ConfigValidator
             }
         }
 
-        if (is_int($value['max_clone_groups'] ?? null) && $value['max_clone_groups'] > 10_000_000) {
-            $errors[] = 'duplicates.max_near_miss_comparisons must not exceed 10000000.';
+        if (is_int($value['max_clone_groups'] ?? null) && $value['max_clone_groups'] > 100_000) {
+            $errors[] = 'duplicates.max_clone_groups must not exceed 100000.';
         }
 
         if (array_key_exists('min_similarity', $value)) {
