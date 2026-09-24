@@ -139,8 +139,10 @@ JSON reports include file/line totals, unique duplicated lines and percentage,
 known/new clone counts, cache status, input-group summaries, and up to the
 configured clone-group cap. Reported clone groups are ordered by occurrence
 count descending, then score, line span, similarity, and fingerprint for
-deterministic ties. Text tables render a horizontal separator between clone
-groups so all occurrences sharing the same clone number are visually grouped.
+deterministic ties. Text tables use ``Group`` for the duplicate-group number and
+``Clone`` for the occurrence number within that group; clone numbering restarts
+at 1 for every group. The original input/path grouping remains available as the
+``Input`` column. A horizontal separator is rendered between duplicate groups.
 Each input group reports its file, clone-group, and occurrence counts. Every clone exposes a
 stable fingerprint, detector source, score, similarity, token/line/statement
 counts, block type, and sorted occurrences with file, range, and context.
