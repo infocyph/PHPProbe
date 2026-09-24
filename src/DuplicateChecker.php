@@ -26,7 +26,7 @@ use Infocyph\PHPProbe\Util\SummaryJson;
  * @phpstan-type CloneGroup array{fingerprint:string,source:string,score:float,similarity:float,tokens:int,lines:int,statements:int,block_type:string,occurrences:list<CloneOccurrence>}
  * @phpstan-type DuplicateGroup array{name:string,files:int,clone_groups:int,occurrences:int,paths:list<string>}
  * @phpstan-type DuplicateResult array{files:int,total_lines:int,duplicated_lines:int,duplicate_percentage:float,known_clones:int,new_clones:int,cache_hit:bool,clones:list<CloneGroup>,groups?:list<DuplicateGroup>}
- * @phpstan-type DuplicateOptions array{help:bool,format:string,color:string,failOn:string,summaryJson:string,changedOnly:bool,changedBase:string,textColorSuccess:string,textColorError:string,textColorWarning:string,textColorInfo:string,textColorFile:string,cacheEnabled:bool,cacheFile:string,errorDuplicatePercentage:float,outputStyle:string,scoreColorHighMin:float,scoreColorMediumMin:float,scoreColorLowMin:float,scoreColorHigh:string,scoreColorMedium:string,scoreColorLow:string,scoreColorBase:string,config:string,mode:string,normalize:bool,fuzzy:bool,nearMiss:bool,minLines:int,minTokens:int,minStatements:int,minSimilarity:float,maxNearMissComparisons:int,baseline:string,writeBaseline:string,ignoreFingerprints:list<string>,paths:list<string>,excludes:list<string>}
+ * @phpstan-type DuplicateOptions array{help:bool,format:string,color:string,failOn:string,summaryJson:string,changedOnly:bool,changedBase:string,textColorSuccess:string,textColorError:string,textColorWarning:string,textColorInfo:string,textColorFile:string,cacheEnabled:bool,cacheFile:string,errorDuplicatePercentage:float,outputStyle:string,scoreColorHighMin:float,scoreColorMediumMin:float,scoreColorLowMin:float,scoreColorHigh:string,scoreColorMedium:string,scoreColorLow:string,scoreColorBase:string,config:string,mode:string,normalize:bool,fuzzy:bool,nearMiss:bool,minLines:int,minTokens:int,minStatements:int,minSimilarity:float,maxCloneGroups:int,baseline:string,writeBaseline:string,ignoreFingerprints:list<string>,paths:list<string>,excludes:list<string>}
  */
 final class DuplicateChecker
 {
@@ -63,7 +63,7 @@ final class DuplicateChecker
             'minTokens' => $options['minTokens'],
             'minStatements' => $options['minStatements'],
             'minSimilarity' => $options['minSimilarity'],
-            'maxNearMissComparisons' => $options['maxNearMissComparisons'],
+            'maxCloneGroups' => $options['maxCloneGroups'],
         ];
         $cacheKey = $this->cacheKey($files, $engineOptions);
 
@@ -319,7 +319,7 @@ final class DuplicateChecker
             'minTokens' => 70,
             'minStatements' => 4,
             'minSimilarity' => 0.85,
-            'maxNearMissComparisons' => 100000,
+            'maxCloneGroups' => 100000,
             'baseline' => '',
             'writeBaseline' => '',
             'ignoreFingerprints' => [],
@@ -417,7 +417,7 @@ final class DuplicateChecker
             '  --min-tokens=N                   token fingerprint window size (default: 70)',
             '  --min-statements=N               statement window size for audit mode (default: 4)',
             '  --min-similarity=N               near-miss threshold, 0.0-1.0 or 0-100 (default: 0.85)',
-            '  --max-near-miss-comparisons=N    hard ceiling for structural comparisons (default: 100000)',
+            '  --max-clone-groups=N              maximum clone groups reported per run (default: 100000)',
             '  --near-miss                      enable bounded statement/shape similarity matching',
             '  --exact                          do not normalize variables/literals',
             '  --fuzzy                          also normalize identifiers/calls',
@@ -628,7 +628,7 @@ final class DuplicateChecker
             '--min-lines' => 'minLines',
             '--min-tokens' => 'minTokens',
             '--min-statements' => 'minStatements',
-            '--max-near-miss-comparisons' => 'maxNearMissComparisons',
+            '--max-clone-groups' => 'maxCloneGroups',
         ] as $name => $key) {
             $value = $cli->optionValue($arg, $name);
 
@@ -637,8 +637,8 @@ final class DuplicateChecker
                     throw new \InvalidArgumentException(sprintf('%s must be a positive integer.', $name));
                 }
 
-                if ($name === '--max-near-miss-comparisons' && (int) $value > 10_000_000) {
-                    throw new \InvalidArgumentException('--max-near-miss-comparisons must not exceed 10000000.');
+                if ($name === '--max-clone-groups' && (int) $value > 100_000) {
+                    throw new \InvalidArgumentException('--max-clone-groups must not exceed 100000.');
                 }
 
                 $options[$key] = (int) $value;
