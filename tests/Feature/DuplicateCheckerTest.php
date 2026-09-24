@@ -599,14 +599,32 @@ it('renders a horizontal separator between clone groups', function (): void {
         removeDuplicateCheckerFixture($root);
     }
 
+    $lines = preg_split('/\\R/', trim($run['stderr'])) ?: [];
+    $groupOneCloneOne = null;
+    $groupOneCloneTwo = null;
+    $groupTwoCloneOne = null;
+
+    foreach ($lines as $lineNumber => $line) {
+        if ($groupOneCloneOne === null && preg_match('/^\\|\\s+1\\s+\\|\\s+1\\s+\\|/', $line) === 1) {
+            $groupOneCloneOne = $lineNumber;
+        }
+
+        if ($groupOneCloneTwo === null && preg_match('/^\\|\\s+1\\s+\\|\\s+2\\s+\\|/', $line) === 1) {
+            $groupOneCloneTwo = $lineNumber;
+        }
+
+        if ($groupTwoCloneOne === null && preg_match('/^\\|\\s+2\\s+\\|\\s+1\\s+\\|/', $line) === 1) {
+            $groupTwoCloneOne = $lineNumber;
+        }
+    }
+
     expect($run['exitCode'])->toBe(1)
-        ->and(preg_match(
-            '/^\\|\\s+1\\s+\\|\\s+1\\s+\\|[^\\r\\n]*\\R'
-            . '\\|\\s+1\\s+\\|\\s+2\\s+\\|[^\\r\\n]*\\R'
-            . '\\+(?:-+\\+)+\\R'
-            . '\\|\\s+2\\s+\\|\\s+1\\s+\\|/m',
-            $run['stderr'],
-        ))->toBe(1);
+        ->and($groupOneCloneOne)->not()->toBeNull()
+        ->and($groupOneCloneTwo)->not()->toBeNull()
+        ->and($groupTwoCloneOne)->not()->toBeNull()
+        ->and($groupOneCloneOne)->toBeLessThan($groupOneCloneTwo)
+        ->and($groupOneCloneTwo)->toBeLessThan($groupTwoCloneOne)
+        ->and($lines[$groupTwoCloneOne - 1] ?? '')->toMatch('/^\\+(?:-+\\+)+$/');
 });
 
 it('supports classic duplicate output style from config overrides', function (): void {
