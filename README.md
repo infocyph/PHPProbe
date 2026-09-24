@@ -216,7 +216,7 @@ All supported settings can be overridden explicitly:
     "min_tokens": 90,
     "min_statements": 4,
     "min_similarity": 0.85,
-    "max_near_miss_comparisons": 100000,
+    "max_clone_groups": 100000,
     "baseline": "",
     "write_baseline": "",
     "ignore_fingerprints": [],
