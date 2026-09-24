@@ -775,7 +775,7 @@ final class DuplicateChecker
             'minTokens' => 'int',
             'minStatements' => 'int',
             'minSimilarity' => 'float',
-            'maxNearMissComparisons' => 'int',
+            'maxCloneGroups' => 'int',
             'baseline' => 'string',
             'writeBaseline' => 'string',
             'ignoreFingerprints' => 'strings',
